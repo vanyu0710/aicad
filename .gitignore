@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+outputs/
+outputs/feedback.csv
+outputs/*.log
+work/
+.gradio/

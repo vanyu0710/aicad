@@ -1,0 +1,11 @@
+gradio==4.40.0
+huggingface-hub<1.0
+fastapi==0.112.2
+starlette==0.37.2
+pydantic==2.8.2
+pillow>=10.3.0
+opencv-python-headless>=4.10.0.84
+numpy>=1.26.4
+requests>=2.32.3
+python-dotenv>=1.0.1
+build123d>=0.7.0
