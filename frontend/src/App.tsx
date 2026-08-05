@@ -10,6 +10,7 @@ import {
   type ModelConfig,
   type ProjectState,
 } from "./api";
+import FeatureForm from "./FeatureForm";
 import Viewport from "./Viewport";
 
 const defaultSettings: ModelConfig = {
@@ -33,7 +34,6 @@ export default function App() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [settings, setSettings] = useState<ModelConfig>(defaultSettings);
   const [selectedFeatureId, setSelectedFeatureId] = useState("");
-  const [featureDraft, setFeatureDraft] = useState("");
   const [chatMessage, setChatMessage] = useState("");
   const [events, setEvents] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -75,7 +75,6 @@ export default function App() {
   useEffect(() => {
     if (selectedFeature) {
       setSelectedFeatureId(selectedFeature.id);
-      setFeatureDraft(JSON.stringify(selectedFeature, null, 2));
     }
   }, [selectedFeature?.id, project?.current.id]);
 
@@ -118,17 +117,17 @@ export default function App() {
     }
   };
 
-  const onSaveFeature = async () => {
+  const onSaveFeature = async (payload: any) => {
     if (!project || !selectedFeature) {
       return;
     }
-    const parsed = JSON.parse(featureDraft);
-    const next = await patchFeature(project.project_id, selectedFeature.id, {
-      dimensions: parsed.dimensions,
-      placement: parsed.placement,
-      confirmed_by_user: parsed.confirmed_by_user,
-    });
-    setProject(next);
+    setBusy(true);
+    try {
+      const next = await patchFeature(project.project_id, selectedFeature.id, payload);
+      setProject(next);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -208,11 +207,12 @@ export default function App() {
         <aside className="panel right-pane">
           <h2>属性面板</h2>
           {selectedFeature ? (
-            <>
-              <p className="muted">编辑 JSON 后保存，会生成新的设计快照并重新导出模型。</p>
-              <textarea className="code-box" value={featureDraft} onChange={(event) => setFeatureDraft(event.target.value)} rows={20} />
-              <button className="primary" onClick={onSaveFeature}>保存特征</button>
-            </>
+            <FeatureForm
+              key={selectedFeature.id}
+              feature={selectedFeature}
+              busy={busy}
+              onSave={onSaveFeature}
+            />
           ) : (
             <p className="muted">请选择一个特征。</p>
           )}

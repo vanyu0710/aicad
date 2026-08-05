@@ -297,3 +297,121 @@ h2 {
   font-family: "Cascadia Mono", "Consolas", monospace;
   font-size: 12px;
 }
+
+/* --- Feature form (property panel) --- */
+
+.feat-form {
+  display: grid;
+  gap: 14px;
+}
+
+.feat-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.feat-id {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.feat-type,
+.feat-op {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  background: rgba(255, 255, 252, 0.6);
+}
+
+.feat-section {
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.dim-grid,
+.pos-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.dim-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) 44px;
+  gap: 8px;
+  align-items: center;
+}
+
+.dim-label {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.dim-unit {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.dim-pending {
+  grid-column: 3;
+  color: var(--seal);
+  font-size: 11px;
+}
+
+.feat-actions {
+  display: grid;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.confirm-check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.confirm-check input {
+  width: auto;
+  height: auto;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.feat-notes {
+  display: grid;
+  gap: 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.feat-notes p {
+  margin: 0;
+}
+
+.note-warn {
+  padding: 8px 10px;
+  border-left: 2px solid var(--seal);
+  background: rgba(255, 244, 240, 0.5);
+}
+
+.note-unresolved {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.note-unresolved li {
+  margin-bottom: 4px;
+}
