@@ -1,0 +1,27 @@
+from __future__ import annotations
+
+from pathlib import Path
+from uuid import uuid4
+
+
+ARTIFACT_ROOT = Path("work") / "new_arch_runs"
+
+
+def create_run_dir() -> tuple[str, Path]:
+    run_id = uuid4().hex[:10]
+    run_dir = ARTIFACT_ROOT / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_id, run_dir
+
+
+def artifact_path(run_id: str, kind: str) -> Path:
+    names = {
+        "step": "model.step",
+        "stl": "model.stl",
+        "obj": "model.obj",
+        "report": "report.md",
+        "execution_report": "execution_report.json",
+    }
+    if kind not in names:
+        raise KeyError(kind)
+    return ARTIFACT_ROOT / run_id / names[kind]
