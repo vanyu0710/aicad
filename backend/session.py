@@ -30,7 +30,7 @@ class SessionStore:
     def commit_snapshot(self, project_id: str, snapshot: DesignSnapshot) -> ProjectState:
         project = self.get_project(project_id)
         project.history.append(deepcopy(project.current))
-        project.current = snapshot
+        project.current = deepcopy(snapshot)
         project.redo_stack.clear()
         project.updated_at = now_iso()
         return project

@@ -29,6 +29,30 @@ npm run dev
 
 Open `http://127.0.0.1:5173`.
 
+## Tests
+
+Backend (unit + API integration, uses `unittest`):
+
+```powershell
+.\venv\Scripts\python.exe -m unittest discover -s tests
+```
+
+Frontend (Vitest + Testing Library):
+
+```powershell
+cd frontend
+npm test
+```
+
+Coverage:
+
+- `tests/test_session.py` – snapshot history, undo/redo semantics.
+- `tests/test_api.py` – FastAPI endpoints: generate / chat / patch / undo / redo, artifacts, WebSocket accept.
+- `tests/test_cad_worker.py` – worker success, timeout and failure reporting.
+- `tests/test_events.py` – EventBus publish/subscribe isolation.
+- `frontend/src/FeatureForm.test.tsx` – property panel interaction tests.
+
+
 ## AI Integration
 
 `backend/mechcad_ai/` is the real-model layer:

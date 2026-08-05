@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from unittest.mock import patch
 
 from backend.mechcad_ai.client import (
     ApiCallError,
@@ -113,8 +115,20 @@ class AIClientTests(unittest.TestCase):
         self.assertEqual(parsed["source"], "anthropic-mock")
 
     def test_unconfigured_returns_false(self):
-        self.assertFalse(has_configured_model(ModelConfig(), "vision"))
-        self.assertFalse(has_configured_model(ModelConfig(), "planner"))
+        # Hermetic: .env / ambient MECHCAD_* vars must not leak into this test.
+        env_keys = [
+            "MECHCAD_VISION_API_KEY",
+            "MECHCAD_VISION_BASE_URL",
+            "MECHCAD_VISION_MODEL",
+            "MECHCAD_VISION_PROTOCOL",
+            "MECHCAD_PLANNER_API_KEY",
+            "MECHCAD_PLANNER_BASE_URL",
+            "MECHCAD_PLANNER_MODEL",
+            "MECHCAD_PLANNER_PROTOCOL",
+        ]
+        with patch.dict(os.environ, {key: "" for key in env_keys}):
+            self.assertFalse(has_configured_model(ModelConfig(), "vision"))
+            self.assertFalse(has_configured_model(ModelConfig(), "planner"))
 
     def test_v1_retry_url_resolution(self):
         settings = ModelConfig(

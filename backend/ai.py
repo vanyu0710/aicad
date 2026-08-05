@@ -105,7 +105,7 @@ def _build_stub_feature_plan(description: str, request: GenerateRequest) -> tupl
             type="hollow_cylinder",
             operation="base",
             dimensions=_dims(
-                outer_diameter=parsed.get("outer_diameter"),
+                outer_diameter=parsed.get("outer_diameter") or parsed.get("diameter"),
                 inner_diameter=parsed.get("inner_diameter"),
                 length=parsed.get("length"),
                 evidence="tube outline from sketch + user description",

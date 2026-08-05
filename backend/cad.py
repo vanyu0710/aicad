@@ -19,7 +19,9 @@ def run_freecad_worker(plan: FeaturePlanV3, timeout: int = 45) -> tuple[Artifact
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        report = {"ok": False, "error": f"FreeCAD worker timeout after {timeout}s", "stdout": exc.stdout, "stderr": exc.stderr}
+        stdout = _decode_output(exc.stdout)
+        stderr = _decode_output(exc.stderr)
+        report = {"ok": False, "error": f"FreeCAD worker timeout after {timeout}s", "stdout": stdout, "stderr": stderr}
         (run_dir / "execution_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         return _artifacts(run_id, run_dir), logs + [report["error"]], False
 
@@ -29,6 +31,15 @@ def run_freecad_worker(plan: FeaturePlanV3, timeout: int = 45) -> tuple[Artifact
         logs.append(completed.stderr.strip())
     ok = completed.returncode == 0 and (run_dir / "execution_report.json").exists()
     return _artifacts(run_id, run_dir), logs, ok
+
+
+def _decode_output(value: bytes | str | None) -> str:
+    """TimeoutExpired carries bytes even when text=True; coerce to str for JSON."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
 
 
 def _artifacts(run_id: str, run_dir: Path) -> ArtifactSet:
