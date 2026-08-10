@@ -1,4 +1,4 @@
-export type ModelConfig = {
+﻿export type ModelConfig = {
   vision_provider: string;
   vision_model: string;
   vision_base_url: string;
@@ -103,6 +103,16 @@ export async function createProject(name = "MechCAD Project") {
   return parseResponse<{ project_id: string; project: ProjectState }>(response);
 }
 
+
+export async function listProjects() {
+  const response = await fetch(`${API_ROOT}/api/projects`);
+  return parseResponse<{ projects: ProjectState[] }>(response);
+}
+
+export async function deleteProject(projectId: string) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}`, { method: "DELETE" });
+  return parseResponse<{ ok: boolean }>(response);
+}
 export async function fetchProject(projectId: string) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}`);
   return parseResponse<ProjectState>(response);

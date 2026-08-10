@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from copy import deepcopy
 import re
@@ -424,6 +424,8 @@ def _apply_smart_autonomy(plan: FeaturePlanV3, description: str, policy: str) ->
         updated.assumptions.append("智能模式根据零件功能和文字线索选择了一个可修改的主基体。")
 
     _complete_base_dimensions(base, parsed, updated)
+    if not any("智能模式工程假设" in item for item in updated.assumptions):
+        updated.assumptions.append("智能模式工程假设：概念尺寸按机械常识补全，未经用户确认。")
     for feature in updated.features:
         _complete_smart_feature(feature, base, parsed, text, policy, updated)
 

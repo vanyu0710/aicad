@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 from copy import deepcopy
@@ -41,7 +41,7 @@ from backend.storage import artifact_path
 
 load_dotenv()
 
-app = FastAPI(title="MechCAD IDE API", version="0.2.1")
+app = FastAPI(title="MechCAD IDE API", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -50,7 +50,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-store = SessionStore()
+store = SessionStore(os.getenv("MECHCAD_STORE_PATH") or (Path(__file__).resolve().parent.parent / "work" / "projects.json"))
 events = EventBus()
 
 
@@ -85,11 +85,19 @@ def create_project(request: CreateProjectRequest) -> CreateProjectResponse:
     return CreateProjectResponse(project_id=project.project_id, project=_public_project(project))
 
 
+@app.get("/api/projects")
+def list_projects():
+    return {"projects": [_public_project(p) for p in store.list_projects()]}
 @app.get("/api/projects/{project_id}")
 def get_project(project_id: str):
     return _public_project(_project_or_404(project_id))
 
 
+@app.delete("/api/projects/{project_id}")
+def delete_project(project_id: str):
+    _project_or_404(project_id)
+    store.delete_project(project_id)
+    return {"ok": True}
 @app.patch("/api/projects/{project_id}/settings")
 def update_project_settings(project_id: str, request: ProjectSettingsRequest):
     _project_or_404(project_id)

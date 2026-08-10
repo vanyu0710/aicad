@@ -1,6 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from backend.schemas import DesignSnapshot, FeaturePlanV3, ModelConfig
 from backend.session import SessionStore
@@ -105,5 +107,32 @@ def _snapshot(family: str) -> DesignSnapshot:
     return DesignSnapshot(feature_plan=FeaturePlanV3(part_family=family))
 
 
+
+    def test_persistence_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "projects.json"
+            first = SessionStore(path)
+            project = first.create_project("Persisted")
+            second = SessionStore(path)
+            restored = second.get_project(project.project_id)
+            self.assertEqual(restored.name, "Persisted")
+
+    def test_list_projects_sorted_by_updated_at(self) -> None:
+        store = SessionStore()
+        older = store.create_project("Older")
+        newer = store.create_project("Newer")
+        older.updated_at = "2000-01-01T00:00:00+00:00"
+        names = [project.name for project in store.list_projects()]
+        self.assertEqual(names[0], "Newer")
+        self.assertEqual(set(names), {"Newer", "Older"})
+
+    def test_delete_project_removes_and_raises_for_missing(self) -> None:
+        store = SessionStore()
+        project = store.create_project("Delete me")
+        store.delete_project(project.project_id)
+        with self.assertRaises(KeyError):
+            store.get_project(project.project_id)
+        with self.assertRaises(KeyError):
+            store.delete_project(project.project_id)
 if __name__ == "__main__":
     unittest.main()

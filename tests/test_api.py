@@ -1,11 +1,17 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import io
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+
+# Use an isolated JSON store so API tests never touch work/projects.json.
+os.environ["MECHCAD_STORE_PATH"] = str(Path(tempfile.mkdtemp(prefix="mechcad-test-")) / "projects.json")
 from PIL import Image
 
 import backend.main as main_module
@@ -293,6 +299,26 @@ class MechCADApiTests(unittest.TestCase):
         with self.client.websocket_connect(f"/ws/projects/{project_id}"):
             pass
 
+
+    def test_list_projects_masks_api_keys(self) -> None:
+        project_id = self._create_project()
+        main_module.store.get_project(project_id).settings.vision_api_key = "sk-secret"
+        main_module.store.get_project(project_id).settings.planner_api_key = "sk-secret"
+        response = self.client.get("/api/projects")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertGreaterEqual(len(body["projects"]), 1)
+        listed = next(item for item in body["projects"] if item["project_id"] == project_id)
+        self.assertEqual(listed["settings"]["vision_api_key"], "***configured***")
+        self.assertEqual(listed["settings"]["planner_api_key"], "***configured***")
+
+    def test_delete_project(self) -> None:
+        project_id = self._create_project()
+        response = self.client.delete(f"/api/projects/{project_id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.get(f"/api/projects/{project_id}").status_code, 404)
+        ids = [item["project_id"] for item in self.client.get("/api/projects").json()["projects"]]
+        self.assertNotIn(project_id, ids)
     def _create_project(self) -> str:
         response = self.client.post("/api/projects", json={"name": "api-test"})
         return response.json()["project_id"]

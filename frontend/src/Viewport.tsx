@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
@@ -7,11 +7,13 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 type Props = {
   objUrl?: string;
   stlUrl?: string;
+  breadcrumb?: string;
+  statusLabel?: string;
 };
 
 type ViewPreset = "iso" | "front" | "top" | "right" | "fit";
 
-export default function Viewport({ objUrl, stlUrl }: Props) {
+export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel }: Props) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
@@ -265,7 +267,25 @@ export default function Viewport({ objUrl, stlUrl }: Props) {
         </button>
       </div>
 
+            <div className="viewport-breadcrumb">{breadcrumb || "草稿 / FeaturePlan"}</div>
+      <div className="view-cube" aria-label="ViewCube">
+        <button type="button" title="等轴测视图" onClick={() => setPreset("iso")}>等轴</button>
+        <div className="cube-face-row">
+          <button type="button" title="俯视图" onClick={() => setPreset("top")}>上</button>
+          <button type="button" title="前视图" onClick={() => setPreset("front")}>前</button>
+          <button type="button" title="右视图" onClick={() => setPreset("right")}>右</button>
+        </div>
+        <button type="button" title="适配模型" onClick={() => setPreset("fit")}>适配</button>
+      </div>
+
       <div className="viewport-canvas" ref={mountRef} />
+
+      <div className="viewport-axes" aria-label="坐标轴">
+        <span className="axis-x">X</span>
+        <span className="axis-y">Y</span>
+        <span className="axis-z">Z</span>
+      </div>
+      <div className="viewport-status">{statusLabel || status}</div>
 
       {showOverlay && (
         <div className="viewport-empty">
