@@ -65,6 +65,96 @@ class MechCADApiTests(unittest.TestCase):
         self.assertEqual(fetched.status_code, 200)
         self.assertEqual(fetched.json()["name"], "API test")
 
+    def test_model_test_reports_missing_config_without_key_leak(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "MECHCAD_VISION_API_KEY": "",
+                "MECHCAD_VISION_BASE_URL": "",
+                "MECHCAD_VISION_MODEL": "",
+                "MECHCAD_VISION_PROTOCOL": "",
+            },
+        ):
+            response = self.client.post(
+                "/api/model/test",
+                json={
+                    "role": "vision",
+                    "config": {
+                        "vision_provider": "custom",
+                        "vision_protocol": "openai",
+                        "vision_base_url": "",
+                        "vision_model": "",
+                        "vision_api_key": "",
+                        "planner_provider": "custom",
+                        "planner_protocol": "openai",
+                        "planner_base_url": "",
+                        "planner_model": "",
+                        "planner_api_key": "",
+                        "operation_mode": "strict",
+                        "smart_fill_policy": "suggest_only",
+                    },
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertFalse(body["ok"])
+        self.assertEqual(body["role"], "vision")
+        self.assertIn("配置不完整", body["message"])
+        self.assertTrue(body["diagnostics"]["used_env_fallback"])
+
+    def test_project_response_masks_api_keys(self) -> None:
+        project_id = self._create_project()
+        secret = "sk-real-secret"
+        payload = {
+            "description": "60mm x 30mm x 4mm 的平板",
+            "model_config": {
+                "vision_provider": "custom",
+                "vision_protocol": "openai",
+                "vision_base_url": "https://api.example.test/v1",
+                "vision_model": "vision-test",
+                "vision_api_key": secret,
+                "planner_provider": "custom",
+                "planner_protocol": "openai",
+                "planner_base_url": "https://api.example.test/v1",
+                "planner_model": "planner-test",
+                "planner_api_key": secret,
+                "operation_mode": "strict",
+                "smart_fill_policy": "suggest_only",
+            },
+        }
+        with patch.object(main_module, "run_freecad_worker", side_effect=_fake_worker_ok):
+            response = self.client.post(f"/api/projects/{project_id}/generate", json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        settings = response.json()["settings"]
+        self.assertEqual(settings["vision_api_key"], "***configured***")
+        self.assertEqual(settings["planner_api_key"], "***configured***")
+        self.assertNotIn(secret, response.text)
+
+    def test_project_settings_can_be_saved_without_running_cad(self) -> None:
+        project_id = self._create_project()
+        secret = "sk-settings-secret"
+        payload = {
+            "vision_provider": "custom",
+            "vision_protocol": "openai",
+            "vision_base_url": "https://vision.example.test/v1",
+            "vision_model": "vision-test",
+            "vision_api_key": secret,
+            "planner_provider": "custom",
+            "planner_protocol": "anthropic",
+            "planner_base_url": "https://planner.example.test",
+            "planner_model": "planner-test",
+            "planner_api_key": secret,
+            "operation_mode": "smart",
+            "smart_fill_policy": "limited_fill",
+            "force_real_api": True,
+        }
+        response = self.client.patch(f"/api/projects/{project_id}/settings", json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["settings"]["operation_mode"], "smart")
+        self.assertEqual(response.json()["settings"]["smart_fill_policy"], "limited_fill")
+        self.assertEqual(response.json()["settings"]["vision_api_key"], "***configured***")
+        self.assertEqual(main_module.store.get_project(project_id).settings.vision_api_key, secret)
+
     def test_get_missing_project_is_404(self) -> None:
         response = self.client.get("/api/projects/does-not-exist")
         self.assertEqual(response.status_code, 404)

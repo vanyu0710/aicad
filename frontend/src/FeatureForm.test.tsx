@@ -18,10 +18,9 @@ const SAMPLE_FEATURE = {
 describe("FeatureForm", () => {
   it("renders a labeled input per dimension with units", () => {
     render(<FeatureForm feature={SAMPLE_FEATURE} onSave={vi.fn()} />);
-    expect(screen.getByLabelText("长")).toBeInTheDocument();
-    expect(screen.getByLabelText("宽")).toBeInTheDocument();
-    expect(screen.getByLabelText("长")).toHaveValue(60);
-    // Unfilled dimension shows a pending marker.
+    expect(screen.getByLabelText("长度")).toBeInTheDocument();
+    expect(screen.getByLabelText("宽度")).toBeInTheDocument();
+    expect(screen.getByLabelText("长度")).toHaveValue(60);
     expect(screen.getByText("未确认")).toBeInTheDocument();
     expect(screen.getAllByText("mm").length).toBeGreaterThan(0);
   });
@@ -37,7 +36,7 @@ describe("FeatureForm", () => {
     const onSave = vi.fn();
     render(<FeatureForm feature={SAMPLE_FEATURE} onSave={onSave} />);
 
-    const widthInput = screen.getByLabelText("宽");
+    const widthInput = screen.getByLabelText("宽度");
     await user.clear(widthInput);
     await user.type(widthInput, "30");
 
@@ -57,7 +56,7 @@ describe("FeatureForm", () => {
     const onSave = vi.fn();
     render(<FeatureForm feature={SAMPLE_FEATURE} onSave={onSave} />);
 
-    await user.clear(screen.getByLabelText("长"));
+    await user.clear(screen.getByLabelText("长度"));
     await user.click(screen.getByRole("button", { name: "保存并重新建模" }));
 
     const payload = onSave.mock.calls[0][0];
@@ -81,7 +80,7 @@ describe("FeatureForm", () => {
 
   it("shows a warning when a required dimension is still empty", () => {
     render(<FeatureForm feature={SAMPLE_FEATURE} onSave={vi.fn()} />);
-    expect(screen.getByText(/有未填写尺寸/)).toBeInTheDocument();
+    expect(screen.getByText(/缺少：宽度/)).toBeInTheDocument();
   });
 
   it("does not warn when every dimension has a value", () => {
@@ -93,6 +92,6 @@ describe("FeatureForm", () => {
       },
     };
     render(<FeatureForm feature={filled} onSave={vi.fn()} />);
-    expect(screen.queryByText(/有未填写尺寸/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/缺少：/)).not.toBeInTheDocument();
   });
 });

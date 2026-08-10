@@ -29,6 +29,12 @@ npm run dev
 
 Open `http://127.0.0.1:5173`.
 
+One-step startup on Windows:
+
+```powershell
+.\start-mechcad.cmd
+```
+
 ## Tests
 
 Backend (unit + API integration, uses `unittest`):
@@ -91,7 +97,9 @@ The default path is no longer "AI writes arbitrary Python". The intended chain i
 4. CAD worker maps the validated feature tree to safe CAD operations.
 5. Frontend shows feature tree, 3D preview, questions, logs, and artifacts.
 
-Strict mode uses only explicit drawing or user-confirmed data. Smart mode can suggest assumptions, but unconfirmed inferred dimensions must stay in `assumptions` or `design_review` instead of executable `dimensions`.
+Strict mode uses only explicit drawing or user-confirmed data and blocks CAD when required values are unresolved. Smart mode has three policies: `limited_fill` for conservative engineering completion, `aggressive_fill` for concept generation, and `full_autonomous` for active feature and manufacturing-intent design. Smart assumptions may execute for concept preview, but every inferred dimension is recorded in `assumptions`, `assumption_details`, and `design_review` with evidence and confirmation state.
+
+The current local worker is a controlled Build123d subprocess. Set `MECHCAD_CAD_ENGINE` to keep the runtime label explicit; do not describe this backend as FreeCAD until a FreeCAD executable is actually wired in.
 
 ## Legacy Gradio
 

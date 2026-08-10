@@ -83,7 +83,7 @@ def normalize_ai_plan(raw: dict[str, Any]) -> dict[str, Any]:
         "base_feature": base,
         "features": features,
         "assumptions": _normalize_strings(raw.get("assumptions")),
-        "unresolved": _normalize_unresolved(raw.get("unresolved"), features),
+        "unresolved": _normalize_unresolved(raw.get("unresolved"), base, features),
         "self_checks": raw.get("self_checks") if isinstance(raw.get("self_checks"), dict) else {},
     }
     review = raw.get("design_review")
@@ -278,7 +278,7 @@ def _normalize_strings(raw: Any) -> list[str]:
     return result
 
 
-def _normalize_unresolved(raw: Any, features: list[dict[str, Any]]) -> list[dict[str, str]]:
+def _normalize_unresolved(raw: Any, base: dict[str, Any] | None, features: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Convert heterogeneous unresolved items into [{feature, reason}]."""
     result: list[dict[str, str]] = []
     if isinstance(raw, str):
@@ -292,8 +292,23 @@ def _normalize_unresolved(raw: Any, features: list[dict[str, Any]]) -> list[dict
                 reason = str(item.get("reason") or item.get("text") or item.get("status") or "")
                 if reason:
                     result.append({"feature": feature, "reason": reason})
-    # Features whose executable dimensions are missing must surface to the user
+    # Base and child features whose executable dimensions are missing must surface to the user
     # instead of being silently dropped by the worker.
+    base_required = {
+        "box_base": ("length", "width", "height"),
+        "cylinder_base": ("outer_diameter", "length"),
+        "hollow_cylinder": ("outer_diameter", "inner_diameter", "length"),
+    }
+    if base is not None and base.get("type") in base_required:
+        missing = [name for name in base_required[base["type"]] if name not in (base.get("dimensions") or {})]
+        if missing:
+            result.append(
+                {
+                    "feature": base.get("id", "base"),
+                    "reason": f"{base.get('type')} 缺少可执行基体尺寸: {', '.join(missing)}; 请先确认整体外形尺寸",
+                }
+            )
+
     required = {
         "through_hole": ("diameter",),
         "blind_hole": ("diameter", "depth"),

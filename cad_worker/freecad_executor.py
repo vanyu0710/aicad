@@ -28,6 +28,8 @@ def main() -> int:
 
     report: dict[str, Any] = {
         "ok": False,
+        "engine": "build123d",
+        "worker": "controlled-cad-worker",
         "modeled_features": [],
         "skipped_features": [],
         "warnings": [],
@@ -52,6 +54,7 @@ def main() -> int:
             "obj": str(obj_path),
         }
     except Exception as exc:
+        report["error"] = str(exc)
         report["warnings"].append(str(exc))
     finally:
         (out_dir / "execution_report.json").write_text(
@@ -77,8 +80,7 @@ def _build_part(plan: FeaturePlanV3, report: dict[str, Any]) -> BuildPart:
             raise RuntimeError("FeaturePlan has no base_feature")
         _apply_base(base, report)
         for feature in plan.features:
-            if not _apply_feature(feature, plan, report):
-                report["skipped_features"].append({"feature": feature.id, "reason": "unsupported or incomplete"})
+            _apply_feature(feature, plan, report)
     return part
 
 
@@ -92,7 +94,9 @@ def _apply_base(feature, report: dict[str, Any]) -> None:
         if not _positive(length, width, height):
             raise RuntimeError("box_base missing length/width/height")
         Box(length, width, height, align=(Align.CENTER, Align.CENTER, Align.MIN))
+        feature.execution_status = "modeled"
         report["modeled_features"].append(feature.id)
+        feature.execution_status = "modeled"
         return
 
     if kind in {"cylinder_base", "hollow_cylinder"}:
@@ -121,21 +125,25 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
     dims = feature.dimensions
     axis = feature.placement.axis
     if axis != "Z":
+        _skip(report, feature, "当前受控执行器仅支持 Z 轴特征")
         return False
 
     if kind in {"through_hole", "blind_hole", "counterbore_hole"}:
         diameter = _value(dims, "diameter", "hole_diameter")
         if not _positive(diameter):
+            _skip(report, feature, "缺少有效孔径")
             return False
         depth = _value(dims, "depth")
         if kind == "through_hole":
             depth = _through_depth(plan)
         elif not _positive(depth):
+            _skip(report, feature, "缺少有效孔深")
             return False
         x, y, z = _placement(feature)
         with Locations((x, y, z)):
             Cylinder(radius=diameter / 2.0, height=depth, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.SUBTRACT)
         report["modeled_features"].append(feature.id)
+        feature.execution_status = "modeled"
         return True
 
     if kind in {"rectangular_slot", "rectangular_pocket"}:
@@ -143,11 +151,13 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         width = _value(dims, "width", "slot_width")
         depth = _value(dims, "height", "depth")
         if not _positive(length, width, depth):
+            _skip(report, feature, "缺少有效长度、宽度或深度")
             return False
         x, y, z = _placement(feature)
         with Locations((x, y, z)):
             Box(length, width, depth, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.SUBTRACT)
         report["modeled_features"].append(feature.id)
+        feature.execution_status = "modeled"
         return True
 
     if kind == "annular_groove":
@@ -156,22 +166,29 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         width = _value(dims, "axial_width", "width")
         z_start = _value(dims, "z_start")
         if not _positive(outer, reduced, width) or z_start is None:
+            _skip(report, feature, "环槽缺少槽底外径、轴向宽度或起始位置")
+            return False
+        if z_start < 0 or z_start + width > (_value(plan.base_feature.dimensions, "length") or 0) + 1e-6:
+            _skip(report, feature, "环槽位置超出基体长度，减料与主体不相交")
             return False
         with Locations((0.0, 0.0, z_start)):
             Cylinder(radius=outer / 2.0, height=width, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.SUBTRACT)
             Cylinder(radius=reduced / 2.0, height=width, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.ADD)
         report["modeled_features"].append(feature.id)
+        feature.execution_status = "modeled"
         return True
 
     if kind in {"boss_cylinder"}:
         diameter = _value(dims, "diameter", "outer_diameter")
         height = _value(dims, "height", "length")
         if not _positive(diameter, height):
+            _skip(report, feature, "缺少有效凸台直径或高度")
             return False
         x, y, z = _placement(feature)
         with Locations((x, y, z)):
             Cylinder(radius=diameter / 2.0, height=height, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.ADD)
         report["modeled_features"].append(feature.id)
+        feature.execution_status = "modeled"
         return True
 
     if kind in {"rectangular_pad", "rib_box"}:
@@ -179,11 +196,13 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         width = _value(dims, "width")
         height = _value(dims, "height", "depth")
         if not _positive(length, width, height):
+            _skip(report, feature, "缺少有效长度、宽度或高度")
             return False
         x, y, z = _placement(feature)
         with Locations((x, y, z)):
             Box(length, width, height, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.ADD)
         report["modeled_features"].append(feature.id)
+        feature.execution_status = "modeled"
         return True
 
     if kind == "linear_pattern":
@@ -191,6 +210,7 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         spacing = _value(dims, "spacing", "pitch")
         diameter = _value(dims, "diameter", "hole_diameter")
         if count < 2 or not _positive(spacing, diameter):
+            _skip(report, feature, "线性阵列缺少有效数量、间距或孔径")
             return False
         depth = _through_depth(plan)
         x, y, z = _placement(feature)
@@ -198,6 +218,7 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         with Locations(tuple((x + start + spacing * i, y, z) for i in range(count))):
             Cylinder(radius=diameter / 2.0, height=depth, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.SUBTRACT)
         report["modeled_features"].append(feature.id)
+        feature.execution_status = "modeled"
         return True
 
     if kind == "circular_pattern":
@@ -205,6 +226,7 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         radius = _value(dims, "pitch_radius", "bolt_circle_radius")
         diameter = _value(dims, "diameter", "hole_diameter")
         if count < 2 or not _positive(radius, diameter):
+            _skip(report, feature, "圆周阵列缺少有效数量、节圆半径或孔径")
             return False
         depth = _through_depth(plan)
         x, y, z = _placement(feature)
@@ -212,13 +234,20 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
             with PolarLocations(radius=radius, count=count):
                 Cylinder(radius=diameter / 2.0, height=depth, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.SUBTRACT)
         report["modeled_features"].append(feature.id)
+        feature.execution_status = "modeled"
         return True
 
     if kind in {"fillet", "chamfer"}:
-        report["skipped_features"].append({"feature": feature.id, "reason": "edge selection is not explicit enough for safe automatic fillet/chamfer"})
+        _skip(report, feature, "边选择不明确，无法安全执行圆角或倒角")
         return False
 
+    _skip(report, feature, f"不支持的特征类型：{kind}")
     return False
+
+
+def _skip(report: dict[str, Any], feature, reason: str) -> None:
+    feature.execution_status = "skipped"
+    report["skipped_features"].append({"feature": feature.id, "reason": reason})
 
 
 def _placement(feature) -> tuple[float, float, float]:

@@ -17,7 +17,8 @@ from backend.mechcad_ai.client import (
 )
 from backend.mechcad_ai.normalize import normalize_ai_plan
 from backend.mechcad_ai.prompts import get_prompt, load_prompts
-from backend.schemas import FeaturePlanV3, ModelConfig
+from backend.ai import build_initial_feature_plan
+from backend.schemas import FeaturePlanV3, GenerateRequest, ModelConfig
 
 PLAN_JSON = {
     "schema_version": "3.0",
@@ -184,6 +185,69 @@ class NormalizeTests(unittest.TestCase):
         normalized = normalize_ai_plan({"features": []})
         plan = FeaturePlanV3.model_validate(normalized)
         self.assertIsNone(plan.base_feature)
+
+    def test_missing_base_dimensions_go_to_unresolved(self):
+        normalized = normalize_ai_plan(
+            {
+                "base_feature": {
+                    "id": "base_plate",
+                    "type": "box_base",
+                    "dimensions": {"length": 80},
+                },
+                "features": [],
+            }
+        )
+        reasons = {item["feature"] for item in normalized["unresolved"]}
+        self.assertIn("base_plate", reasons)
+
+
+class StubQualityTests(unittest.TestCase):
+    def test_tube_top_groove_becomes_candidate_with_targeted_question(self):
+        plan, questions = build_initial_feature_plan(
+            "tube outer diameter 50 inner diameter 38 length 300 top groove slot width 10",
+            GenerateRequest(description="tube outer diameter 50 inner diameter 38 length 300 top groove slot width 10"),
+        )
+        self.assertEqual(plan.part_family, "tube")
+        self.assertEqual(plan.base_feature.dimensions["outer_diameter"].value, 50.0)
+        self.assertEqual(plan.base_feature.dimensions["inner_diameter"].value, 38.0)
+        self.assertEqual(plan.base_feature.dimensions["length"].value, 300.0)
+        self.assertEqual(plan.features[0].type, "annular_groove")
+        self.assertEqual(plan.features[0].dimensions["axial_width"].value, 10.0)
+        self.assertEqual(plan.features[0].dimensions["z_start"].value, 290.0)
+        self.assertTrue(any(question.feature_id == "top_groove" for question in questions))
+
+    def test_smart_mode_autonomously_completes_a_tube_concept(self):
+        settings = ModelConfig(operation_mode="smart", smart_fill_policy="limited_fill")
+        request = GenerateRequest(
+            description="一根顶部有环槽的管件",
+            operation_mode="smart",
+            smart_fill_policy="limited_fill",
+        )
+        plan, questions = build_initial_feature_plan(request.description, request, settings=settings)
+        self.assertEqual(plan.base_feature.type, "hollow_cylinder")
+        self.assertIsNotNone(plan.base_feature.dimensions["outer_diameter"].value)
+        self.assertIsNotNone(plan.base_feature.dimensions["inner_diameter"].value)
+        self.assertIsNotNone(plan.base_feature.dimensions["length"].value)
+        self.assertEqual(plan.features[0].type, "annular_groove")
+        self.assertTrue(all(d.value is not None for d in plan.features[0].dimensions.values()))
+        self.assertTrue(plan.self_checks["smart_autonomy"]["executed"])
+        self.assertTrue(any("智能模式工程假设" in item for item in plan.assumptions + plan.features[0].assumptions))
+
+
+    def test_full_autonomous_mode_adds_explainable_support_feature(self):
+        settings = ModelConfig(operation_mode="smart", smart_fill_policy="full_autonomous")
+        request = GenerateRequest(
+            description="support bracket for mounting, no final dimensions provided",
+            operation_mode="smart",
+            smart_fill_policy="full_autonomous",
+        )
+        plan, _ = build_initial_feature_plan(request.description, request, settings=settings)
+        self.assertEqual(plan.autonomy_policy, "full_autonomous")
+        self.assertTrue(plan.design_intent)
+        rib = next(feature for feature in plan.features if feature.id == "autonomous_support_rib")
+        self.assertEqual(rib.type, "rib_box")
+        self.assertEqual(rib.depends_on, [plan.base_feature.id])
+        self.assertTrue(any(item.feature_id == rib.id for item in plan.assumption_details))
 
 
 class PromptTests(unittest.TestCase):

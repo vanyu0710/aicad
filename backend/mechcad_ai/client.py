@@ -71,6 +71,96 @@ def has_configured_model(settings, role: str) -> bool:
     return bool(config["api_key"] and config["base_url"] and config["model"])
 
 
+def test_model_connection(settings, role: str) -> dict[str, Any]:
+    """Make a minimal text-only request and return safe diagnostics for the UI."""
+    if role not in ENV_ROLE_MAP:
+        raise ValueError(f"unsupported model role: {role}")
+    config = resolve_role_config(settings, role)
+    used_env_fallback = any(
+        not str(getattr(settings, f"{role}_{key}", "") or "").strip()
+        for key in ("api_key", "base_url", "model", "protocol")
+    )
+    if not config["api_key"] or not config["base_url"] or not config["model"]:
+        return {
+            "ok": False,
+            "message": "配置不完整：请填写 API Key、Base URL 和模型名称，或确认 .env 已配置。",
+            "endpoint": None,
+            "status_code": None,
+            "content_type": None,
+            "used_env_fallback": used_env_fallback,
+        }
+    messages = [{"role": "user", "content": "只回复 OK，不要输出其他内容。"}]
+    if config["protocol"] == "anthropic":
+        urls = [f"{config['base_url']}/v1/messages"]
+    else:
+        urls = [f"{config['base_url']}/chat/completions"]
+        if not config["base_url"].endswith("/v1"):
+            urls.append(f"{config['base_url']}/v1/chat/completions")
+    last: dict[str, Any] = {}
+    for url in urls:
+        try:
+            if config["protocol"] == "anthropic":
+                response = _post_anthropic_test(config, url, messages)
+            else:
+                response = _post_openai_test(config, url, messages)
+        except requests.RequestException as exc:
+            last = {"message": f"网络不可达：{exc}", "endpoint": url}
+            continue
+        content_type = response.headers.get("content-type", "")
+        last = {
+            "endpoint": url,
+            "status_code": response.status_code,
+            "content_type": content_type,
+        }
+        if response.ok:
+            if "json" not in content_type.lower():
+                last["message"] = "服务返回成功但不是 JSON，Base URL 可能指向网页地址。"
+                continue
+            try:
+                data = response.json()
+                if (config["protocol"] == "anthropic" and data.get("content")) or (
+                    config["protocol"] != "anthropic" and data.get("choices")
+                ):
+                    last["ok"] = True
+                    last["message"] = "连接成功：最小文本请求已返回。"
+                    return last | {"used_env_fallback": used_env_fallback}
+                last["message"] = "返回 JSON 但缺少标准模型响应字段。"
+            except ValueError:
+                last["message"] = "服务返回内容无法解析为 JSON。"
+        else:
+            if response.status_code in (401, 403):
+                last["message"] = f"认证失败（HTTP {response.status_code}）：请检查 API Key、权限和模型访问范围。"
+            elif response.status_code == 404:
+                last["message"] = "接口不存在：请检查协议与 Base URL，OpenAI 兼容应指向 API 根路径。"
+            else:
+                last["message"] = f"服务请求失败（HTTP {response.status_code}）。"
+        if "text/html" in content_type.lower():
+            last["message"] += " 返回的是 HTML，Base URL 很可能填成了网站首页。"
+    return {"ok": False, **last, "used_env_fallback": used_env_fallback}
+
+
+def _post_openai_test(config: dict[str, str], url: str, messages: list[dict[str, Any]]):
+    return requests.post(
+        url,
+        headers={"Authorization": f"Bearer {config['api_key']}", "Content-Type": "application/json"},
+        json={"model": config["model"], "messages": messages, "max_tokens": 8, "temperature": 0},
+        timeout=20,
+    )
+
+
+def _post_anthropic_test(config: dict[str, str], url: str, messages: list[dict[str, Any]]):
+    return requests.post(
+        url,
+        headers={
+            "X-Api-Key": config["api_key"],
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
+        json={"model": config["model"], "messages": messages, "max_tokens": 8, "temperature": 0},
+        timeout=20,
+    )
+
+
 def chat_completion(
     settings,
     role: str,

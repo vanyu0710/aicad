@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 OperationMode = Literal["strict", "smart"]
-SmartFillPolicy = Literal["suggest_only", "limited_fill", "aggressive_fill"]
+SmartFillPolicy = Literal["suggest_only", "limited_fill", "aggressive_fill", "full_autonomous"]
 FeatureOperation = Literal["base", "add", "remove", "modify", "pattern"]
 StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error"]
 
@@ -65,6 +65,7 @@ class FeatureV3(BaseModel):
     unresolved: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     confirmed_by_user: bool = False
+    execution_status: Literal["unresolved", "modeled", "skipped", "failed"] = "unresolved"
 
     @field_validator("id", "type", "evidence", mode="before")
     @classmethod
@@ -77,7 +78,18 @@ class DesignReview(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
     manufacturability: list[str] = Field(default_factory=list)
     standards: list[str] = Field(default_factory=list)
+    blocking: list[str] = Field(default_factory=list)
     requires_confirmation: bool = False
+
+
+class DesignAssumption(BaseModel):
+    feature_id: str
+    dimension: str
+    value: float | str | None = None
+    reason: str
+    source: Literal["drawing", "user", "assumption", "derived", "unknown"] = "assumption"
+    confidence: float | None = None
+    confirmed_by_user: bool = False
 
 
 class ClarificationQuestion(BaseModel):
@@ -87,6 +99,12 @@ class ClarificationQuestion(BaseModel):
     dimension_refs: list[str] = Field(default_factory=list)
     required: bool = True
     options: list[str] = Field(default_factory=list)
+    reason: str = ""
+    impact: str = ""
+    answer_type: Literal["text", "number", "choice"] = "text"
+    default_value: str | None = None
+    unit: str | None = None
+    answer: str | None = None
 
 
 class FeaturePlanV3(BaseModel):
@@ -98,9 +116,12 @@ class FeaturePlanV3(BaseModel):
         default_factory=lambda: {"origin": "model origin", "main_axis": "Z", "handedness": "right"}
     )
     part_family: str = "unknown"
+    autonomy_policy: SmartFillPolicy | None = None
+    design_intent: str = ""
     base_feature: FeatureV3 | None = None
     features: list[FeatureV3] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
+    assumption_details: list[DesignAssumption] = Field(default_factory=list)
     unresolved: list[dict[str, Any]] = Field(default_factory=list)
     design_review: DesignReview = Field(default_factory=DesignReview)
     self_checks: dict[str, Any] = Field(default_factory=dict)
@@ -132,6 +153,16 @@ class FeaturePlanV3(BaseModel):
                 if dim.source == "assumption" and not dim.confirmed_by_user:
                     self.design_review.requires_confirmation = True
                     self.assumptions.append(dim.evidence or f"{feature.id}.{name}")
+                    if not any(item.feature_id == feature.id and item.dimension == name for item in self.assumption_details):
+                        self.assumption_details.append(
+                            DesignAssumption(
+                                feature_id=feature.id,
+                                dimension=name,
+                                value=dim.value,
+                                reason=dim.evidence or "AI 推断尺寸",
+                                confidence=dim.confidence,
+                            )
+                        )
         return self
 
 
@@ -167,8 +198,30 @@ class ModelConfig(BaseModel):
     planner_api_key: str = ""
     planner_protocol: str = "openai"
     operation_mode: OperationMode = "strict"
-    smart_fill_policy: SmartFillPolicy = "suggest_only"
+    smart_fill_policy: SmartFillPolicy = "limited_fill"
     force_real_api: bool = False
+
+
+class ModelTestRequest(BaseModel):
+    role: Literal["vision", "planner"]
+    config: ModelConfig
+
+
+class ModelTestDiagnostics(BaseModel):
+    status_code: int | None = None
+    content_type: str | None = None
+    endpoint: str | None = None
+    used_env_fallback: bool = False
+
+
+class ModelTestResponse(BaseModel):
+    ok: bool
+    role: str
+    provider: str
+    protocol: str
+    model: str
+    message: str
+    diagnostics: ModelTestDiagnostics = Field(default_factory=ModelTestDiagnostics)
 
 
 class ProjectState(BaseModel):
@@ -195,12 +248,16 @@ class GenerateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     description: str
-    operation_mode: OperationMode = "strict"
-    smart_fill_policy: SmartFillPolicy = "suggest_only"
+    operation_mode: OperationMode | None = None
+    smart_fill_policy: SmartFillPolicy | None = None
     settings: ModelConfig | None = Field(default=None, alias="model_config")
     image_data_url: str | None = None
     image_name: str | None = None
     clarification_answers: str = ""
+
+
+class ProjectSettingsRequest(ModelConfig):
+    """Settings are saved separately so mode changes do not require a model run."""
 
 
 class ChatEditRequest(BaseModel):

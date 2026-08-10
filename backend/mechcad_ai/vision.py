@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-"""Vision model integration: read a hand sketch + description into a structured
-vision-analysis JSON, following the centralized prompts.yaml prompt."""
+"""Vision model integration: read a sketch + description into structured JSON."""
 
 import base64
 import io
@@ -18,8 +17,7 @@ def analyze_sketch(
     description: str,
     settings,
 ) -> dict[str, Any] | None:
-    """Run the vision model over the sketch. Returns the vision JSON dict, or None
-    when no vision model is configured (caller falls back to local analysis)."""
+    """Run the vision model over the sketch, returning None when unavailable."""
     if not has_configured_model(settings, "vision"):
         return None
 
@@ -28,7 +26,13 @@ def analyze_sketch(
 
     messages = [
         {"role": "system", "content": prompt},
-        {"role": "user", "content": f"用户功能描述：\n{description}\n\n请按上述规则读取并返回 JSON。"},
+        {
+            "role": "user",
+            "content": (
+                f"用户功能描述：\n{description}\n\n"
+                "请按系统规则读取草图，返回严格 JSON。不要输出解释性散文。"
+            ),
+        },
     ]
     try:
         content = chat_completion(

@@ -1,16 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  API_ROOT,
   artifactUrl,
   chatProject,
   createProject,
   generateProject,
   patchFeature,
   redo,
+  updateProjectSettings,
   undo,
   type ModelConfig,
   type ProjectState,
 } from "./api";
-import FeatureForm from "./FeatureForm";
+import BottomTaskPanel, { type TaskTab } from "./layout/BottomTaskPanel";
+import LeftManager from "./layout/LeftManager";
+import RightPropertyManager from "./layout/RightPropertyManager";
+import TopCommandBar from "./layout/TopCommandBar";
 import Viewport from "./Viewport";
 
 const defaultSettings: ModelConfig = {
@@ -25,47 +30,98 @@ const defaultSettings: ModelConfig = {
   planner_api_key: "",
   planner_protocol: "openai",
   operation_mode: "strict",
-  smart_fill_policy: "suggest_only",
+  smart_fill_policy: "limited_fill",
 };
+
+const statusLabels: Record<string, string> = {
+  empty: "等待输入",
+  ready: "可以生成",
+  analyzing: "正在分析",
+  awaiting_questions: "等待确认尺寸",
+  ready_to_review: "模型已生成",
+  failed: "执行失败",
+};
+
+function getModeLabel(settings: ModelConfig) {
+  return settings.operation_mode === "strict" ? "严格模式" : "智能模式";
+}
 
 export default function App() {
   const [project, setProject] = useState<ProjectState | null>(null);
-  const [description, setDescription] = useState("一件带孔或带槽的机械零件，请先按整体到细节规划。");
+  const [description, setDescription] = useState(
+    "一件带孔或带槽的机械零件，请按整体到细节规划。已知尺寸请直接写明，未知尺寸请留给系统提问。",
+  );
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [settings, setSettings] = useState<ModelConfig>(defaultSettings);
   const [selectedFeatureId, setSelectedFeatureId] = useState("");
   const [chatMessage, setChatMessage] = useState("");
   const [events, setEvents] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [backendState, setBackendState] = useState<"connected" | "offline">("connected");
+  const [activeTaskTab, setActiveTaskTab] = useState<TaskTab>("questions");
+  const [settingsDirty, setSettingsDirty] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsNotice, setSettingsNotice] = useState("");
 
   useEffect(() => {
-    createProject("MechCAD IDE").then(({ project }) => {
-      setProject(project);
-      setSettings(project.settings);
-    });
+    createProject("MechCAD IDE")
+      .then(({ project }) => {
+        setProject(project);
+        setSettings(project.settings);
+        setSettingsDirty(false);
+        setBackendState("connected");
+      })
+      .catch((err) => {
+        setBackendState("offline");
+        setError(`后端连接失败：${String(err)}。请确认 FastAPI 已在 8001 端口启动。`);
+      });
   }, []);
 
   useEffect(() => {
     if (!project?.project_id) {
       return;
     }
-    const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const socket = new WebSocket(`${wsProtocol}://${window.location.host}/ws/projects/${project.project_id}`);
+
+    const wsRoot = (import.meta as any).env?.VITE_WS_ROOT || API_ROOT.replace(/^http/, "ws");
+    const socket = new WebSocket(`${wsRoot}/ws/projects/${project.project_id}`);
+    let socketConnected = false;
+
+    socket.onopen = () => {
+      socketConnected = true;
+      setEvents((items) => ["实时事件连接已建立", ...items]);
+    };
     socket.onmessage = (message) => {
       const event = JSON.parse(message.data);
-      setEvents((items) => [`${event.stage}: ${event.message}`, ...items].slice(0, 80));
+      const payloadLogs = Array.isArray(event.payload?.logs) ? event.payload.logs : [];
+      const detail = payloadLogs.map((item: unknown) => String(item));
+      setEvents((items) => [`${event.stage}: ${event.message}`, ...detail, ...items].slice(0, 100));
     };
-    socket.onerror = () => setEvents((items) => ["WebSocket 连接异常，REST API 仍可用", ...items]);
+    socket.onerror = () => {
+      if (!socketConnected) {
+        setEvents((items) => ["实时事件暂不可用，REST API 仍可继续操作", ...items]);
+      }
+    };
+    socket.onclose = () => {
+      if (socketConnected) {
+        setEvents((items) => ["实时事件连接已关闭，页面仍可继续操作", ...items]);
+      }
+    };
+
     return () => socket.close();
   }, [project?.project_id]);
 
+  const plan = project?.current.feature_plan;
+  const questions = project?.current.questions || [];
+  const unresolved = plan?.unresolved || [];
+  const review = plan?.design_review;
+
   const features = useMemo(() => {
-    const plan = project?.current.feature_plan;
     if (!plan) {
       return [];
     }
     return [plan.base_feature, ...(plan.features || [])].filter(Boolean);
-  }, [project]);
+  }, [plan]);
 
   const selectedFeature = useMemo(
     () => features.find((feature: any) => feature.id === selectedFeatureId) || features[0],
@@ -73,20 +129,83 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (selectedFeature) {
+    if (selectedFeature?.id) {
       setSelectedFeatureId(selectedFeature.id);
+    } else if (!features.length) {
+      setSelectedFeatureId("");
     }
-  }, [selectedFeature?.id, project?.current.id]);
+  }, [features.length, selectedFeature?.id, project?.current.id]);
+
+  useEffect(() => {
+    if (questions.some((question) => question.required !== false && !question.answer)) {
+      setActiveTaskTab("questions");
+    }
+  }, [questions]);
 
   const runId = project?.current.artifacts.run_id;
-  const stlUrl = artifactUrl(runId, "stl");
-  const objUrl = artifactUrl(runId, "obj");
+  const hasModel = Boolean(project?.current.artifacts.stl || project?.current.artifacts.obj);
+  const canUndo = Boolean(project?.history?.length);
+  const canRedo = Boolean(project?.redo_stack?.length);
+  const hasRequiredQuestions = questions.some((question) => question.required !== false && !question.answer);
+
+  const status = !project
+    ? "empty"
+    : error && !busy
+      ? "failed"
+      : busy
+        ? "analyzing"
+        : hasRequiredQuestions
+          ? "awaiting_questions"
+          : hasModel
+            ? "ready_to_review"
+            : description.trim() || imageFile
+              ? "ready"
+              : "empty";
+
+  const replaceProject = (next: ProjectState, draftSettings: ModelConfig = settings) => {
+    const mergedSettings = mergeSettings(next.settings, draftSettings);
+    setProject({ ...next, settings: mergedSettings });
+    setSettings(mergedSettings);
+    setBackendState("connected");
+  };
+
+  const onSettingsChange = (next: ModelConfig) => {
+    setSettings(next);
+    setSettingsDirty(true);
+    setSettingsNotice("");
+  };
+
+  const onApplySettings = async (nextSettings: ModelConfig = settings) => {
+    if (!project || settingsSaving) {
+      return;
+    }
+    setSettingsSaving(true);
+    setError("");
+    setSettingsNotice("");
+    try {
+      const next = await updateProjectSettings(project.project_id, nextSettings);
+      replaceProject(next, nextSettings);
+      setSettingsDirty(false);
+      setSettingsNotice("配置已保存到当前项目。");
+    } catch (err) {
+      if (isMissingSettingsEndpoint(err)) {
+        setSettingsDirty(true);
+        setSettingsNotice("当前后端尚未支持即时保存；草稿会在下一次生成时自动应用。");
+      } else {
+        setError(`配置保存失败：${String(err)}`);
+      }
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
 
   const onGenerate = async () => {
     if (!project) {
       return;
     }
     setBusy(true);
+    setError("");
+    setEvents((items) => ["已提交生成任务", ...items]);
     try {
       const imageDataUrl = imageFile ? await fileToDataUrl(imageFile) : null;
       const next = await generateProject(project.project_id, {
@@ -97,7 +216,10 @@ export default function App() {
         image_data_url: imageDataUrl,
         image_name: imageFile?.name,
       });
-      setProject(next);
+      replaceProject(next);
+      setSettingsDirty(false);
+    } catch (err) {
+      setError(`生成失败：${String(err)}`);
     } finally {
       setBusy(false);
     }
@@ -108,10 +230,13 @@ export default function App() {
       return;
     }
     setBusy(true);
+    setError("");
     try {
       const next = await chatProject(project.project_id, chatMessage.trim());
-      setProject(next);
+      replaceProject(next);
       setChatMessage("");
+    } catch (err) {
+      setError(`修改失败：${String(err)}`);
     } finally {
       setBusy(false);
     }
@@ -122,137 +247,169 @@ export default function App() {
       return;
     }
     setBusy(true);
+    setError("");
     try {
       const next = await patchFeature(project.project_id, selectedFeature.id, payload);
-      setProject(next);
+      replaceProject(next);
+    } catch (err) {
+      setError(`保存特征失败：${String(err)}`);
     } finally {
       setBusy(false);
     }
   };
 
+  const onClarificationContinue = async (answers: string) => {
+    if (!project) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const imageDataUrl = imageFile ? await fileToDataUrl(imageFile) : null;
+      const next = await generateProject(project.project_id, {
+        description,
+        operation_mode: settings.operation_mode,
+        smart_fill_policy: settings.smart_fill_policy,
+        model_config: settings,
+        image_data_url: imageDataUrl,
+        image_name: imageFile?.name,
+        clarification_answers: answers,
+      });
+      replaceProject(next);
+      setSettingsDirty(false);
+    } catch (err) {
+      setError(`确认问题失败：${String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onUndo = () => {
+    if (project && canUndo) {
+      undo(project.project_id).then(replaceProject).catch((err) => setError(`撤销失败：${String(err)}`));
+    }
+  };
+
+  const onRedo = () => {
+    if (project && canRedo) {
+      redo(project.project_id).then(replaceProject).catch((err) => setError(`重做失败：${String(err)}`));
+    }
+  };
+
   return (
     <main className="app-shell">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">MECHCAD IDE</p>
-          <h1>栖云</h1>
-        </div>
-        <div className="top-actions">
-          <button onClick={() => project && undo(project.project_id).then(setProject)} disabled={!project || busy}>
-            撤销
-          </button>
-          <button onClick={() => project && redo(project.project_id).then(setProject)} disabled={!project || busy}>
-            重做
-          </button>
-          <button className="primary" onClick={onGenerate} disabled={!project || busy}>
-            {busy ? "处理中" : "生成模型"}
-          </button>
-        </div>
-      </header>
+      <TopCommandBar
+        backendState={backendState}
+        busy={busy}
+        canRedo={canRedo}
+        canUndo={canUndo}
+        engineLabel={plan ? "Build123d Worker（受控执行）" : "等待 FeaturePlan"}
+        modeLabel={getModeLabel(settings)}
+        projectId={project?.project_id}
+        projectName={project?.name || "MechCAD IDE"}
+        statusLabel={statusLabels[status]}
+        onGenerate={onGenerate}
+        onRedo={onRedo}
+        onUndo={onUndo}
+      />
 
-      <section className="ide-grid">
-        <aside className="panel left-pane">
-          <h2>项目输入</h2>
-          <label className="field">
-            <span>草图图片</span>
-            <input type="file" accept="image/png,image/jpeg" onChange={(event) => setImageFile(event.target.files?.[0] || null)} />
-          </label>
-          <label className="field">
-            <span>零件功能描述</span>
-            <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={4} />
-          </label>
+      {error && <div className="status-banner error">{error}</div>}
 
-          <h2>模型配置</h2>
-          <label className="field">
-            <span>工作模式</span>
-            <select value={settings.operation_mode} onChange={(event) => setSettings({ ...settings, operation_mode: event.target.value as any })}>
-              <option value="strict">严格模式：不猜尺寸</option>
-              <option value="smart">智能模式：先建议再确认</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>视觉模型</span>
-            <input value={settings.vision_model} onChange={(event) => setSettings({ ...settings, vision_model: event.target.value })} placeholder="例如 qwen-vl-plus / gpt-4o" />
-          </label>
-          <label className="field">
-            <span>建模规划模型</span>
-            <input value={settings.planner_model} onChange={(event) => setSettings({ ...settings, planner_model: event.target.value })} placeholder="例如 MiniMax-M3 / Claude / GPT" />
-          </label>
+      <section className="workspace-grid">
+        <LeftManager
+          busy={busy}
+          description={description}
+          features={features}
+          imageFile={imageFile}
+          modeLabel={getModeLabel(settings)}
+          partFamily={plan?.part_family}
+          projectId={project?.project_id}
+          projectName={project?.name || "未创建项目"}
+          selectedFeatureId={selectedFeatureId}
+        settings={settings}
+        settingsDirty={settingsDirty}
+        settingsNotice={settingsNotice}
+        settingsSaving={settingsSaving}
+        statusLabel={statusLabels[status]}
+          unresolvedCount={unresolved.length}
+          onDescriptionChange={setDescription}
+          onImageChange={setImageFile}
+          onSelectFeature={setSelectedFeatureId}
+          onApplySettings={onApplySettings}
+          onSettingsChange={onSettingsChange}
+        />
 
-          <h2>特征树</h2>
-          <div className="feature-tree">
-            {features.map((feature: any) => (
-              <button
-                key={feature.id}
-                className={feature.id === selectedFeatureId ? "selected" : ""}
-                onClick={() => setSelectedFeatureId(feature.id)}
-              >
-                <strong>{feature.id}</strong>
-                <span>{feature.type}</span>
-              </button>
-            ))}
-            {!features.length && <p className="muted">生成后这里会显示 SW 风格特征树。</p>}
+        <section className="workspace-center" aria-label="3D 视口">
+          <div className="center-statusbar">
+            <div>
+              <strong>{hasModel ? "模型预览" : hasRequiredQuestions ? "等待参数确认" : "空视口"}</strong>
+              <span>{plan ? `零件族：${plan.part_family}` : "上传草图或输入已知尺寸后开始"}</span>
+            </div>
+            <div className="center-statusbar-actions">
+              <span className={hasModel ? "status-dot ok" : hasRequiredQuestions ? "status-dot warn" : "status-dot idle"} />
+              <span>{statusLabels[status]}</span>
+            </div>
           </div>
-        </aside>
-
-        <section className="center-pane">
-          <Viewport objUrl={objUrl} stlUrl={stlUrl} />
+          <Viewport objUrl={artifactUrl(runId, "obj")} stlUrl={artifactUrl(runId, "stl")} />
           <div className="artifact-row">
-            <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "step")}>STEP</a>
-            <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "stl")}>STL</a>
-            <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "execution_report")}>执行报告</a>
+            <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "step")}>
+              STEP
+            </a>
+            <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "stl")}>
+              STL
+            </a>
+            <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "obj")}>
+              OBJ
+            </a>
+            <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "execution_report")}>
+              执行报告
+            </a>
           </div>
         </section>
 
-        <aside className="panel right-pane">
-          <h2>属性面板</h2>
-          {selectedFeature ? (
-            <FeatureForm
-              key={selectedFeature.id}
-              feature={selectedFeature}
-              busy={busy}
-              onSave={onSaveFeature}
-            />
-          ) : (
-            <p className="muted">请选择一个特征。</p>
-          )}
-        </aside>
+        <RightPropertyManager
+          busy={busy}
+          review={review}
+          selectedFeature={selectedFeature}
+          unresolved={unresolved}
+          onSaveFeature={onSaveFeature}
+        />
 
-        <section className="bottom-pane">
-          <div className="panel chat-panel">
-            <h2>AI 对话修改</h2>
-            <div className="chat-row">
-              <input
-                value={chatMessage}
-                onChange={(event) => setChatMessage(event.target.value)}
-                placeholder="例如：把中心孔改成 12mm；删除顶部槽；新增 4 个 M6 孔"
-              />
-              <button onClick={onChat} disabled={busy}>发送</button>
-            </div>
-            <div className="question-list">
-              {(project?.current.questions || []).map((question) => (
-                <article key={question.id}>
-                  <p>{question.text}</p>
-                  <span>{question.options.join(" / ")}</span>
-                </article>
-              ))}
-            </div>
-          </div>
-
-          <div className="panel log-panel">
-            <h2>日志与 FeaturePlan</h2>
-            <pre>{events.join("\n") || "等待后端事件..."}</pre>
-            <textarea
-              className="code-box"
-              readOnly
-              value={project ? JSON.stringify(project.current.feature_plan, null, 2) : ""}
-              rows={10}
-            />
-          </div>
-        </section>
+        <BottomTaskPanel
+          activeTab={activeTaskTab}
+          busy={busy}
+          chatMessage={chatMessage}
+          events={events}
+          featurePlan={project?.current.feature_plan}
+          questions={questions}
+          reportMarkdown={project?.current.report_markdown}
+          review={review}
+          unresolved={unresolved}
+          onChatMessageChange={setChatMessage}
+          onClarificationContinue={onClarificationContinue}
+          onSendChat={onChat}
+          onTabChange={setActiveTaskTab}
+        />
       </section>
     </main>
   );
+}
+
+const SECRET_MASK = "***configured***";
+
+function mergeSettings(publicSettings: ModelConfig, draftSettings: ModelConfig): ModelConfig {
+  const merged = { ...publicSettings };
+  for (const role of ["vision", "planner"] as const) {
+    const key = `${role}_api_key` as "vision_api_key" | "planner_api_key";
+    if (publicSettings[key] === SECRET_MASK && draftSettings[key] && draftSettings[key] !== SECRET_MASK) {
+      merged[key] = draftSettings[key];
+    }
+  }
+  return merged;
+}
+
+function isMissingSettingsEndpoint(error: unknown) {
+  return /not found|http 404/i.test(String(error));
 }
 
 function fileToDataUrl(file: File) {

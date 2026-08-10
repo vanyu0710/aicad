@@ -33,18 +33,18 @@ type Props = {
 };
 
 const DIM_LABELS: Record<string, string> = {
-  length: "长",
-  width: "宽",
-  height: "高",
+  length: "长度",
+  width: "宽度",
+  height: "高度/厚度",
   thickness: "厚度",
   outer_diameter: "外径",
   inner_diameter: "内径",
-  diameter: "直径",
+  diameter: "直径/孔径",
   hole_diameter: "孔径",
   depth: "深度",
-  axial_width: "轴向宽度",
+  axial_width: "轴向槽宽",
   reduced_outer_diameter: "槽底外径",
-  z_start: "起始高度 Z",
+  z_start: "槽起点 Z",
   count: "数量",
   spacing: "间距",
   pitch_radius: "分度圆半径",
@@ -55,7 +55,7 @@ const DIM_LABELS: Record<string, string> = {
 
 const SOURCE_TEXT: Record<string, string> = {
   drawing: "图纸",
-  user: "用户",
+  user: "用户确认",
   assumption: "推断",
   derived: "推导",
   unknown: "未知",
@@ -97,7 +97,7 @@ export default function FeatureForm({ feature, busy, onSave }: Props) {
       dimensions[key] = {
         value: hasValue ? numeric : null,
         unit: original.unit || "mm",
-        evidence: original.evidence || (hasValue ? "用户手动填写" : ""),
+        evidence: original.evidence || (hasValue ? "用户在属性面板手动填写" : ""),
         source: hasValue ? "user" : original.source || "unknown",
         confirmed_by_user: hasValue,
       };
@@ -115,7 +115,9 @@ export default function FeatureForm({ feature, busy, onSave }: Props) {
     });
   };
 
-  const hasUnconfirmed = Object.values(dimValues).some((v) => (v ?? "").trim() === "");
+  const missingKeys = Object.entries(feature?.dimensions || {})
+    .filter(([, dim]: [string, any]) => dim?.value == null)
+    .map(([key]) => DIM_LABELS[key] || key);
 
   return (
     <div className="feat-form">
@@ -124,6 +126,12 @@ export default function FeatureForm({ feature, busy, onSave }: Props) {
         <span className="feat-type">{feature?.type}</span>
         <span className="feat-op">{feature?.operation}</span>
       </div>
+
+      {missingKeys.length > 0 && (
+        <div className="note-warn">
+          缺少：{missingKeys.join("、")}。补齐后点击保存，系统会重新建模。
+        </div>
+      )}
 
       <h3 className="feat-section">尺寸参数</h3>
       <div className="dim-grid">
@@ -144,6 +152,7 @@ export default function FeatureForm({ feature, busy, onSave }: Props) {
             />
             <span className="dim-unit">{dim?.unit || "mm"}</span>
             {dim?.value == null && <span className="dim-pending" title="该尺寸尚无确认值">未确认</span>}
+            {dim?.source && <small className="dim-source">{SOURCE_TEXT[dim.source] || dim.source}</small>}
           </div>
         ))}
       </div>
@@ -177,18 +186,14 @@ export default function FeatureForm({ feature, busy, onSave }: Props) {
             <option value="Y">Y</option>
             <option value="Z">Z</option>
           </select>
-          <span className="dim-unit"></span>
+          <span className="dim-unit" />
         </div>
       </div>
 
       <div className="feat-actions">
         <label className="confirm-check">
-          <input
-            type="checkbox"
-            checked={confirmed}
-            onChange={(event) => setConfirmed(event.target.checked)}
-          />
-          <span>这些尺寸已与用户确认</span>
+          <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+          <span>这些尺寸已经与用户确认</span>
         </label>
         <div className="action-buttons">
           <button onClick={handleSave} disabled={busy} className="primary">
@@ -198,7 +203,6 @@ export default function FeatureForm({ feature, busy, onSave }: Props) {
       </div>
 
       <div className="feat-notes">
-        {hasUnconfirmed && <p className="note-warn">有未填写尺寸，保存后该特征可能无法完整建模，未确认项会进入待澄清问题。</p>}
         {feature?.evidence && <p className="note-evidence">证据：{feature.evidence}</p>}
         {feature?.unresolved?.length > 0 && (
           <ul className="note-unresolved">

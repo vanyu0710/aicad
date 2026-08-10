@@ -10,8 +10,25 @@ export type ModelConfig = {
   planner_api_key: string;
   planner_protocol: string;
   operation_mode: "strict" | "smart";
-  smart_fill_policy: "suggest_only" | "limited_fill" | "aggressive_fill";
+  smart_fill_policy: "suggest_only" | "limited_fill" | "aggressive_fill" | "full_autonomous";
   force_real_api?: boolean;
+};
+
+export type ModelRole = "vision" | "planner";
+
+export type ModelTestResult = {
+  ok: boolean;
+  role: ModelRole;
+  provider: string;
+  protocol: string;
+  model: string;
+  message: string;
+  diagnostics: {
+    status_code?: number;
+    content_type?: string;
+    endpoint?: string;
+    used_env_fallback: boolean;
+  };
 };
 
 export type ProjectState = {
@@ -24,6 +41,17 @@ export type ProjectState = {
     id: string;
     feature_plan: {
       part_family: string;
+      autonomy_policy?: ModelConfig["smart_fill_policy"];
+      design_intent?: string;
+      assumptions?: string[];
+      assumption_details?: {
+        feature_id: string;
+        dimension: string;
+        value?: number | string | null;
+        reason: string;
+        confidence?: number;
+        confirmed_by_user: boolean;
+      }[];
       base_feature: any;
       features: any[];
       unresolved: { feature: string; reason: string }[];
@@ -32,6 +60,7 @@ export type ProjectState = {
         suggestions: string[];
         manufacturability: string[];
         standards: string[];
+        blocking?: string[];
         requires_confirmation: boolean;
       };
     };
@@ -43,7 +72,19 @@ export type ProjectState = {
       report?: string;
       execution_report?: string;
     };
-    questions: { id: string; text: string; feature_id?: string; options: string[] }[];
+    questions: {
+      id: string;
+      text: string;
+      feature_id?: string;
+      dimension_refs?: string[];
+      options: string[];
+      required?: boolean;
+      reason?: string;
+      impact?: string;
+      answer_type?: "text" | "number" | "choice";
+      unit?: string;
+      answer?: string;
+    }[];
     report_markdown: string;
     logs: string[];
   };
@@ -51,7 +92,7 @@ export type ProjectState = {
   redo_stack: unknown[];
 };
 
-const API_ROOT = "";
+export const API_ROOT = (import.meta as any).env?.VITE_API_ROOT || "http://127.0.0.1:8001";
 
 export async function createProject(name = "MechCAD Project") {
   const response = await fetch(`${API_ROOT}/api/projects`, {
@@ -59,12 +100,21 @@ export async function createProject(name = "MechCAD Project") {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
   });
-  return (await response.json()) as { project_id: string; project: ProjectState };
+  return parseResponse<{ project_id: string; project: ProjectState }>(response);
 }
 
 export async function fetchProject(projectId: string) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}`);
-  return (await response.json()) as ProjectState;
+  return parseResponse<ProjectState>(response);
+}
+
+export async function updateProjectSettings(projectId: string, settings: ModelConfig) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  return parseResponse<ProjectState>(response);
 }
 
 export async function generateProject(projectId: string, payload: any) {
@@ -73,7 +123,7 @@ export async function generateProject(projectId: string, payload: any) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  return (await response.json()) as ProjectState;
+  return parseResponse<ProjectState>(response);
 }
 
 export async function chatProject(projectId: string, message: string) {
@@ -82,7 +132,7 @@ export async function chatProject(projectId: string, message: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
   });
-  return (await response.json()) as ProjectState;
+  return parseResponse<ProjectState>(response);
 }
 
 export async function patchFeature(projectId: string, featureId: string, payload: any) {
@@ -91,17 +141,40 @@ export async function patchFeature(projectId: string, featureId: string, payload
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  return (await response.json()) as ProjectState;
+  return parseResponse<ProjectState>(response);
 }
 
 export async function undo(projectId: string) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}/undo`, { method: "POST" });
-  return (await response.json()) as ProjectState;
+  return parseResponse<ProjectState>(response);
 }
 
 export async function redo(projectId: string) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}/redo`, { method: "POST" });
-  return (await response.json()) as ProjectState;
+  return parseResponse<ProjectState>(response);
+}
+
+export async function testModelConnection(role: ModelRole, config: ModelConfig) {
+  const response = await fetch(`${API_ROOT}/api/model/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role, config }),
+  });
+  return parseResponse<ModelTestResult>(response);
+}
+
+async function parseResponse<T>(response: Response): Promise<T> {
+  const raw = await response.text();
+  let data: any;
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    throw new Error(`后端返回了非 JSON（HTTP ${response.status}）。请确认后端地址和服务状态。`);
+  }
+  if (!response.ok) {
+    throw new Error(data?.detail || data?.message || `请求失败（HTTP ${response.status}）`);
+  }
+  return data as T;
 }
 
 export function artifactUrl(runId: string | undefined, kind: "step" | "stl" | "obj" | "report" | "execution_report") {

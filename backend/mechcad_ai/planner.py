@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-"""Planner model integration: turn the vision JSON (+ description) into a
-FeaturePlanV3, and apply incremental chat edits. Follows prompts.yaml."""
+"""Planner model integration: turn vision JSON + description into FeaturePlanV3."""
 
 import json
 from typing import Any
@@ -17,9 +16,13 @@ def generate_feature_plan(
     vision_json: dict[str, Any] | None,
     settings,
     mode: str = "strict",
+    smart_fill_policy: str = "limited_fill",
 ) -> FeaturePlanV3 | None:
-    """Ask the planner model for a FeaturePlanV3 JSON. Returns None when the model
-    is not configured or the call fails (caller falls back to the local stub)."""
+    """Ask the planner model for a FeaturePlanV3 JSON.
+
+    Returns None when the model is not configured, fails, or returns an invalid
+    plan, so the caller can fall back to the deterministic local planner.
+    """
     if not has_configured_model(settings, "planner"):
         return None
 
@@ -28,15 +31,16 @@ def generate_feature_plan(
     context = {
         "用户功能描述": description,
         "视觉读图 JSON": vision_json or {},
-        "保守种子计划（仅作参考，可扩展）": seed,
+        "保守种子计划，仅作参考，可扩展": seed,
         "模式": mode,
+        "智能补全策略": smart_fill_policy,
     }
     messages = [
         {"role": "system", "content": prompt},
         {
             "role": "user",
             "content": json.dumps(context, ensure_ascii=False, indent=2)
-            + "\n\n请输出 FeaturePlanV3 JSON（schema_version=3.0）。",
+            + "\n\n请输出 FeaturePlanV3 JSON（schema_version=3.0）。不要输出 Markdown 或解释性散文。",
         },
     ]
     try:
@@ -57,11 +61,8 @@ def generate_feature_plan(
     except Exception:
         return None
     if plan.base_feature is None:
-        # A plan without a base feature cannot be modeled; treat as invalid so
-        # the caller falls back to the deterministic stub instead of building
-        # an empty model.
         return None
-    plan.assumptions.append("FeaturePlan 由 planner 模型生成，未经用户逐项确认。")
+    plan.assumptions.append("FeaturePlan 由 planner 模型生成，尚未经过用户逐项确认。")
     return plan
 
 
@@ -70,8 +71,7 @@ def chat_edit_feature_plan(
     message: str,
     settings,
 ) -> FeaturePlanV3 | None:
-    """Ask the planner model for an incremental edit of the current FeaturePlanV3.
-    Returns None on missing config / failure / invalid output."""
+    """Ask the planner model for an incremental edit of the current plan."""
     if not has_configured_model(settings, "planner"):
         return None
 
@@ -79,13 +79,15 @@ def chat_edit_feature_plan(
     context = {
         "当前 FeaturePlanV3": plan.model_dump(),
         "用户自然语言修改": message,
+        "模式": getattr(settings, "operation_mode", "strict"),
+        "智能补全策略": getattr(settings, "smart_fill_policy", "limited_fill"),
     }
     messages = [
         {"role": "system", "content": prompt},
         {
             "role": "user",
             "content": json.dumps(context, ensure_ascii=False, indent=2)
-            + "\n\n请输出修改后的完整 FeaturePlanV3 JSON。",
+            + "\n\n请输出修改后的完整 FeaturePlanV3 JSON。不要输出 diff、Markdown 或解释性散文。",
         },
     ]
     try:
@@ -111,8 +113,7 @@ def chat_edit_feature_plan(
 
 
 def _stub_seed_from_description(description: str) -> dict[str, Any]:
-    """A minimal, honest seed so the planner has a starting skeleton even without
-    a vision JSON. Never contains invented executable dimensions."""
+    """A minimal, honest seed that never invents executable dimensions."""
     return {
         "schema_version": "3.0",
         "units": "mm",
@@ -120,6 +121,7 @@ def _stub_seed_from_description(description: str) -> dict[str, Any]:
         "base_feature": None,
         "features": [],
         "unresolved": [{"feature": "base_body", "reason": "等待视觉读图或用户确认尺寸"}],
+        "description": description,
     }
 
 
