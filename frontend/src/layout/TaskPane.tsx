@@ -1,6 +1,7 @@
-﻿import ClarificationPanel from "../ClarificationPanel";
+import ClarificationPanel from "../ClarificationPanel";
 import { artifactUrl } from "../api";
 import { useAppStore, type TaskTab } from "../store";
+import { useT } from "../i18n";
 
 type Props = {
   busy: boolean;
@@ -23,14 +24,15 @@ type Props = {
   onChatMessageChange: (value: string) => void;
   onClarificationContinue: (answers: string) => void;
   onSendChat: () => void;
+  onClose?: () => void;
 };
 
-const tabs: { id: TaskTab; label: string }[] = [
-  { id: "assistant", label: "AI 助手" },
-  { id: "review", label: "设计评审" },
-  { id: "logs", label: "执行日志" },
-  { id: "plan", label: "FeaturePlan" },
-  { id: "export", label: "导出" },
+const tabs: { id: TaskTab; labelKey: string }[] = [
+  { id: "assistant", labelKey: "task.assistant" },
+  { id: "review", labelKey: "task.review" },
+  { id: "logs", labelKey: "task.logs" },
+  { id: "plan", labelKey: "task.plan" },
+  { id: "export", labelKey: "task.export" },
 ];
 
 export default function TaskPane({
@@ -47,9 +49,10 @@ export default function TaskPane({
   onChatMessageChange,
   onClarificationContinue,
   onSendChat,
+  onClose,
 }: Props) {
+  const t = useT();
   const rightTab = useAppStore((state) => state.ui.rightTab);
-  const rightCollapsed = useAppStore((state) => state.ui.rightCollapsed);
   const setUi = useAppStore((state) => state.setUi);
   const unanswered = questions.filter((question) => question.required !== false && !question.answer).length;
 
@@ -58,12 +61,12 @@ export default function TaskPane({
       <div className="task-pane-header">
         <div>
           <span className="eyebrow">TASK PANE</span>
-          <h2>AI 助手</h2>
+          <h2>{t("task.assistant")}</h2>
         </div>
         <div className="manager-header-actions">
           <span className="workspace-chip">{engineLabel}</span>
-          <button type="button" className="collapse-button" onClick={() => setUi({ rightCollapsed: !rightCollapsed })}>
-            {rightCollapsed ? "展开" : "折叠"}
+          <button type="button" className="collapse-button drawer-close-button" title={t("manager.close.title")} onClick={() => onClose?.()}>
+            {t("manager.close")}
           </button>
         </div>
       </div>
@@ -78,7 +81,7 @@ export default function TaskPane({
             className={rightTab === tab.id ? "task-tab active" : "task-tab"}
             onClick={() => setUi({ rightTab: tab.id })}
           >
-            {tab.label}
+            {t(tab.labelKey)}
             {tab.id === "assistant" && unanswered > 0 && <span>{unanswered}</span>}
             {tab.id === "review" && unresolved.length > 0 && <span>{unresolved.length}</span>}
           </button>
@@ -96,7 +99,7 @@ export default function TaskPane({
                 <input
                   value={chatMessage}
                   onChange={(event) => onChatMessageChange(event.target.value)}
-                  placeholder="例如：把中心孔改成 12mm；删除顶部槽；新增 4 个 M6 孔。"
+                  placeholder={t("task.chat.placeholder")}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
@@ -105,30 +108,30 @@ export default function TaskPane({
                   }}
                 />
                 <button type="button" onClick={onSendChat} disabled={busy || !chatMessage.trim()}>
-                  发送
+                  {t("task.chat.send")}
                 </button>
               </div>
-              <p className="hint">自然语言修改会生成新的设计快照，可用顶部撤销 / 重做回到旧版本。</p>
+              <p className="hint">{t("task.chat.hint")}</p>
             </div>
           </div>
         )}
 
         {rightTab === "review" && (
           <div className="task-pane-section review-pane">
-            {!review && !unresolved.length && <p className="empty-note">生成后这里会显示制造性、标准化和风险提示。</p>}
+            {!review && !unresolved.length && <p className="empty-note">{t("task.review.empty")}</p>}
             {unresolved.length > 0 && (
               <div className="unresolved-box">
-                <strong>必须先解决</strong>
+                <strong>{t("task.review.blockers")}</strong>
                 <ul>
                   {unresolved.map((item, index) => (
-                    <li key={`${item.feature}-${index}`}>{`${item.feature}：${item.reason}`}</li>
+                    <li key={`${item.feature}-${index}`}>{`${item.feature}: ${item.reason}`}</li>
                   ))}
                 </ul>
               </div>
             )}
             {featurePlan?.assumptions?.length > 0 && (
               <div className="unresolved-box assumption-box">
-                <strong>AI 设计假设</strong>
+                <strong>{t("task.review.assumptions")}</strong>
                 <ul>
                   {featurePlan.assumptions.map((item: string, index: number) => <li key={index}>{item}</li>)}
                 </ul>
@@ -136,11 +139,11 @@ export default function TaskPane({
             )}
             {review && (
               <div className="review-grid">
-                <ReviewColumn title="阻塞项" items={review.blocking || []} />
-                <ReviewColumn title="警告" items={review.warnings || []} />
-                <ReviewColumn title="建议" items={review.suggestions || []} />
-                <ReviewColumn title="可制造性" items={review.manufacturability || []} />
-                <ReviewColumn title="标准" items={review.standards || []} />
+                <ReviewColumn title={t("task.review.blocking")} items={review.blocking || []} />
+                <ReviewColumn title={t("task.review.warnings")} items={review.warnings || []} />
+                <ReviewColumn title={t("task.review.suggestions")} items={review.suggestions || []} />
+                <ReviewColumn title={t("task.review.manufacturability")} items={review.manufacturability || []} />
+                <ReviewColumn title={t("task.review.standards")} items={review.standards || []} />
               </div>
             )}
           </div>
@@ -148,7 +151,7 @@ export default function TaskPane({
 
         {rightTab === "logs" && (
           <div className="task-pane-section">
-            <pre className="log-box">{events.join("\n") || "等待后端事件..."}</pre>
+            <pre className="log-box">{events.join("\n") || t("task.logs.waiting")}</pre>
           </div>
         )}
 
@@ -167,16 +170,16 @@ export default function TaskPane({
         {rightTab === "export" && (
           <div className="task-pane-section export-pane">
             <div className="export-summary">
-              <strong>导出产物</strong>
-              <span>生成成功后，STEP、STL、OBJ 与执行报告可直接下载。</span>
+              <strong>{t("task.export.title")}</strong>
+              <span>{t("task.export.hint")}</span>
             </div>
             <div className="export-list">
               <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "step")}>STEP</a>
               <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "stl")}>STL</a>
               <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "obj")}>OBJ</a>
-              <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "execution_report")}>执行报告</a>
+              <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "execution_report")}>{t("app.artifact.report")}</a>
             </div>
-            <p className="hint">{engineLabel} 只执行校验过的 FeaturePlan，不执行任意 AI Python。</p>
+            <p className="hint">{t("task.export.safe", { engine: engineLabel })}</p>
           </div>
         )}
       </div>
@@ -185,10 +188,11 @@ export default function TaskPane({
 }
 
 function ReviewColumn({ title, items }: { title: string; items: string[] }) {
+  const t = useT();
   return (
     <section className="review-column">
       <h3>{title}</h3>
-      {items.length ? items.map((item, index) => <p key={index}>{item}</p>) : <span className="empty-note">暂无</span>}
+      {items.length ? items.map((item, index) => <p key={index}>{item}</p>) : <span className="empty-note">{t("task.empty")}</span>}
     </section>
   );
 }

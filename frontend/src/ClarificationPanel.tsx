@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useT } from "./i18n";
 
 type Question = {
   id: string;
@@ -23,8 +24,9 @@ export default function ClarificationPanel({
   onContinue: (answers: string) => void;
   disabled?: boolean;
 }) {
+  const t = useT();
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  if (!questions.length) return <p className="muted">暂无必答问题。若模型与实际不符，可在 AI 对话中描述要修改的尺寸或特征。</p>;
+  if (!questions.length) return <p className="muted">{t("clarification.empty")}</p>;
 
   const update = (id: string, value: string) => setAnswers((prev) => ({ ...prev, [id]: value }));
   const complete = questions.every((question) => question.required === false || answers[question.id]?.trim());
@@ -34,13 +36,13 @@ export default function ClarificationPanel({
       {questions.map((question) => (
         <article className="clarification-card" key={question.id}>
           <strong>{question.text}</strong>
-          {question.feature_id && <p><b>关联特征：</b>{question.feature_id}</p>}
-          {question.dimension_refs?.length ? <p><b>需要补充：</b>{question.dimension_refs.join("、")}</p> : null}
-          {question.reason && <p><b>为什么需要：</b>{question.reason}</p>}
-          {question.impact && <p><b>对模型的影响：</b>{question.impact}</p>}
+          {question.feature_id && <p><b>{t("clarification.feature")}</b>{question.feature_id}</p>}
+          {question.dimension_refs?.length ? <p><b>{t("clarification.dimensions")}</b>{question.dimension_refs.join(t("clarification.dim_sep"))}</p> : null}
+          {question.reason && <p><b>{t("clarification.reason")}</b>{question.reason}</p>}
+          {question.impact && <p><b>{t("clarification.impact")}</b>{question.impact}</p>}
           {question.answer_type === "choice" && question.options.length ? (
             <select value={answers[question.id] || ""} onChange={(event) => update(question.id, event.target.value)}>
-              <option value="">请选择</option>
+              <option value="">{t("clarification.select")}</option>
               {question.options.map((option) => <option value={option} key={option}>{option}</option>)}
             </select>
           ) : (
@@ -49,15 +51,15 @@ export default function ClarificationPanel({
                 type={question.answer_type === "number" ? "number" : "text"}
                 value={answers[question.id] || ""}
                 onChange={(event) => update(question.id, event.target.value)}
-                placeholder={question.default_value ? `建议值：${question.default_value}` : "例如：槽宽 5mm，距端面 10mm，贯穿"}
+                placeholder={question.default_value ? t("clarification.default", { value: question.default_value }) : t("clarification.placeholder")}
               />
               {question.unit && <span>{question.unit}</span>}
             </div>
           )}
         </article>
       ))}
-      <button className="primary" disabled={disabled || !complete} onClick={() => onContinue(Object.values(answers).join("；"))}>
-        确认答案并继续建模
+      <button className="primary" disabled={disabled || !complete} onClick={() => onContinue(Object.values(answers).join("; "))}>
+        {t("clarification.confirm")}
       </button>
     </div>
   );

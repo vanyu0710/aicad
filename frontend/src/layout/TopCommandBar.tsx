@@ -1,5 +1,6 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import { useAppStore } from "../store";
+import { useT } from "../i18n";
 
 type Props = {
   backendState: "connected" | "offline";
@@ -14,6 +15,7 @@ type Props = {
   onRedo: () => void;
   onUndo: () => void;
   onNewProject: () => void;
+  onRenameProject: () => void;
   onBackToStart: () => void;
   onOpenSettings: () => void;
 };
@@ -31,10 +33,17 @@ export default function TopCommandBar({
   onRedo,
   onUndo,
   onNewProject,
+  onRenameProject,
   onBackToStart,
   onOpenSettings,
 }: Props) {
+  const t = useT();
   const setUi = useAppStore((state) => state.setUi);
+  const focusMode = useAppStore((state) => state.ui.focusMode);
+  const leftDrawerOpen = useAppStore((state) => state.ui.leftDrawerOpen);
+  const rightDrawerOpen = useAppStore((state) => state.ui.rightDrawerOpen);
+  const leftTab = useAppStore((state) => state.ui.leftTab);
+  const rightTab = useAppStore((state) => state.ui.rightTab);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
 
   const run = (action: () => void) => {
@@ -42,106 +51,145 @@ export default function TopCommandBar({
     action();
   };
 
-  const menus: Record<string, { label: string; action: () => void; disabled?: boolean }[]> = {
+  const openLeft = (tab: typeof leftTab) => setUi({ leftTab: tab, leftDrawerOpen: true });
+  const openRight = (tab: typeof rightTab) => setUi({ rightTab: tab, rightDrawerOpen: true });
+
+  const menus: Record<string, { labelKey: string; action: () => void; disabled?: boolean }[]> = {
     file: [
-      { label: "新建项目", action: onNewProject },
-      { label: "回到启动页", action: onBackToStart },
+      { labelKey: "menu.new_project", action: onNewProject },
+      { labelKey: "menu.rename_project", action: onRenameProject },
+      { labelKey: "menu.back_start", action: onBackToStart },
     ],
     edit: [
-      { label: "撤销", action: onUndo, disabled: !canUndo },
-      { label: "重做", action: onRedo, disabled: !canRedo },
+      { labelKey: "menu.undo", action: onUndo, disabled: !canUndo },
+      { labelKey: "menu.redo", action: onRedo, disabled: !canRedo },
     ],
     view: [
-      { label: "特征树", action: () => setUi({ leftTab: "feature" }) },
-      { label: "AI 助手", action: () => setUi({ rightTab: "assistant" }) },
-      { label: "设计评审", action: () => setUi({ rightTab: "review" }) },
-      { label: "导出", action: () => setUi({ rightTab: "export" }) },
+      { labelKey: "menu.feature_tree", action: () => openLeft("feature") },
+      { labelKey: "menu.assistant", action: () => openRight("assistant") },
+      { labelKey: "menu.review", action: () => openRight("review") },
+      { labelKey: "menu.export", action: () => openRight("export") },
     ],
-    tools: [{ label: "设置中心", action: onOpenSettings }],
+    tools: [{ labelKey: "menu.settings", action: onOpenSettings }],
     help: [
-      { label: "关于栖云", action: () => setUi({ commandTab: "ai" }) },
+      { labelKey: "menu.about", action: () => setUi({ commandTab: "ai", rightDrawerOpen: true, rightTab: "assistant" }) },
     ],
   };
 
   const commands = [
-    { id: "features", label: "特征", action: () => setUi({ leftTab: "feature" }) },
-    { id: "sketch", label: "属性", action: () => setUi({ leftTab: "property" }) },
-    { id: "evaluate", label: "评估", action: () => setUi({ rightTab: "review" }) },
-    { id: "ai", label: "AI 助手", action: () => setUi({ rightTab: "assistant" }) },
+    {
+      id: "features",
+      labelKey: "cmd.features",
+      action: () => openLeft("feature"),
+      active: leftDrawerOpen && leftTab === "feature",
+    },
+    {
+      id: "sketch",
+      labelKey: "cmd.sketch",
+      action: () => openLeft("property"),
+      active: leftDrawerOpen && leftTab === "property",
+    },
+    {
+      id: "evaluate",
+      labelKey: "cmd.evaluate",
+      action: () => openRight("review"),
+      active: rightDrawerOpen && rightTab === "review",
+    },
+    {
+      id: "ai",
+      labelKey: "cmd.ai",
+      action: () => openRight("assistant"),
+      active: rightDrawerOpen && rightTab === "assistant",
+    },
   ];
 
+  const menuLabels: Record<string, string> = {
+    file: t("menu.file"),
+    edit: t("menu.edit"),
+    view: t("menu.view"),
+    tools: t("menu.tools"),
+    help: t("menu.help"),
+  };
+
   return (
-    <header className="top-shell">
-      <div className="title-bar">
+    <header className={`top-shell${focusMode ? " focus-mode" : ""}`}>
+      <div className="title-bar compact-top">
         <div className="brand-block">
           <p className="eyebrow">MECHCAD AI CAD IDE</p>
-          <h1>栖云</h1>
+          <h1>{t("top.brand")}</h1>
         </div>
         <div className="title-project">
           <strong>{projectName}</strong>
           <span>{engineLabel}</span>
         </div>
+        <div className="menu-bar">
+          {Object.entries(menus).map(([key, items]) => (
+            <div className="menu-wrap" key={key}>
+              <button
+                type="button"
+                className={openMenu === key ? "menu-button active" : "menu-button"}
+                onClick={() => setOpenMenu((current) => (current === key ? null : key))}
+                onBlur={() => setOpenMenu(null)}
+              >
+                {menuLabels[key]}
+              </button>
+              {openMenu === key && (
+                <div className="menu-dropdown" onMouseDown={(event) => event.preventDefault()}>
+                  {items.map((item) => (
+                    <button
+                      type="button"
+                      key={item.labelKey}
+                      disabled={item.disabled}
+                      onClick={() => run(item.action)}
+                    >
+                      {t(item.labelKey)}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          <div className="command-tabs" role="tablist">
+            {commands.map((command) => (
+              <button
+                type="button"
+                key={command.id}
+                className={command.active ? "command-tab active" : "command-tab"}
+                onClick={command.action}
+              >
+                {t(command.labelKey)}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="title-status">
           <span className={backendState === "connected" ? "workspace-chip ok" : "workspace-chip danger"}>
-            {backendState === "connected" ? "后端已连接" : "后端离线"}
+            {backendState === "connected" ? t("startup.backend.connected") : t("startup.backend.offline")}
           </span>
           <span className="workspace-chip">{statusLabel}</span>
           <span className="workspace-chip">{modeLabel}</span>
         </div>
         <div className="quick-actions">
-          <button type="button" title="设置中心 (Ctrl+,)" onClick={onOpenSettings}>
-            设置
+          <button
+            type="button"
+            title={t("top.focus.title")}
+            className={focusMode ? "focus-toggle active" : "focus-toggle"}
+            onClick={() => setUi({ focusMode: !focusMode })}
+          >
+            {t("top.focus")}
           </button>
-          <button type="button" title="撤销 (Ctrl+Z)" onClick={onUndo} disabled={busy || !canUndo}>
-            撤销
+          <button type="button" title={t("top.settings.title")} onClick={onOpenSettings}>
+            {t("top.settings")}
           </button>
-          <button type="button" title="重做 (Ctrl+Y)" onClick={onRedo} disabled={busy || !canRedo}>
-            重做
+          <button type="button" title={t("top.undo.title")} onClick={onUndo} disabled={busy || !canUndo}>
+            {t("menu.undo")}
           </button>
-          <button type="button" className="primary" title="生成或重新计算模型 (Ctrl+G)" onClick={onGenerate} disabled={busy}>
-            {busy ? "处理中" : "生成 / 重算"}
+          <button type="button" title={t("top.redo.title")} onClick={onRedo} disabled={busy || !canRedo}>
+            {t("menu.redo")}
           </button>
-        </div>
-      </div>
-
-      <div className="menu-bar">
-        {Object.entries(menus).map(([key, items]) => (
-          <div className="menu-wrap" key={key}>
-            <button
-              type="button"
-              className={openMenu === key ? "menu-button active" : "menu-button"}
-              onClick={() => setOpenMenu((current) => (current === key ? null : key))}
-              onBlur={() => setOpenMenu(null)}
-            >
-              {key === "file" ? "文件" : key === "edit" ? "编辑" : key === "view" ? "视图" : key === "tools" ? "工具" : "帮助"}
-            </button>
-            {openMenu === key && (
-              <div className="menu-dropdown" onMouseDown={(event) => event.preventDefault()}>
-                {items.map((item) => (
-                  <button
-                    type="button"
-                    key={item.label}
-                    disabled={item.disabled}
-                    onClick={() => run(item.action)}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-        <div className="command-tabs" role="tablist">
-          {commands.map((command) => (
-            <button
-              type="button"
-              key={command.id}
-              className="command-tab"
-              onClick={command.action}
-            >
-              {command.label}
-            </button>
-          ))}
+          <button type="button" className="primary" title={t("top.generate.title")} onClick={onGenerate} disabled={busy}>
+            {busy ? t("top.busy") : t("top.generate")}
+          </button>
         </div>
       </div>
     </header>

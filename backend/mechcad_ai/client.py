@@ -71,8 +71,11 @@ def has_configured_model(settings, role: str) -> bool:
     return bool(config["api_key"] and config["base_url"] and config["model"])
 
 
-def test_model_connection(settings, role: str) -> dict[str, Any]:
+def test_model_connection(settings, role: str, language: str = "zh") -> dict[str, Any]:
     """Make a minimal text-only request and return safe diagnostics for the UI."""
+    def msg(zh: str, en: str) -> str:
+        return en if language == "en" else zh
+
     if role not in ENV_ROLE_MAP:
         raise ValueError(f"unsupported model role: {role}")
     config = resolve_role_config(settings, role)
@@ -83,13 +86,13 @@ def test_model_connection(settings, role: str) -> dict[str, Any]:
     if not config["api_key"] or not config["base_url"] or not config["model"]:
         return {
             "ok": False,
-            "message": "配置不完整：请填写 API Key、Base URL 和模型名称，或确认 .env 已配置。",
+            "message": msg("配置不完整：请填写 API Key、Base URL 和模型名称，或确认 .env 已配置。", "Configuration is incomplete: provide API Key, Base URL, and model name, or confirm .env is configured."),
             "endpoint": None,
             "status_code": None,
             "content_type": None,
             "used_env_fallback": used_env_fallback,
         }
-    messages = [{"role": "user", "content": "只回复 OK，不要输出其他内容。"}]
+    messages = [{"role": "user", "content": msg("只回复 OK，不要输出其他内容。", "Reply with OK only and nothing else.")}]
     if config["protocol"] == "anthropic":
         urls = [f"{config['base_url']}/v1/messages"]
     else:
@@ -104,7 +107,7 @@ def test_model_connection(settings, role: str) -> dict[str, Any]:
             else:
                 response = _post_openai_test(config, url, messages)
         except requests.RequestException as exc:
-            last = {"message": f"网络不可达：{exc}", "endpoint": url}
+            last = {"message": msg(f"网络不可达：{exc}", f"Network unreachable: {exc}"), "endpoint": url}
             continue
         content_type = response.headers.get("content-type", "")
         last = {
@@ -114,7 +117,7 @@ def test_model_connection(settings, role: str) -> dict[str, Any]:
         }
         if response.ok:
             if "json" not in content_type.lower():
-                last["message"] = "服务返回成功但不是 JSON，Base URL 可能指向网页地址。"
+                last["message"] = msg("服务返回成功但不是 JSON，Base URL 可能指向网页地址。", "Service returned success but not JSON; Base URL may point to a website page.")
                 continue
             try:
                 data = response.json()
@@ -122,20 +125,20 @@ def test_model_connection(settings, role: str) -> dict[str, Any]:
                     config["protocol"] != "anthropic" and data.get("choices")
                 ):
                     last["ok"] = True
-                    last["message"] = "连接成功：最小文本请求已返回。"
+                    last["message"] = msg("连接成功：最小文本请求已返回。", "Connection successful: the minimal text request returned.")
                     return last | {"used_env_fallback": used_env_fallback}
-                last["message"] = "返回 JSON 但缺少标准模型响应字段。"
+                last["message"] = msg("返回 JSON 但缺少标准模型响应字段。", "Returned JSON but is missing standard model response fields.")
             except ValueError:
-                last["message"] = "服务返回内容无法解析为 JSON。"
+                last["message"] = msg("服务返回内容无法解析为 JSON。", "Service response could not be parsed as JSON.")
         else:
             if response.status_code in (401, 403):
-                last["message"] = f"认证失败（HTTP {response.status_code}）：请检查 API Key、权限和模型访问范围。"
+                last["message"] = msg(f"认证失败（HTTP {response.status_code}）：请检查 API Key、权限和模型访问范围。", f"Authentication failed (HTTP {response.status_code}): check API Key, permissions, and model access scope.")
             elif response.status_code == 404:
-                last["message"] = "接口不存在：请检查协议与 Base URL，OpenAI 兼容应指向 API 根路径。"
+                last["message"] = msg("接口不存在：请检查协议与 Base URL，OpenAI 兼容应指向 API 根路径。", "Endpoint not found: check the protocol and Base URL; an OpenAI-compatible endpoint should point to the API root.")
             else:
-                last["message"] = f"服务请求失败（HTTP {response.status_code}）。"
+                last["message"] = msg(f"服务请求失败（HTTP {response.status_code}）。", f"Service request failed (HTTP {response.status_code}).")
         if "text/html" in content_type.lower():
-            last["message"] += " 返回的是 HTML，Base URL 很可能填成了网站首页。"
+            last["message"] += msg(" 返回的是 HTML，Base URL 很可能填成了网站首页。", " The response is HTML; Base URL is probably the website homepage.")
     return {"ok": False, **last, "used_env_fallback": used_env_fallback}
 
 

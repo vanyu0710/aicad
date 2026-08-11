@@ -1,8 +1,13 @@
-﻿import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
 import SettingsDialog from "./SettingsDialog";
-import { DEFAULT_SETTINGS } from "./store";
+import { DEFAULT_SETTINGS, useAppStore } from "./store";
+
+beforeEach(() => {
+  localStorage.clear();
+  useAppStore.setState({ language: "zh" });
+});
 
 describe("SettingsDialog", () => {
   it("renders nothing when closed", () => {
@@ -43,6 +48,29 @@ describe("SettingsDialog", () => {
     expect(screen.getByText("建模规划模型")).toBeInTheDocument();
   });
 
+  it("switches the interface language", async () => {
+    const user = userEvent.setup();
+    render(
+      <SettingsDialog
+        open
+        settings={DEFAULT_SETTINGS}
+        dirty={false}
+        saving={false}
+        notice=""
+        startupMode="always"
+        onClose={vi.fn()}
+        onChange={vi.fn()}
+        onApply={vi.fn()}
+        onStartupModeChange={vi.fn()}
+      />,
+    );
+    const selects = screen.getAllByRole("combobox");
+    await user.selectOptions(selects[0], "en");
+    expect(useAppStore.getState().language).toBe("en");
+    expect(localStorage.getItem("mechcad_language")).toBe("en");
+    expect(screen.getByText("Settings")).toBeInTheDocument();
+  });
+
   it("updates startup behavior", async () => {
     const user = userEvent.setup();
     const onStartupModeChange = vi.fn();
@@ -61,7 +89,7 @@ describe("SettingsDialog", () => {
       />,
     );
     const selects = screen.getAllByRole("combobox");
-    await user.selectOptions(selects[0], "first");
+    await user.selectOptions(selects[1], "first");
     expect(onStartupModeChange).toHaveBeenCalledWith("first");
   });
 });

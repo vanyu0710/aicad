@@ -1,12 +1,46 @@
-﻿import { create } from "zustand";
+import { create } from "zustand";
 import type { ModelConfig, ProjectState } from "./api";
 
+export type Lang = "zh" | "en";
 export type ManagerTab = "feature" | "property" | "configuration";
 export type TaskTab = "assistant" | "review" | "logs" | "plan" | "export";
 export type StartupMode = "always" | "first" | "off";
 
+export const DEFAULT_DESCRIPTION_ZH =
+  "一件带孔或带槽的机械零件，请按整体到细节规划。已知尺寸请直接写明，未知尺寸请留给系统提问。";
+export const DEFAULT_DESCRIPTION_EN =
+  "A mechanical part with holes or slots. Plan from the overall shape to details. Write known dimensions directly; leave unknown values for the system to ask.";
+export const LANGUAGE_KEY = "mechcad_language";
 export const STARTUP_KEY = "mechcad_startup_mode";
 export const STARTUP_SEEN_KEY = "mechcad_startup_seen";
+export const UI_PERSIST_KEY = "mechcad_ui_persist";
+export const MIN_DRAWER_WIDTH = 300;
+export const MAX_DRAWER_WIDTH = 520;
+
+export function clampDrawerWidth(value: number) {
+  return Math.min(MAX_DRAWER_WIDTH, Math.max(MIN_DRAWER_WIDTH, Math.round(value)));
+}
+
+export function readStoredUi(): Pick<UiState, "leftWidth" | "rightWidth" | "focusMode"> {
+  try {
+    const stored = JSON.parse(localStorage.getItem(UI_PERSIST_KEY) || "{}") as Partial<UiState>;
+    return {
+      leftWidth: clampDrawerWidth(stored.leftWidth || 380),
+      rightWidth: clampDrawerWidth(stored.rightWidth || 360),
+      focusMode: Boolean(stored.focusMode),
+    };
+  } catch {
+    return { leftWidth: 380, rightWidth: 360, focusMode: false };
+  }
+}
+
+function writeStoredUi(ui: UiState) {
+  localStorage.setItem(UI_PERSIST_KEY, JSON.stringify({
+    leftWidth: ui.leftWidth,
+    rightWidth: ui.rightWidth,
+    focusMode: ui.focusMode,
+  }));
+}
 
 export const DEFAULT_SETTINGS: ModelConfig = {
   vision_provider: "custom",
@@ -26,10 +60,11 @@ export const DEFAULT_SETTINGS: ModelConfig = {
 export type UiState = {
   leftTab: ManagerTab;
   rightTab: TaskTab;
-  leftCollapsed: boolean;
-  rightCollapsed: boolean;
+  leftDrawerOpen: boolean;
+  rightDrawerOpen: boolean;
   leftWidth: number;
   rightWidth: number;
+  focusMode: boolean;
   settingsOpen: boolean;
   commandTab: string;
 };
@@ -39,6 +74,7 @@ type AppState = {
   description: string;
   imageFile: File | null;
   settings: ModelConfig;
+  language: Lang;
   selectedFeatureId: string;
   chatMessage: string;
   events: string[];
@@ -56,6 +92,7 @@ type AppState = {
   setDescription: (value: string) => void;
   setImageFile: (file: File | null) => void;
   setSettings: (settings: ModelConfig) => void;
+  setLanguage: (language: Lang) => void;
   setSelectedFeatureId: (featureId: string) => void;
   setChatMessage: (value: string) => void;
   addEvents: (items: string[]) => void;
@@ -71,6 +108,15 @@ type AppState = {
   setSettingsNotice: (notice: string) => void;
   setUi: (patch: Partial<UiState>) => void;
 };
+
+export function readLanguage(): Lang {
+  const stored = localStorage.getItem(LANGUAGE_KEY);
+  return stored === "zh" || stored === "en" ? stored : "zh";
+}
+
+export function writeLanguage(language: Lang) {
+  localStorage.setItem(LANGUAGE_KEY, language);
+}
 
 export function readStartupMode(): StartupMode {
   const stored = localStorage.getItem(STARTUP_KEY);
@@ -100,7 +146,7 @@ export function markStartupSeen() {
 
 export const useAppStore = create<AppState>((set) => ({
   project: null,
-  description: "一件带孔或带槽的机械零件，请按整体到细节规划。已知尺寸请直接写明，未知尺寸请留给系统提问。",
+  description: readLanguage() === "en" ? DEFAULT_DESCRIPTION_EN : DEFAULT_DESCRIPTION_ZH,
   imageFile: null,
   settings: { ...DEFAULT_SETTINGS },
   selectedFeatureId: "",
@@ -111,6 +157,7 @@ export const useAppStore = create<AppState>((set) => ({
   backendState: "connected",
   recentProjects: [],
   startupMode: readStartupMode(),
+  language: readLanguage(),
   showStartup: shouldShowStartup(),
   settingsDirty: false,
   settingsSaving: false,
@@ -118,10 +165,9 @@ export const useAppStore = create<AppState>((set) => ({
   ui: {
     leftTab: "feature",
     rightTab: "assistant",
-    leftCollapsed: false,
-    rightCollapsed: false,
-    leftWidth: 420,
-    rightWidth: 380,
+    leftDrawerOpen: false,
+    rightDrawerOpen: false,
+    ...readStoredUi(),
     settingsOpen: false,
     commandTab: "features",
   },
@@ -129,6 +175,18 @@ export const useAppStore = create<AppState>((set) => ({
   setDescription: (description) => set({ description }),
   setImageFile: (imageFile) => set({ imageFile }),
   setSettings: (settings) => set({ settings }),
+  setLanguage: (language) => {
+    writeLanguage(language);
+    set((state) => ({
+      language,
+      description:
+        state.description === DEFAULT_DESCRIPTION_ZH || state.description === DEFAULT_DESCRIPTION_EN
+          ? language === "en"
+            ? DEFAULT_DESCRIPTION_EN
+            : DEFAULT_DESCRIPTION_ZH
+          : state.description,
+    }));
+  },
   setSelectedFeatureId: (selectedFeatureId) => set({ selectedFeatureId }),
   setChatMessage: (chatMessage) => set({ chatMessage }),
   addEvents: (items) =>
@@ -143,5 +201,10 @@ export const useAppStore = create<AppState>((set) => ({
   setSettingsDirty: (settingsDirty) => set({ settingsDirty }),
   setSettingsSaving: (settingsSaving) => set({ settingsSaving }),
   setSettingsNotice: (settingsNotice) => set({ settingsNotice }),
-  setUi: (patch) => set((state) => ({ ui: { ...state.ui, ...patch } })),
+  setUi: (patch) =>
+    set((state) => {
+      const ui = { ...state.ui, ...patch };
+      writeStoredUi(ui);
+      return { ui };
+    }),
 }));

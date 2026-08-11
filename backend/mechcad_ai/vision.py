@@ -16,22 +16,26 @@ def analyze_sketch(
     image: Image.Image | None,
     description: str,
     settings,
+    language: str = "zh",
 ) -> dict[str, Any] | None:
     """Run the vision model over the sketch, returning None when unavailable."""
     if not has_configured_model(settings, "vision"):
         return None
 
-    prompt = get_prompt("vision_analysis")
+    prompt = get_prompt("vision_analysis", language)
     image_base64 = _image_to_base64(image) if image is not None else None
+    user_prompt = (
+        f"User functional description:\n{description}\n\n"
+        "Read the sketch according to the system rules and return strict JSON. Do not output prose."
+        if language == "en"
+        else f"用户功能描述：\n{description}\n\n请按系统规则读取草图，返回严格 JSON。不要输出解释性散文。"
+    )
 
     messages = [
         {"role": "system", "content": prompt},
         {
             "role": "user",
-            "content": (
-                f"用户功能描述：\n{description}\n\n"
-                "请按系统规则读取草图，返回严格 JSON。不要输出解释性散文。"
-            ),
+            "content": user_prompt,
         },
     ]
     try:

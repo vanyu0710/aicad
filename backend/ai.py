@@ -44,33 +44,38 @@ _DIM_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 _BOX_TRIPLE_PATTERN = re.compile(rf"{_NUM}\s*[xX×]\s*{_NUM}\s*[xX×]\s*{_NUM}")
 
 
+def _loc(language: str, zh: str, en: str) -> str:
+    return en if language == "en" else zh
+
+
 def build_initial_feature_plan(
-    description: str, request: GenerateRequest, image: Image.Image | None = None, settings=None
+    description: str, request: GenerateRequest, image: Image.Image | None = None, settings=None, language: str = "zh"
 ) -> tuple[FeaturePlanV3, list[ClarificationQuestion]]:
     """Build the first FeaturePlanV3 for a generation request."""
     if settings is None:
         settings = request.settings
     if settings is not None:
-        vision_json = ai_vision.analyze_sketch(image, description, settings)
+        vision_json = ai_vision.analyze_sketch(image, description, settings, language=language)
         plan = ai_planner.generate_feature_plan(
             description,
             vision_json,
             settings,
             mode=settings.operation_mode or "strict",
             smart_fill_policy=settings.smart_fill_policy or "limited_fill",
+            language=language,
         )
         if plan is not None:
             if settings.operation_mode == "smart":
-                plan = _apply_smart_autonomy(plan, description, settings.smart_fill_policy or "limited_fill")
-            return plan, questions_from_plan(plan)
-    plan, questions = _build_stub_feature_plan(description, request)
+                plan = _apply_smart_autonomy(plan, description, settings.smart_fill_policy or "limited_fill", language)
+            return plan, questions_from_plan(plan, language)
+    plan, questions = _build_stub_feature_plan(description, request, language)
     if settings is not None and settings.operation_mode == "smart":
-        plan = _apply_smart_autonomy(plan, description, settings.smart_fill_policy or "limited_fill")
-        questions = questions_from_plan(plan)
+        plan = _apply_smart_autonomy(plan, description, settings.smart_fill_policy or "limited_fill", language)
+        questions = questions_from_plan(plan, language)
     return plan, questions
 
 
-def _build_stub_feature_plan(description: str, request: GenerateRequest) -> tuple[FeaturePlanV3, list[ClarificationQuestion]]:
+def _build_stub_feature_plan(description: str, request: GenerateRequest, language: str = "zh") -> tuple[FeaturePlanV3, list[ClarificationQuestion]]:
     text = description.lower()
     part_family = _detect_family(text)
     plan = FeaturePlanV3(part_family=part_family)
@@ -92,7 +97,7 @@ def _build_stub_feature_plan(description: str, request: GenerateRequest) -> tupl
             placement=PlacementV3(reference="bottom_center", axis="Z"),
             evidence="identified as plate-like body",
         )
-        _collect_missing(plan, "base_plate", plan.base_feature.dimensions, ["length", "width", "height"], "板件主尺寸缺失")
+        _collect_missing(plan, "base_plate", plan.base_feature.dimensions, ["length", "width", "height"], _loc(language, "板件主尺寸缺失", "Plate main dimensions are missing"))
     elif part_family == "flange":
         plan.base_feature = FeatureV3(
             id="base_flange",
@@ -107,7 +112,7 @@ def _build_stub_feature_plan(description: str, request: GenerateRequest) -> tupl
             placement=PlacementV3(reference="center", axis="Z"),
             evidence="identified as flange-like body",
         )
-        _collect_missing(plan, "base_flange", plan.base_feature.dimensions, ["outer_diameter", "length"], "法兰主外形缺失")
+        _collect_missing(plan, "base_flange", plan.base_feature.dimensions, ["outer_diameter", "length"], _loc(language, "法兰主外形缺失", "Flange main outline is missing"))
     elif part_family == "tube":
         plan.base_feature = FeatureV3(
             id="base_tube",
@@ -123,7 +128,7 @@ def _build_stub_feature_plan(description: str, request: GenerateRequest) -> tupl
             placement=PlacementV3(reference="bottom_end_center", axis="Z"),
             evidence="identified as tube-like body",
         )
-        _collect_missing(plan, "base_tube", plan.base_feature.dimensions, ["outer_diameter", "inner_diameter", "length"], "管件主尺寸缺失")
+        _collect_missing(plan, "base_tube", plan.base_feature.dimensions, ["outer_diameter", "inner_diameter", "length"], _loc(language, "管件主尺寸缺失", "Tube main dimensions are missing"))
     else:
         plan.base_feature = FeatureV3(
             id="base_body",
@@ -139,51 +144,51 @@ def _build_stub_feature_plan(description: str, request: GenerateRequest) -> tupl
             placement=PlacementV3(reference="origin", axis="Z"),
             evidence="fallback generic base body",
         )
-        _collect_missing(plan, "base_body", plan.base_feature.dimensions, ["length", "width", "height"], "主基体尺寸缺失")
+        _collect_missing(plan, "base_body", plan.base_feature.dimensions, ["length", "width", "height"], _loc(language, "主基体尺寸缺失", "Main body dimensions are missing"))
 
-    _add_stub_feature_candidates(plan, text, parsed)
+    _add_stub_feature_candidates(plan, text, parsed, language)
 
     plan.design_review = DesignReview(
-        warnings=["严格模式不会把推断尺寸写成可执行事实；未确认尺寸会停留在待确认问题或设计建议中。"],
+        warnings=[_loc(language, "严格模式不会把推断尺寸写成可执行事实；未确认尺寸会停留在待确认问题或设计建议中。", "Strict mode does not turn inferred dimensions into executable facts; unconfirmed dimensions remain in pending questions or design suggestions.")],
         suggestions=[
-            "先确认整体外形，再补孔、槽、台阶、凸台等局部特征。",
-            "如果图纸上有尺寸标注，请优先回填标注值，不要让系统自行猜测。",
+            _loc(language, "先确认整体外形，再补孔、槽、台阶、凸台等局部特征。", "Confirm the overall outline first, then add holes, slots, steps, bosses, and other local features."),
+            _loc(language, "如果图纸上有尺寸标注，请优先回填标注值，不要让系统自行猜测。", "If the drawing has dimension annotations, enter them instead of letting the system guess."),
         ],
-        manufacturability=["建议按：基体 -> 减料 -> 加料 -> 阵列 -> 圆角/倒角 的顺序建模。"],
-        standards=["孔、槽、台阶、壁厚等应尽量绑定到图中可见标注或用户确认值。"],
+        manufacturability=[_loc(language, "建议按：基体 -> 减料 -> 加料 -> 阵列 -> 圆角/倒角 的顺序建模。", "Model in this order: body -> cuts -> adds -> patterns -> fillets/chamfers.")],
+        standards=[_loc(language, "孔、槽、台阶、壁厚等应尽量绑定到图中可见标注或用户确认值。", "Holes, slots, steps, and wall thickness should be bound to visible annotations or user-confirmed values.")],
         requires_confirmation=bool(plan.unresolved),
     )
 
     if mode == "smart":
-        plan.assumptions.append("智能模式允许生成设计建议，但默认不把推断尺寸直接写入可执行模型。")
+        plan.assumptions.append(_loc(language, "智能模式允许生成设计建议，但默认不把推断尺寸直接写入可执行模型。", "Smart mode may generate design suggestions, but inferred dimensions are not written into the executable model by default."))
         if not plan.unresolved:
-            plan.design_review.suggestions.append("当前信息足够进入受控建模。")
+            plan.design_review.suggestions.append(_loc(language, "当前信息足够进入受控建模。", "Current information is sufficient to enter controlled modeling."))
 
-    return plan, questions_from_plan(plan)
+    return plan, questions_from_plan(plan, language)
 
 
 def apply_chat_edit(
-    plan: FeaturePlanV3, message: str, settings=None
+    plan: FeaturePlanV3, message: str, settings=None, language: str = "zh"
 ) -> tuple[FeaturePlanV3, list[ClarificationQuestion]]:
     """Apply a natural-language edit, using the planner model when configured."""
     if settings is not None:
-        ai_updated = ai_planner.chat_edit_feature_plan(plan, message, settings)
+        ai_updated = ai_planner.chat_edit_feature_plan(plan, message, settings, language=language)
         if ai_updated is not None:
             if settings.operation_mode == "smart":
-                ai_updated = _apply_smart_autonomy(ai_updated, message, settings.smart_fill_policy or "limited_fill")
-            return ai_updated, questions_from_plan(ai_updated)
+                ai_updated = _apply_smart_autonomy(ai_updated, message, settings.smart_fill_policy or "limited_fill", language)
+            return ai_updated, questions_from_plan(ai_updated, language)
 
     updated = deepcopy(plan)
     text = message.strip()
     if not text:
-        return updated, questions_from_plan(updated)
+        return updated, questions_from_plan(updated, language)
 
     lowered = text.lower()
     parsed = _extract_dimension_clues(text)
     if "删除" in text or "去掉" in text:
-        updated.assumptions.append(f"用户请求删除或弱化特征：{text}")
+        updated.assumptions.append(_loc(language, f"用户请求删除或弱化特征：{text}", f"User requested to delete or weaken features: {text}"))
     if any(word in lowered for word in ["孔", "hole", "槽", "slot", "台阶", "凸台", "圆角", "倒角"]):
-        updated.design_review.suggestions.append(f"已记录修改请求：{text}")
+        updated.design_review.suggestions.append(_loc(language, f"已记录修改请求：{text}", f"Modification request recorded: {text}"))
     if parsed:
         target = updated.base_feature or (updated.features[0] if updated.features else None)
         if target is not None:
@@ -198,7 +203,7 @@ def apply_chat_edit(
                     )
                     _clear_unresolved(updated, target.id, key)
 
-    return updated, questions_from_plan(updated)
+    return updated, questions_from_plan(updated, language)
 
 
 def patch_feature(plan: FeaturePlanV3, feature_id: str, patch: dict[str, Any]) -> FeaturePlanV3:
@@ -277,7 +282,7 @@ def questions_from_plan(plan: FeaturePlanV3) -> list[ClarificationQuestion]:
 
 
 def apply_clarification_answers(
-    plan: FeaturePlanV3, answers_text: str
+    plan: FeaturePlanV3, answers_text: str, language: str = "zh"
 ) -> FeaturePlanV3:
     """Apply plain-language answers as user-confirmed values before CAD execution."""
     updated = deepcopy(plan)
@@ -295,7 +300,7 @@ def apply_clarification_answers(
                 feature.dimensions[key] = DimensionV3(
                     value=value,
                     unit="mm",
-                    evidence=f"用户回答澄清问题：{answers_text}",
+                    evidence=_loc(language, f"用户回答澄清问题：{answers_text}", f"User answered clarification: {answers_text}"),
                     source="user",
                     confirmed_by_user=True,
                 )
@@ -304,24 +309,24 @@ def apply_clarification_answers(
             feature.extent = "through"
             feature.unresolved = [item for item in feature.unresolved if "through" not in item.lower() and "贯穿" not in item]
         if "跳过" in answers_text or "不建" in answers_text:
-            feature.unresolved.append("用户选择暂不执行该特征")
+            feature.unresolved.append(_loc(language, "用户选择暂不执行该特征", "User chose not to execute this feature"))
     return updated
 
 
-def _missing_dimension_refs(reason: str) -> list[str]:
+def _missing_dimension_refs(reason: str, language: str = "zh") -> list[str]:
     refs = []
     mapping = {
-        "outer_diameter": "外径",
-        "inner_diameter": "内径",
-        "length": "长度",
-        "width": "宽度",
-        "height": "厚度/高度",
-        "diameter": "孔径/直径",
-        "axial_width": "槽宽",
-        "reduced_outer_diameter": "槽底外径",
-        "z_start": "槽起点位置",
-        "hole position": "孔中心位置",
-        "through/blind extent": "贯穿或深度",
+        "outer_diameter": _loc(language, "外径", "outer diameter"),
+        "inner_diameter": _loc(language, "内径", "inner diameter"),
+        "length": _loc(language, "长度", "length"),
+        "width": _loc(language, "宽度", "width"),
+        "height": _loc(language, "厚度/高度", "thickness/height"),
+        "diameter": _loc(language, "孔径/直径", "hole diameter"),
+        "axial_width": _loc(language, "槽宽", "slot width"),
+        "reduced_outer_diameter": _loc(language, "槽底外径", "groove root diameter"),
+        "z_start": _loc(language, "槽起点位置", "slot start position"),
+        "hole position": _loc(language, "孔中心位置", "hole center position"),
+        "through/blind extent": _loc(language, "贯穿或深度", "through or depth"),
     }
     for key, label in mapping.items():
         if key in reason:
@@ -329,7 +334,7 @@ def _missing_dimension_refs(reason: str) -> list[str]:
     return refs
 
 
-def _add_stub_feature_candidates(plan: FeaturePlanV3, text: str, parsed: dict[str, float]) -> None:
+def _add_stub_feature_candidates(plan: FeaturePlanV3, text: str, parsed: dict[str, float], language: str = "zh") -> None:
     """Attach explicit feature intentions from the user's words without guessing."""
     base_id = plan.base_feature.id if plan.base_feature else "base"
     wants_slot = any(token in text for token in ["槽", "slot", "groove", "开口"])
@@ -363,7 +368,16 @@ def _add_stub_feature_candidates(plan: FeaturePlanV3, text: str, parsed: dict[st
         missing = [name for name, dim in dims.items() if dim.value is None]
         if missing:
             feature.unresolved.append("annular groove missing executable dimensions: " + ", ".join(missing))
-            plan.unresolved.append({"feature": feature.id, "reason": "环槽还不能建模，需要补充: " + ", ".join(missing)})
+            plan.unresolved.append(
+                {
+                    "feature": feature.id,
+                    "reason": _loc(
+                        language,
+                        "环槽还不能建模，需要补充: " + ", ".join(missing),
+                        "Annular groove cannot be modeled yet; provide: " + ", ".join(missing),
+                    ),
+                }
+            )
         plan.features.append(feature)
 
     if plan.part_family in {"plate", "flange"} and wants_hole:
@@ -393,11 +407,20 @@ def _add_stub_feature_candidates(plan: FeaturePlanV3, text: str, parsed: dict[st
             missing.append("through/blind extent")
         if missing:
             feature.unresolved.append("through hole missing executable data: " + ", ".join(missing))
-            plan.unresolved.append({"feature": feature.id, "reason": "孔特征还不能稳定建模，需要补充: " + ", ".join(missing)})
+            plan.unresolved.append(
+                {
+                    "feature": feature.id,
+                    "reason": _loc(
+                        language,
+                        "孔特征还不能稳定建模，需要补充: " + ", ".join(missing),
+                        "Hole feature cannot be modeled reliably yet; provide: " + ", ".join(missing),
+                    ),
+                }
+            )
         plan.features.append(feature)
 
 
-def _apply_smart_autonomy(plan: FeaturePlanV3, description: str, policy: str) -> FeaturePlanV3:
+def _apply_smart_autonomy(plan: FeaturePlanV3, description: str, policy: str, language: str = "zh") -> FeaturePlanV3:
     """Turn a Smart plan into an executable concept model with explicit assumptions.
 
     Smart mode is allowed to design, but it must remain auditable. Every value
@@ -408,10 +431,10 @@ def _apply_smart_autonomy(plan: FeaturePlanV3, description: str, policy: str) ->
     if policy not in {"suggest_only", "limited_fill", "aggressive_fill", "full_autonomous"}:
         policy = "limited_fill"
     updated.autonomy_policy = policy
-    updated.design_intent = updated.design_intent or _smart_design_intent(description, updated.part_family)
+    updated.design_intent = updated.design_intent or _smart_design_intent(description, updated.part_family, language)
     if policy == "suggest_only":
-        updated.assumptions.append("智能模式当前策略为只给建议，未将推断尺寸写入可执行模型。")
-        updated.design_review.suggestions.append("切换为“工程自主设计，保守补全”后，系统才会自动生成概念模型。")
+        updated.assumptions.append(_loc(language, "智能模式当前策略为只给建议，未将推断尺寸写入可执行模型。", "Smart mode is currently set to suggestions only; inferred dimensions were not written into the executable model."))
+        updated.design_review.suggestions.append(_loc(language, "切换为“工程自主设计，保守补全”后，系统才会自动生成概念模型。", "Switch to conservative autonomous design to automatically generate a concept model."))
         updated.self_checks["smart_autonomy"] = {"policy": policy, "executed": False}
         return updated
 
@@ -419,26 +442,31 @@ def _apply_smart_autonomy(plan: FeaturePlanV3, description: str, policy: str) ->
     parsed = _extract_dimension_clues(description)
     base = updated.base_feature
     if base is None:
-        base = _smart_base(_detect_family(text), parsed)
+        base = _smart_base(_detect_family(text), parsed, language)
         updated.base_feature = base
-        updated.assumptions.append("智能模式根据零件功能和文字线索选择了一个可修改的主基体。")
+        updated.assumptions.append(_loc(language, "智能模式根据零件功能和文字线索选择了一个可修改的主基体。", "Smart mode selected an editable main body from the part function and text clues."))
 
-    _complete_base_dimensions(base, parsed, updated)
-    if not any("智能模式工程假设" in item for item in updated.assumptions):
-        updated.assumptions.append("智能模式工程假设：概念尺寸按机械常识补全，未经用户确认。")
+    _complete_base_dimensions(base, parsed, updated, language)
+    marker = "智能模式工程假设" if language == "zh" else "Smart mode engineering assumption"
+    if not any(marker in item for item in updated.assumptions):
+        updated.assumptions.append(_loc(language, "智能模式工程假设：概念尺寸按机械常识补全，未经用户确认。", "Smart mode engineering assumption: concept dimensions were filled with mechanical common sense and are not user-confirmed."))
     for feature in updated.features:
-        _complete_smart_feature(feature, base, parsed, text, policy, updated)
+        _complete_smart_feature(feature, base, parsed, text, policy, updated, language)
 
     if policy == "full_autonomous":
-        _add_full_autonomous_features(updated, text)
+        _add_full_autonomous_features(updated, text, language)
 
     _refresh_smart_resolution(updated)
     updated.assumptions.append(
-        f"智能模式已执行自主设计策略：{policy}。所有新增尺寸都是工程假设，未被当作图纸事实。"
+        _loc(
+            language,
+            f"智能模式已执行自主设计策略：{policy}。所有新增尺寸都是工程假设，未被当作图纸事实。",
+            f"Smart mode executed autonomous design policy {policy}. All added dimensions are engineering assumptions, not drawing facts.",
+        )
     )
     updated.design_review.requires_confirmation = True
-    updated.design_review.warnings.append("当前模型包含智能模式假设尺寸；用于概念验证，不等同于最终生产图纸。")
-    updated.design_review.suggestions.append("请在特征树或 AI 对话中确认关键外径、壁厚、孔位和槽尺寸后再用于制造。")
+    updated.design_review.warnings.append(_loc(language, "当前模型包含智能模式假设尺寸；用于概念验证，不等同于最终生产图纸。", "The model contains smart-mode assumed dimensions; use it for concept review, not as a final production drawing."))
+    updated.design_review.suggestions.append(_loc(language, "请在特征树或 AI 对话中确认关键外径、壁厚、孔位和槽尺寸后再用于制造。", "Confirm critical outer diameters, wall thicknesses, hole positions, and slot dimensions in the feature tree or AI chat before manufacturing."))
     updated.self_checks["smart_autonomy"] = {
         "policy": policy,
         "executed": True,
@@ -449,18 +477,18 @@ def _apply_smart_autonomy(plan: FeaturePlanV3, description: str, policy: str) ->
     return updated
 
 
-def _smart_design_intent(description: str, part_family: str) -> str:
+def _smart_design_intent(description: str, part_family: str, language: str = "zh") -> str:
     text = description.lower()
     if any(token in text for token in ["安装", "mount", "固定", "连接"]):
-        return f"面向安装和连接功能的 {part_family} 概念设计"
+        return _loc(language, f"面向安装和连接功能的 {part_family} 概念设计", f"Concept design of a {part_family} for mounting and connection")
     if any(token in text for token in ["支撑", "支架", "bracket", "support"]):
-        return f"面向承载和支撑功能的 {part_family} 概念设计"
+        return _loc(language, f"面向承载和支撑功能的 {part_family} 概念设计", f"Concept design of a {part_family} for load and support")
     if any(token in text for token in ["密封", "seal", "流体", "pipe", "tube", "管"]):
-        return f"面向导流或密封功能的 {part_family} 概念设计"
-    return f"基于用户功能描述的 {part_family} 概念机械设计"
+        return _loc(language, f"面向导流或密封功能的 {part_family} 概念设计", f"Concept design of a {part_family} for flow or sealing")
+    return _loc(language, f"基于用户功能描述的 {part_family} 概念机械设计", f"Concept mechanical design of a {part_family} based on the user's functional description")
 
 
-def _add_full_autonomous_features(plan: FeaturePlanV3, text: str) -> None:
+def _add_full_autonomous_features(plan: FeaturePlanV3, text: str, language: str = "zh") -> None:
     """Add only explainable, supported concept features in full autonomy mode."""
     base = plan.base_feature
     if base is None:
@@ -478,13 +506,13 @@ def _add_full_autonomous_features(plan: FeaturePlanV3, text: str) -> None:
             dimensions={},
             placement=PlacementV3(reference="main_axis", axis="Z"),
             depends_on=[base_id],
-            evidence="全自主模式按管件的密封/定位常见制造意图增加端部环槽",
+            evidence=_loc(language, "全自主模式按管件的密封/定位常见制造意图增加端部环槽", "Full autonomous mode added an end groove for common tube sealing/positioning intent"),
         )
-        _assume_dimension(feature, "axial_width", width, "按外径约 8% 选择端部环槽宽度")
-        _assume_dimension(feature, "reduced_outer_diameter", max(1.0, outer - max(2.0, round(outer * 0.08, 1))), "按外径减少约 8% 形成槽底")
-        _assume_dimension(feature, "z_start", max(0.0, length - width), "端部环槽贴近管件末端")
+        _assume_dimension(feature, "axial_width", width, _loc(language, "按外径约 8% 选择端部环槽宽度", "End groove width chosen at about 8% of outer diameter"), language)
+        _assume_dimension(feature, "reduced_outer_diameter", max(1.0, outer - max(2.0, round(outer * 0.08, 1))), _loc(language, "按外径减少约 8% 形成槽底", "Groove root formed by reducing outer diameter by about 8%"), language)
+        _assume_dimension(feature, "z_start", max(0.0, length - width), _loc(language, "端部环槽贴近管件末端", "End groove placed near the tube end"), language)
         plan.features.append(feature)
-        plan.assumptions.append("全自主模式根据管件的定位/密封意图增加端部环槽；可在特征树中删除或修改。")
+        plan.assumptions.append(_loc(language, "全自主模式根据管件的定位/密封意图增加端部环槽；可在特征树中删除或修改。", "Full autonomous mode added an end groove for tube positioning/sealing intent; it can be deleted or edited in the feature tree."))
 
     support_words = ["支架", "支撑", "bracket", "support", "加强"]
     if any(token in text for token in support_words) and "rib_box" not in existing_types:
@@ -497,19 +525,19 @@ def _add_full_autonomous_features(plan: FeaturePlanV3, text: str) -> None:
             dimensions={},
             placement=PlacementV3(reference="base_center", x=0.0, y=0.0, z=_feature_value(base.dimensions, "height") or 0.0, axis="Z"),
             depends_on=[base_id],
-            evidence="全自主模式按支撑功能增加一条可制造的加强肋概念特征",
+            evidence=_loc(language, "全自主模式按支撑功能增加一条可制造的加强肋概念特征", "Full autonomous mode added a manufacturable reinforcing rib for support"),
         )
-        _assume_dimension(feature, "length", max(20.0, round(base_length * 0.45, 1)), "加强肋长度取基体长度约 45%")
-        _assume_dimension(feature, "width", max(4.0, round(base_width * 0.15, 1)), "加强肋宽度取基体宽度约 15%")
-        _assume_dimension(feature, "height", max(4.0, round((_feature_value(base.dimensions, "height") or 10.0) * 1.5, 1)), "加强肋高度按基体厚度的工程比例选择")
+        _assume_dimension(feature, "length", max(20.0, round(base_length * 0.45, 1)), _loc(language, "加强肋长度取基体长度约 45%", "Rib length chosen at about 45% of the base length"), language)
+        _assume_dimension(feature, "width", max(4.0, round(base_width * 0.15, 1)), _loc(language, "加强肋宽度取基体宽度约 15%", "Rib width chosen at about 15% of the base width"), language)
+        _assume_dimension(feature, "height", max(4.0, round((_feature_value(base.dimensions, "height") or 10.0) * 1.5, 1)), _loc(language, "加强肋高度按基体厚度的工程比例选择", "Rib height chosen from an engineering ratio of the base thickness"), language)
         plan.features.append(feature)
-        plan.assumptions.append("全自主模式根据支撑意图增加加强肋；请在设计评审中确认受力方向。")
+        plan.assumptions.append(_loc(language, "全自主模式根据支撑意图增加加强肋；请在设计评审中确认受力方向。", "Full autonomous mode added a reinforcing rib for support; confirm the load direction in design review."))
 
     if plan.features:
-        plan.design_review.suggestions.append("全自主方案已主动补充可解释的机械特征；请逐项审查后再用于生产。")
+        plan.design_review.suggestions.append(_loc(language, "全自主方案已主动补充可解释的机械特征；请逐项审查后再用于生产。", "The full autonomous proposal added explainable mechanical features; review each one before production."))
 
 
-def _smart_base(part_family: str, parsed: dict[str, float]) -> FeatureV3:
+def _smart_base(part_family: str, parsed: dict[str, float], language: str = "zh") -> FeatureV3:
     if part_family == "tube":
         return FeatureV3(
             id="base_tube",
@@ -517,7 +545,7 @@ def _smart_base(part_family: str, parsed: dict[str, float]) -> FeatureV3:
             operation="base",
             dimensions={},
             placement=PlacementV3(reference="bottom_end_center", axis="Z"),
-            evidence="智能模式根据管/轴/套筒功能选择回转基体",
+            evidence=_loc(language, "智能模式根据管/轴/套筒功能选择回转基体", "Smart mode chose a revolved body for tube/shaft/bushing function"),
         )
     if part_family == "flange":
         return FeatureV3(
@@ -526,7 +554,7 @@ def _smart_base(part_family: str, parsed: dict[str, float]) -> FeatureV3:
             operation="base",
             dimensions={},
             placement=PlacementV3(reference="center", axis="Z"),
-            evidence="智能模式根据法兰功能选择圆柱基体",
+            evidence=_loc(language, "智能模式根据法兰功能选择圆柱基体", "Smart mode chose a cylinder body for flange function"),
         )
     return FeatureV3(
         id="base_plate" if part_family == "plate" else "base_body",
@@ -534,11 +562,11 @@ def _smart_base(part_family: str, parsed: dict[str, float]) -> FeatureV3:
         operation="base",
         dimensions={},
         placement=PlacementV3(reference="bottom_center", axis="Z"),
-        evidence="智能模式根据板件/通用零件功能选择箱体基体",
+        evidence=_loc(language, "智能模式根据板件/通用零件功能选择箱体基体", "Smart mode chose a box body for plate/general part function"),
     )
 
 
-def _complete_base_dimensions(base: FeatureV3, parsed: dict[str, float], plan: FeaturePlanV3) -> None:
+def _complete_base_dimensions(base: FeatureV3, parsed: dict[str, float], plan: FeaturePlanV3, language: str = "zh") -> None:
     dims = base.dimensions
     kind = base.type
     if kind == "hollow_cylinder":
@@ -546,23 +574,23 @@ def _complete_base_dimensions(base: FeatureV3, parsed: dict[str, float], plan: F
         inner = _feature_value(dims, "inner_diameter") or parsed.get("inner_diameter") or max(outer * 0.6, outer - 10.0)
         length = _feature_value(dims, "length") or parsed.get("length") or max(80.0, outer * 2.0)
         inner = min(inner, max(outer - 1.0, outer * 0.9))
-        _assume_dimension(base, "outer_diameter", outer, "外径缺失，采用管件概念外径 40mm 或用户已有外径线索")
-        _assume_dimension(base, "inner_diameter", inner, "内径缺失，按约 60% 外径保留合理壁厚")
-        _assume_dimension(base, "length", length, "长度缺失，按约 2 倍外径建立可修改概念长度")
+        _assume_dimension(base, "outer_diameter", outer, _loc(language, "外径缺失，采用管件概念外径 40mm 或用户已有外径线索", "Outer diameter missing; using concept tube OD of 40mm or existing user clues"), language)
+        _assume_dimension(base, "inner_diameter", inner, _loc(language, "内径缺失，按约 60% 外径保留合理壁厚", "Inner diameter missing; keeping a reasonable wall near 60% of outer diameter"), language)
+        _assume_dimension(base, "length", length, _loc(language, "长度缺失，按约 2 倍外径建立可修改概念长度", "Length missing; building an editable concept length about twice the outer diameter"), language)
         return
     if kind == "cylinder_base":
         outer = _feature_value(dims, "outer_diameter") or parsed.get("outer_diameter") or parsed.get("diameter") or 60.0
         length = _feature_value(dims, "length") or parsed.get("length") or parsed.get("height") or 10.0
-        _assume_dimension(base, "outer_diameter", outer, "法兰/圆柱外径缺失，采用常见概念外径")
-        _assume_dimension(base, "length", length, "法兰厚度或圆柱长度缺失，采用常见概念厚度")
+        _assume_dimension(base, "outer_diameter", outer, _loc(language, "法兰/圆柱外径缺失，采用常见概念外径", "Flange/cylinder outer diameter missing; using a common concept diameter"), language)
+        _assume_dimension(base, "length", length, _loc(language, "法兰厚度或圆柱长度缺失，采用常见概念厚度", "Flange thickness or cylinder length missing; using a common concept thickness"), language)
         return
 
     length = _feature_value(dims, "length") or parsed.get("length") or 80.0
     width = _feature_value(dims, "width") or parsed.get("width") or max(30.0, round(length * 0.6, 1))
     height = _feature_value(dims, "height") or parsed.get("height") or parsed.get("thickness") or max(4.0, round(min(length, width) * 0.1, 1))
-    _assume_dimension(base, "length", length, "板件长度缺失，采用 80mm 或按已有长度线索建立概念外形")
-    _assume_dimension(base, "width", width, "板件宽度缺失，按长度约 60% 建立概念外形")
-    _assume_dimension(base, "height", height, "板件厚度缺失，按短边约 10% 且不小于 4mm 建立概念外形")
+    _assume_dimension(base, "length", length, _loc(language, "板件长度缺失，采用 80mm 或按已有长度线索建立概念外形", "Plate length missing; using 80mm or existing length clues"), language)
+    _assume_dimension(base, "width", width, _loc(language, "板件宽度缺失，按长度约 60% 建立概念外形", "Plate width missing; using about 60% of length"), language)
+    _assume_dimension(base, "height", height, _loc(language, "板件厚度缺失，按短边约 10% 且不小于 4mm 建立概念外形", "Plate thickness missing; using about 10% of the short edge and at least 4mm"), language)
 
 
 def _complete_smart_feature(
@@ -572,6 +600,7 @@ def _complete_smart_feature(
     text: str,
     policy: str,
     plan: FeaturePlanV3,
+    language: str = "zh",
 ) -> None:
     dims = feature.dimensions
     base_length = _feature_value(base.dimensions, "length", "height") or 80.0
@@ -585,52 +614,52 @@ def _complete_smart_feature(
         z_start = _feature_value(dims, "z_start")
         if z_start is None:
             z_start = max(0.0, base_length - width) if any(token in text for token in ["顶部", "顶端", "末端", "端部", "top", "end"]) else max(0.0, base_length * 0.5)
-        _assume_dimension(feature, "axial_width", width, "槽宽缺失，按外径约 8% 建立环槽")
-        _assume_dimension(feature, "reduced_outer_diameter", reduced, "槽底外径缺失，按外径减少约 8% 建立环槽")
-        _assume_dimension(feature, "z_start", z_start, "槽位置缺失，顶部槽默认贴近端面，否则放在长度中部")
+        _assume_dimension(feature, "axial_width", width, _loc(language, "槽宽缺失，按外径约 8% 建立环槽", "Slot width missing; using about 8% of outer diameter"), language)
+        _assume_dimension(feature, "reduced_outer_diameter", reduced, _loc(language, "槽底外径缺失，按外径减少约 8% 建立环槽", "Groove root diameter missing; reducing outer diameter by about 8%"), language)
+        _assume_dimension(feature, "z_start", z_start, _loc(language, "槽位置缺失，顶部槽默认贴近端面，否则放在长度中部", "Slot position missing; top slot defaults near the end face, otherwise at mid-length"), language)
         return
 
     if kind in {"through_hole", "blind_hole", "counterbore_hole"}:
         diameter = _feature_value(dims, "diameter", "hole_diameter") or parsed.get("diameter") or 6.0
-        _assume_dimension(feature, "diameter", diameter, "孔径缺失，采用常见 6mm 概念孔径")
+        _assume_dimension(feature, "diameter", diameter, _loc(language, "孔径缺失，采用常见 6mm 概念孔径", "Hole diameter missing; using a common 6mm concept hole"), language)
         if kind != "through_hole" and not _feature_value(dims, "depth"):
-            _assume_dimension(feature, "depth", max(1.0, base_length * 0.5), "盲孔深度缺失，采用基体厚度/长度约 50%")
+            _assume_dimension(feature, "depth", max(1.0, base_length * 0.5), _loc(language, "盲孔深度缺失，采用基体厚度/长度约 50%", "Blind hole depth missing; using about 50% of the base thickness/length"), language)
         if feature.extent is None:
             feature.extent = "through"
-            feature.assumptions.append("未说明孔深，智能模式默认贯穿；可在属性面板改为盲孔。")
+            feature.assumptions.append(_loc(language, "未说明孔深，智能模式默认贯穿；可在属性面板改为盲孔。", "Hole depth not specified; smart mode defaults to through, editable to blind in the property panel."))
         if feature.placement.reference in {"needs_position", "origin"} and feature.placement.x is None and feature.placement.y is None:
             feature.placement.reference = "model_center"
             feature.placement.x = 0.0
             feature.placement.y = 0.0
-            feature.assumptions.append("孔位缺失，智能模式默认放在主基准中心。")
+            feature.assumptions.append(_loc(language, "孔位缺失，智能模式默认放在主基准中心。", "Hole position missing; smart mode defaults it to the main datum center."))
         return
 
     if kind in {"rectangular_slot", "rectangular_pocket"}:
         length = _feature_value(dims, "length", "slot_length") or parsed.get("slot_length") or max(10.0, round(base_width * 0.5, 1))
         width = _feature_value(dims, "width", "slot_width") or parsed.get("slot_width") or max(3.0, round(base_width * 0.15, 1))
         depth = _feature_value(dims, "depth", "height") or (base_length if "贯穿" in text or "through" in text else max(1.0, base_length * 0.5))
-        _assume_dimension(feature, "length", length, "槽长缺失，按基体宽度约 50% 建立概念槽")
-        _assume_dimension(feature, "width", width, "槽宽缺失，按基体宽度约 15% 且不小于 3mm 建立概念槽")
-        _assume_dimension(feature, "depth", depth, "槽深缺失，按用户是否提到贯穿决定")
+        _assume_dimension(feature, "length", length, _loc(language, "槽长缺失，按基体宽度约 50% 建立概念槽", "Slot length missing; using about 50% of the base width"), language)
+        _assume_dimension(feature, "width", width, _loc(language, "槽宽缺失，按基体宽度约 15% 且不小于 3mm 建立概念槽", "Slot width missing; using about 15% of the base width and at least 3mm"), language)
+        _assume_dimension(feature, "depth", depth, _loc(language, "槽深缺失，按用户是否提到贯穿决定", "Slot depth missing; decided by whether the user mentioned through"), language)
         if feature.extent is None:
             feature.extent = "through" if depth >= base_length else "blind"
         return
 
     if policy == "aggressive_fill" and kind in {"boss_cylinder", "rectangular_pad", "rib_box"}:
         if kind == "boss_cylinder":
-            _assume_dimension(feature, "diameter", _feature_value(dims, "diameter", "outer_diameter") or 12.0, "凸台直径缺失，采用常见 12mm 概念尺寸")
-            _assume_dimension(feature, "height", _feature_value(dims, "height", "length") or max(3.0, base_length * 0.2), "凸台高度缺失，采用基体高度约 20%")
+            _assume_dimension(feature, "diameter", _feature_value(dims, "diameter", "outer_diameter") or 12.0, _loc(language, "凸台直径缺失，采用常见 12mm 概念尺寸", "Boss diameter missing; using a common 12mm concept size"), language)
+            _assume_dimension(feature, "height", _feature_value(dims, "height", "length") or max(3.0, base_length * 0.2), _loc(language, "凸台高度缺失，采用基体高度约 20%", "Boss height missing; using about 20% of the base height"), language)
         else:
-            _assume_dimension(feature, "length", _feature_value(dims, "length") or 20.0, "加料长度缺失，采用概念尺寸")
-            _assume_dimension(feature, "width", _feature_value(dims, "width") or 10.0, "加料宽度缺失，采用概念尺寸")
-            _assume_dimension(feature, "height", _feature_value(dims, "height", "depth") or 5.0, "加料高度缺失，采用概念尺寸")
+            _assume_dimension(feature, "length", _feature_value(dims, "length") or 20.0, _loc(language, "加料长度缺失，采用概念尺寸", "Additive length missing; using a concept size"), language)
+            _assume_dimension(feature, "width", _feature_value(dims, "width") or 10.0, _loc(language, "加料宽度缺失，采用概念尺寸", "Additive width missing; using a concept size"), language)
+            _assume_dimension(feature, "height", _feature_value(dims, "height", "depth") or 5.0, _loc(language, "加料高度缺失，采用概念尺寸", "Additive height missing; using a concept size"), language)
 
 
-def _assume_dimension(feature: FeatureV3, key: str, value: float, reason: str) -> None:
+def _assume_dimension(feature: FeatureV3, key: str, value: float, reason: str, language: str = "zh") -> None:
     existing = feature.dimensions.get(key)
     if existing is not None and existing.value is not None:
         return
-    evidence = f"智能模式工程假设：{reason}"
+    evidence = _loc(language, f"智能模式工程假设：{reason}", f"Smart mode engineering assumption: {reason}")
     feature.dimensions[key] = DimensionV3(
         value=round(float(value), 3),
         unit="mm",
@@ -655,7 +684,7 @@ def _sync_assumption_details(plan: FeaturePlanV3) -> None:
                     feature_id=feature.id,
                     dimension=name,
                     value=dimension.value,
-                    reason=dimension.evidence or "AI 推断尺寸",
+                    reason=dimension.evidence or "AI inferred dimension",
                     source="assumption",
                     confidence=dimension.confidence,
                     confirmed_by_user=False,
@@ -774,8 +803,8 @@ def _all_features(plan: FeaturePlanV3) -> list[FeatureV3]:
 
 
 # Keep the public question builder at the end of the module so legacy plans
-# with mojibake reasons still receive readable Chinese questions.
-def questions_from_plan(plan: FeaturePlanV3) -> list[ClarificationQuestion]:
+# with mojibake reasons still receive readable questions.
+def questions_from_plan(plan: FeaturePlanV3, language: str = "zh") -> list[ClarificationQuestion]:
     questions: list[ClarificationQuestion] = []
     for item in plan.unresolved[:8]:
         feature_id = str(item.get("feature", "unknown_feature"))
@@ -784,30 +813,46 @@ def questions_from_plan(plan: FeaturePlanV3) -> list[ClarificationQuestion]:
         kind = feature.type if feature else ""
         missing = [name for name, dimension in (feature.dimensions.items() if feature else []) if dimension.value is None]
         if kind == "annular_groove" or "groove" in reason.lower() or "环槽" in reason:
-            text = f"特征 {feature_id} 是环槽，但还缺少可执行尺寸。请填写槽宽、槽底外径和轴向位置。"
-            options = ["跳过环槽", "重新上传带尺寸标注的图"]
+            text = _loc(
+                language,
+                f"特征 {feature_id} 是环槽，但还缺少可执行尺寸。请填写槽宽、槽底外径和轴向位置。",
+                f"Feature {feature_id} is an annular groove but is missing executable dimensions. Provide slot width, groove root diameter, and axial position.",
+            )
+            options = _loc(language, ["跳过环槽", "重新上传带尺寸标注的图"], ["Skip groove", "Re-upload drawing with dimensions"])
             answer_type = "text"
-            refs = ["槽宽", "槽底外径", "起始位置 Z"]
-            impact = "未确认时只生成已确认的主体，环槽不会进入生产模型。"
+            refs = _loc(language, ["槽宽", "槽底外径", "起始位置 Z"], ["slot width", "groove root diameter", "start position Z"])
+            impact = _loc(language, "未确认时只生成已确认的主体，环槽不会进入生产模型。", "Until confirmed, only the confirmed body is modeled; the groove is excluded from the production model.")
         elif kind in {"through_hole", "blind_hole", "counterbore_hole"} or "hole" in reason.lower() or "孔" in reason:
-            text = f"特征 {feature_id} 是孔，但还缺少孔径、中心位置或孔深。请按“孔径 6mm，X=20mm，Y=0mm，贯穿”回答。"
-            options = ["贯穿孔", "盲孔", "跳过此孔"]
+            text = _loc(
+                language,
+                f"特征 {feature_id} 是孔，但还缺少孔径、中心位置或孔深。请按“孔径 6mm，X=20mm，Y=0mm，贯穿”回答。",
+                f"Feature {feature_id} is a hole but is missing diameter, center position, or depth. Answer like: hole diameter 6mm, X=20mm, Y=0mm, through.",
+            )
+            options = _loc(language, ["贯穿孔", "盲孔", "跳过此孔"], ["Through hole", "Blind hole", "Skip hole"])
             answer_type = "text"
-            refs = ["孔径", "X/Y 位置", "贯穿或深度"]
-            impact = "未确认时跳过此孔，避免生成孔径或位置错误的模型。"
+            refs = _loc(language, ["孔径", "X/Y 位置", "贯穿或深度"], ["hole diameter", "X/Y position", "through or depth"])
+            impact = _loc(language, "未确认时跳过此孔，避免生成孔径或位置错误的模型。", "Until confirmed, the hole is skipped to avoid an incorrect diameter or position.")
         elif "position" in reason.lower() or "定位" in reason:
-            text = f"特征 {feature_id} 的定位还不明确。请说明它相对哪个基准面，以及 X/Y/Z 距离。"
-            options = ["相对底面", "相对中心线", "跳过此特征"]
+            text = _loc(
+                language,
+                f"特征 {feature_id} 的定位还不明确。请说明它相对哪个基准面，以及 X/Y/Z 距离。",
+                f"The position of feature {feature_id} is unclear. State which datum it references and the X/Y/Z distances.",
+            )
+            options = _loc(language, ["相对底面", "相对中心线", "跳过此特征"], ["Relative to bottom face", "Relative to centerline", "Skip feature"])
             answer_type = "text"
-            refs = ["基准", "X/Y/Z 位置"]
-            impact = "未确认时不会执行该特征。"
+            refs = _loc(language, ["基准", "X/Y/Z 位置"], ["datum", "X/Y/Z position"])
+            impact = _loc(language, "未确认时不会执行该特征。", "The feature will not be executed until confirmed.")
         else:
-            missing_text = "、".join(missing) if missing else "尺寸或定位"
-            text = f"特征 {feature_id} 还缺少 {missing_text}。请填写明确的毫米值，或选择跳过。"
-            options = ["补充尺寸", "跳过此特征"]
+            missing_text = "、".join(missing) if missing else ("尺寸或定位" if language == "zh" else "dimensions or position")
+            text = _loc(
+                language,
+                f"特征 {feature_id} 还缺少 {missing_text}。请填写明确的毫米值，或选择跳过。",
+                f"Feature {feature_id} is missing {missing_text}. Provide clear mm values or choose to skip.",
+            )
+            options = _loc(language, ["补充尺寸", "跳过此特征"], ["Provide dimensions", "Skip feature"])
             answer_type = "text"
-            refs = missing or ["必要尺寸"]
-            impact = "未确认时该特征会被跳过，并在执行报告中保留原因。"
+            refs = missing or _loc(language, ["必要尺寸"], ["required dimensions"])
+            impact = _loc(language, "未确认时该特征会被跳过，并在执行报告中保留原因。", "Until confirmed, the feature is skipped and the reason is kept in the execution report.")
         questions.append(
             ClarificationQuestion(
                 text=text,

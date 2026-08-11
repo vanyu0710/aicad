@@ -10,14 +10,14 @@ from backend.schemas import ArtifactSet, FeaturePlanV3
 from backend.storage import create_run_dir
 
 
-def run_freecad_worker(plan: FeaturePlanV3, timeout: int | None = None) -> tuple[ArtifactSet, list[str], bool]:
+def run_freecad_worker(plan: FeaturePlanV3, timeout: int | None = None, language: str = "zh") -> tuple[ArtifactSet, list[str], bool]:
     if timeout is None:
         timeout = int(os.getenv("MECHCAD_CAD_TIMEOUT", "90"))
     run_id, run_dir = create_run_dir()
     plan_path = run_dir / "feature_plan.json"
     plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
     worker = Path(__file__).resolve().parents[1] / "cad_worker" / "freecad_executor.py"
-    command = [sys.executable, str(worker), "--plan", str(plan_path), "--out", str(run_dir)]
+    command = [sys.executable, str(worker), "--plan", str(plan_path), "--out", str(run_dir), "--lang", language]
     engine = os.getenv("MECHCAD_CAD_ENGINE", "build123d").strip().lower() or "build123d"
     logs: list[str] = [f"Starting controlled {engine} CAD worker for run {run_id} (timeout={timeout}s)."]
     try:
@@ -40,7 +40,7 @@ def run_freecad_worker(plan: FeaturePlanV3, timeout: int | None = None) -> tuple
         logs.append(completed.stdout.strip())
     if completed.stderr:
         logs.append(completed.stderr.strip())
-    report = _read_execution_report(run_dir)
+    report = _read_execution_report(run_dir, language)
     ok = completed.returncode == 0 and bool(report.get("ok"))
     if report:
         if report.get("error"):
@@ -81,15 +81,19 @@ def _artifacts(run_id: str, run_dir: Path) -> ArtifactSet:
     )
 
 
-def _read_execution_report(run_dir: Path) -> dict:
+def _read_execution_report(run_dir: Path, language: str = "zh") -> dict:
     report_path = run_dir / "execution_report.json"
     if not report_path.exists():
         return {}
     try:
         value = json.loads(report_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return {"ok": False, "error": f"无法读取 CAD 执行报告：{exc}"}
-    return value if isinstance(value, dict) else {"ok": False, "error": "CAD 执行报告不是 JSON 对象"}
+        msg = f"Cannot read CAD execution report: {exc}" if language == "en" else f"无法读取 CAD 执行报告：{exc}"
+        return {"ok": False, "error": msg}
+    if isinstance(value, dict):
+        return value
+    msg = "CAD execution report is not a JSON object" if language == "en" else "CAD 执行报告不是 JSON 对象"
+    return {"ok": False, "error": msg}
 
 
 def _remove_failed_model_artifacts(run_dir: Path) -> None:

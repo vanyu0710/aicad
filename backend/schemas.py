@@ -159,7 +159,7 @@ class FeaturePlanV3(BaseModel):
                                 feature_id=feature.id,
                                 dimension=name,
                                 value=dim.value,
-                                reason=dim.evidence or "AI 推断尺寸",
+                                reason=dim.evidence or "AI inferred dimension",
                                 confidence=dim.confidence,
                             )
                         )
@@ -205,6 +205,7 @@ class ModelConfig(BaseModel):
 class ModelTestRequest(BaseModel):
     role: Literal["vision", "planner"]
     config: ModelConfig
+    language: Literal["zh", "en"] = "zh"
 
 
 class ModelTestDiagnostics(BaseModel):
@@ -239,6 +240,17 @@ class CreateProjectRequest(BaseModel):
     name: str | None = None
 
 
+class RenameProjectRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, value: str) -> str:
+        value = (value or "").strip()
+        if not value:
+            raise ValueError("Project name must not be empty")
+        return value
+
 class CreateProjectResponse(BaseModel):
     project_id: str
     project: ProjectState
@@ -254,6 +266,7 @@ class GenerateRequest(BaseModel):
     image_data_url: str | None = None
     image_name: str | None = None
     clarification_answers: str = ""
+    language: Literal["zh", "en"] = "zh"
 
 
 class ProjectSettingsRequest(ModelConfig):
@@ -262,12 +275,14 @@ class ProjectSettingsRequest(ModelConfig):
 
 class ChatEditRequest(BaseModel):
     message: str
+    language: Literal["zh", "en"] = "zh"
 
 
 class FeaturePatchRequest(BaseModel):
     dimensions: dict[str, DimensionV3] | None = None
     placement: PlacementV3 | None = None
     confirmed_by_user: bool | None = None
+    language: Literal["zh", "en"] = "zh"
 
 
 class StageEvent(BaseModel):

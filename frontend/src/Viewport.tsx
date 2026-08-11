@@ -1,8 +1,9 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
+import { useT } from "./i18n";
 
 type Props = {
   objUrl?: string;
@@ -12,14 +13,23 @@ type Props = {
 };
 
 type ViewPreset = "iso" | "front" | "top" | "right" | "fit";
+type ViewStatus =
+  | "waiting"
+  | "loading_obj"
+  | "obj_loaded"
+  | "obj_fallback"
+  | "loading_stl"
+  | "stl_loaded"
+  | "load_failed";
 
 export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel }: Props) {
+  const t = useT();
   const mountRef = useRef<HTMLDivElement | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const modelRef = useRef<THREE.Object3D | null>(null);
   const boundsRef = useRef<THREE.Box3 | null>(null);
-  const [status, setStatus] = useState("等待模型");
+  const [status, setStatus] = useState<ViewStatus>("waiting");
   const [viewMode, setViewMode] = useState<"shaded" | "wireframe">("shaded");
   const loaderKey = useMemo(() => `${objUrl || ""}:${stlUrl || ""}`, [objUrl, stlUrl]);
 
@@ -122,21 +132,21 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel }: Pr
     const loadModel = async () => {
       clearModel();
       if (objUrl) {
-        setStatus("正在加载 OBJ");
+        setStatus("loading_obj");
         try {
           const object = await new OBJLoader().loadAsync(objUrl);
           modelRef.current = object;
           scene.add(object);
           fitCamera(object);
           applyWireframe(object, viewMode === "wireframe");
-          setStatus("OBJ 已加载");
+          setStatus("obj_loaded");
           return;
         } catch {
-          setStatus("OBJ 加载失败，尝试 STL");
+          setStatus("obj_fallback");
         }
       }
       if (stlUrl) {
-        setStatus("正在加载 STL");
+        setStatus("loading_stl");
         try {
           const geometry = await new STLLoader().loadAsync(stlUrl);
           geometry.computeBoundingBox();
@@ -147,13 +157,13 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel }: Pr
           modelRef.current = mesh;
           scene.add(mesh);
           fitCamera(mesh);
-          setStatus("STL 已加载");
+          setStatus("stl_loaded");
           return;
         } catch {
-          setStatus("模型加载失败");
+          setStatus("load_failed");
         }
       } else {
-        setStatus("等待模型");
+        setStatus("waiting");
       }
     };
 
@@ -242,55 +252,56 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel }: Pr
     setViewMode((current) => (current === "wireframe" ? "shaded" : "wireframe"));
   };
 
-  const showOverlay = status !== "OBJ 已加载" && status !== "STL 已加载";
+  const statusText = t(`viewport.${status}`);
+  const showOverlay = status !== "obj_loaded" && status !== "stl_loaded";
 
   return (
     <div className="viewport-shell">
       <div className="viewport-toolbar">
         <button type="button" onClick={() => setPreset("fit")}>
-          适配
+          {t("viewport.fit")}
         </button>
         <button type="button" onClick={() => setPreset("iso")}>
-          等轴
+          {t("viewport.iso")}
         </button>
         <button type="button" onClick={() => setPreset("front")}>
-          前视
+          {t("viewport.front")}
         </button>
         <button type="button" onClick={() => setPreset("top")}>
-          俯视
+          {t("viewport.top")}
         </button>
         <button type="button" onClick={() => setPreset("right")}>
-          右视
+          {t("viewport.right")}
         </button>
         <button type="button" className={viewMode === "wireframe" ? "active" : ""} onClick={toggleWireframe}>
-          线框
+          {t("viewport.wireframe")}
         </button>
       </div>
 
-            <div className="viewport-breadcrumb">{breadcrumb || "草稿 / FeaturePlan"}</div>
+      <div className="viewport-breadcrumb">{breadcrumb || t("viewport.breadcrumb")}</div>
       <div className="view-cube" aria-label="ViewCube">
-        <button type="button" title="等轴测视图" onClick={() => setPreset("iso")}>等轴</button>
+        <button type="button" title={t("viewport.iso.title")} onClick={() => setPreset("iso")}>{t("viewport.face.iso")}</button>
         <div className="cube-face-row">
-          <button type="button" title="俯视图" onClick={() => setPreset("top")}>上</button>
-          <button type="button" title="前视图" onClick={() => setPreset("front")}>前</button>
-          <button type="button" title="右视图" onClick={() => setPreset("right")}>右</button>
+          <button type="button" title={t("viewport.top.title")} onClick={() => setPreset("top")}>{t("viewport.face.top")}</button>
+          <button type="button" title={t("viewport.front.title")} onClick={() => setPreset("front")}>{t("viewport.face.front")}</button>
+          <button type="button" title={t("viewport.right.title")} onClick={() => setPreset("right")}>{t("viewport.face.right")}</button>
         </div>
-        <button type="button" title="适配模型" onClick={() => setPreset("fit")}>适配</button>
+        <button type="button" title={t("viewport.fit.title")} onClick={() => setPreset("fit")}>{t("viewport.fit")}</button>
       </div>
 
       <div className="viewport-canvas" ref={mountRef} />
 
-      <div className="viewport-axes" aria-label="坐标轴">
+      <div className="viewport-axes" aria-label={t("viewport.axes")}>
         <span className="axis-x">X</span>
         <span className="axis-y">Y</span>
         <span className="axis-z">Z</span>
       </div>
-      <div className="viewport-status">{statusLabel || status}</div>
+      <div className="viewport-status">{statusLabel || statusText}</div>
 
       {showOverlay && (
         <div className="viewport-empty">
-          <strong>{status}</strong>
-          <span>左侧输入草图与尺寸，生成后这里会显示 STL / OBJ 预览。</span>
+          <strong>{statusText}</strong>
+          <span>{t("viewport.empty.hint")}</span>
         </div>
       )}
     </div>

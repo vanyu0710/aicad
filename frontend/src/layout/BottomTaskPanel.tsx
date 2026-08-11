@@ -1,4 +1,5 @@
 import ClarificationPanel from "../ClarificationPanel";
+import { useT } from "../i18n";
 
 export type TaskTab = "questions" | "chat" | "review" | "logs" | "plan";
 
@@ -25,12 +26,12 @@ type Props = {
   onTabChange: (tab: TaskTab) => void;
 };
 
-const tabs: { id: TaskTab; label: string }[] = [
-  { id: "questions", label: "待确认" },
-  { id: "chat", label: "AI 修改" },
-  { id: "review", label: "设计评审" },
-  { id: "logs", label: "执行日志" },
-  { id: "plan", label: "FeaturePlan" },
+const tabs: { id: TaskTab; labelKey: string }[] = [
+  { id: "questions", labelKey: "legacy.pending" },
+  { id: "chat", labelKey: "legacy.chat" },
+  { id: "review", labelKey: "task.review" },
+  { id: "logs", labelKey: "task.logs" },
+  { id: "plan", labelKey: "task.plan" },
 ];
 
 export default function BottomTaskPanel({
@@ -48,10 +49,11 @@ export default function BottomTaskPanel({
   onSendChat,
   onTabChange,
 }: Props) {
+  const t = useT();
   const unanswered = questions.filter((question) => question.required !== false && !question.answer).length;
 
   return (
-    <section className="workspace-bottom task-dock" aria-label="任务面板">
+    <section className="workspace-bottom task-dock" aria-label={t("legacy.task_pane")}>
       <div className="task-tabs" role="tablist">
         {tabs.map((tab) => (
           <button
@@ -62,7 +64,7 @@ export default function BottomTaskPanel({
             className={activeTab === tab.id ? "task-tab active" : "task-tab"}
             onClick={() => onTabChange(tab.id)}
           >
-            {tab.label}
+            {t(tab.labelKey)}
             {tab.id === "questions" && unanswered > 0 && <span>{unanswered}</span>}
             {tab.id === "review" && unresolved.length > 0 && <span>{unresolved.length}</span>}
           </button>
@@ -75,7 +77,7 @@ export default function BottomTaskPanel({
             <ClarificationPanel questions={questions} onContinue={onClarificationContinue} disabled={busy} />
             {unresolved.length > 0 && (
               <div className="unresolved-box">
-                <strong>当前阻塞原因</strong>
+                <strong>{t("legacy.blockers")}</strong>
                 <ul>
                   {unresolved.map((item, index) => (
                     <li key={`${item.feature}-${index}`}>
@@ -94,7 +96,7 @@ export default function BottomTaskPanel({
               <input
                 value={chatMessage}
                 onChange={(event) => onChatMessageChange(event.target.value)}
-                placeholder="例如：把中心孔改成 12mm；删除顶部槽；新增 4 个 M6 孔，分布在半径 30mm 的圆上。"
+                placeholder={t("legacy.chat.placeholder")}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
@@ -103,19 +105,19 @@ export default function BottomTaskPanel({
                 }}
               />
               <button type="button" onClick={onSendChat} disabled={busy || !chatMessage.trim()}>
-                发送
+                {t("task.chat.send")}
               </button>
             </div>
-            <p className="hint">AI 修改会生成新的设计快照；可以用顶部撤销 / 重做回到旧版本。</p>
+            <p className="hint">{t("legacy.chat.hint")}</p>
           </div>
         )}
 
         {activeTab === "review" && (
           <div className="task-pane review-pane">
-            {!review && !unresolved.length && <p className="empty-note">生成后这里会显示制造性、标准化和风险提示。</p>}
+            {!review && !unresolved.length && <p className="empty-note">{t("task.review.empty")}</p>}
             {unresolved.length > 0 && (
               <div className="unresolved-box">
-                <strong>必须先解决</strong>
+                <strong>{t("task.review.blockers")}</strong>
                 <ul>
                   {unresolved.map((item, index) => (
                     <li key={`${item.feature}-${index}`}>{`${item.feature}：${item.reason}`}</li>
@@ -125,7 +127,7 @@ export default function BottomTaskPanel({
             )}
             {featurePlan?.assumptions?.length > 0 && (
               <div className="unresolved-box assumption-box">
-                <strong>AI 设计假设</strong>
+                <strong>{t("task.review.assumptions")}</strong>
                 <ul>
                   {featurePlan.assumptions.map((item: string, index: number) => <li key={index}>{item}</li>)}
                 </ul>
@@ -133,11 +135,11 @@ export default function BottomTaskPanel({
             )}
             {review && (
               <div className="review-grid">
-                <ReviewColumn title="阻塞项" items={review.blocking || []} />
-                <ReviewColumn title="警告" items={review.warnings || []} />
-                <ReviewColumn title="建议" items={review.suggestions || []} />
-                <ReviewColumn title="可制造性" items={review.manufacturability || []} />
-                <ReviewColumn title="标准" items={review.standards || []} />
+                <ReviewColumn title={t("task.review.blocking")} items={review.blocking || []} />
+                <ReviewColumn title={t("task.review.warnings")} items={review.warnings || []} />
+                <ReviewColumn title={t("task.review.suggestions")} items={review.suggestions || []} />
+                <ReviewColumn title={t("task.review.manufacturability")} items={review.manufacturability || []} />
+                <ReviewColumn title={t("task.review.standards")} items={review.standards || []} />
               </div>
             )}
           </div>
@@ -145,7 +147,7 @@ export default function BottomTaskPanel({
 
         {activeTab === "logs" && (
           <div className="task-pane">
-            <pre className="log-box">{events.join("\n") || "等待后端事件..."}</pre>
+            <pre className="log-box">{events.join("\n") || t("task.logs.waiting")}</pre>
           </div>
         )}
 
@@ -161,13 +163,14 @@ export default function BottomTaskPanel({
 }
 
 function ReviewColumn({ title, items }: { title: string; items: string[] }) {
+  const t = useT();
   return (
     <section className="review-column">
       <h3>{title}</h3>
       {items.length ? (
         items.map((item, index) => <p key={index}>{item}</p>)
       ) : (
-        <span className="empty-note">暂无</span>
+        <span className="empty-note">{t("task.empty")}</span>
       )}
     </section>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useT } from "./i18n";
 
 export type DimensionPatch = {
   value: number | null;
@@ -32,36 +33,37 @@ type Props = {
   }) => void;
 };
 
-const DIM_LABELS: Record<string, string> = {
-  length: "长度",
-  width: "宽度",
-  height: "高度/厚度",
-  thickness: "厚度",
-  outer_diameter: "外径",
-  inner_diameter: "内径",
-  diameter: "直径/孔径",
-  hole_diameter: "孔径",
-  depth: "深度",
-  axial_width: "轴向槽宽",
-  reduced_outer_diameter: "槽底外径",
-  z_start: "槽起点 Z",
-  count: "数量",
-  spacing: "间距",
-  pitch_radius: "分度圆半径",
-  bolt_circle_radius: "螺栓圆半径",
-  slot_length: "槽长",
-  slot_width: "槽宽",
+const DIM_KEYS: Record<string, string> = {
+  length: "feature.dim.length",
+  width: "feature.dim.width",
+  height: "feature.dim.height",
+  thickness: "feature.dim.thickness",
+  outer_diameter: "feature.dim.outer_diameter",
+  inner_diameter: "feature.dim.inner_diameter",
+  diameter: "feature.dim.diameter",
+  hole_diameter: "feature.dim.hole_diameter",
+  depth: "feature.dim.depth",
+  axial_width: "feature.dim.axial_width",
+  reduced_outer_diameter: "feature.dim.reduced_outer_diameter",
+  z_start: "feature.dim.z_start",
+  count: "feature.dim.count",
+  spacing: "feature.dim.spacing",
+  pitch_radius: "feature.dim.pitch_radius",
+  bolt_circle_radius: "feature.dim.bolt_circle_radius",
+  slot_length: "feature.dim.slot_length",
+  slot_width: "feature.dim.slot_width",
 };
 
-const SOURCE_TEXT: Record<string, string> = {
-  drawing: "图纸",
-  user: "用户确认",
-  assumption: "推断",
-  derived: "推导",
-  unknown: "未知",
+const SOURCE_KEYS: Record<string, string> = {
+  drawing: "feature.source.drawing",
+  user: "feature.source.user",
+  assumption: "feature.source.assumption",
+  derived: "feature.source.derived",
+  unknown: "feature.source.unknown",
 };
 
 export default function FeatureForm({ feature, busy, onSave }: Props) {
+  const t = useT();
   const [dimValues, setDimValues] = useState<Record<string, string>>({});
   const [placement, setPlacement] = useState<PlacementForm>({ reference: "origin", x: "", y: "", z: "", axis: "Z" });
   const [confirmed, setConfirmed] = useState(false);
@@ -97,7 +99,7 @@ export default function FeatureForm({ feature, busy, onSave }: Props) {
       dimensions[key] = {
         value: hasValue ? numeric : null,
         unit: original.unit || "mm",
-        evidence: original.evidence || (hasValue ? "用户在属性面板手动填写" : ""),
+        evidence: original.evidence || (hasValue ? t("feature.evidence.manual") : ""),
         source: hasValue ? "user" : original.source || "unknown",
         confirmed_by_user: hasValue,
       };
@@ -117,7 +119,7 @@ export default function FeatureForm({ feature, busy, onSave }: Props) {
 
   const missingKeys = Object.entries(feature?.dimensions || {})
     .filter(([, dim]: [string, any]) => dim?.value == null)
-    .map(([key]) => DIM_LABELS[key] || key);
+    .map(([key]) => DIM_KEYS[key] ? t(DIM_KEYS[key]) : key);
 
   return (
     <div className="feat-form">
@@ -129,16 +131,16 @@ export default function FeatureForm({ feature, busy, onSave }: Props) {
 
       {missingKeys.length > 0 && (
         <div className="note-warn">
-          缺少：{missingKeys.join("、")}。补齐后点击保存，系统会重新建模。
+          {t("feature.missing", { keys: missingKeys.join(t("clarification.dim_sep")) })}
         </div>
       )}
 
-      <h3 className="feat-section">尺寸参数</h3>
+      <h3 className="feat-section">{t("feature.dim_section")}</h3>
       <div className="dim-grid">
         {Object.entries(feature?.dimensions || {}).map(([key, dim]: [string, any]) => (
           <div className="dim-row" key={key}>
             <label className="dim-label" htmlFor={`dim-${key}`}>
-              {DIM_LABELS[key] || key}
+              {DIM_KEYS[key] ? t(DIM_KEYS[key]) : key}
             </label>
             <input
               id={`dim-${key}`}
@@ -147,21 +149,21 @@ export default function FeatureForm({ feature, busy, onSave }: Props) {
               step="any"
               inputMode="decimal"
               value={dimValues[key] ?? ""}
-              placeholder={dim?.value == null ? "待确认" : ""}
+              placeholder={dim?.value == null ? t("feature.pending_placeholder") : ""}
               onChange={(event) => setDim(key, event.target.value)}
             />
             <span className="dim-unit">{dim?.unit || "mm"}</span>
-            {dim?.value == null && <span className="dim-pending" title="该尺寸尚无确认值">未确认</span>}
-            {dim?.source && <small className="dim-source">{SOURCE_TEXT[dim.source] || dim.source}</small>}
+            {dim?.value == null && <span className="dim-pending" title={t("feature.pending.title")}>{t("feature.pending")}</span>}
+            {dim?.source && <small className="dim-source">{SOURCE_KEYS[dim.source] ? t(SOURCE_KEYS[dim.source]) : dim.source}</small>}
           </div>
         ))}
       </div>
-      {!Object.keys(feature?.dimensions || {}).length && <p className="muted">该特征没有尺寸参数。</p>}
+      {!Object.keys(feature?.dimensions || {}).length && <p className="muted">{t("feature.no_dims")}</p>}
 
-      <h3 className="feat-section">位置</h3>
+      <h3 className="feat-section">{t("feature.position")}</h3>
       <div className="pos-grid">
         <div className="dim-row">
-          <label className="dim-label" htmlFor="pos-ref">基准</label>
+          <label className="dim-label" htmlFor="pos-ref">{t("feature.reference")}</label>
           <input id="pos-ref" className="dim-input" value={placement.reference} onChange={(event) => setPos("reference", event.target.value)} />
         </div>
         {(["x", "y", "z"] as const).map((axis) => (
@@ -180,7 +182,7 @@ export default function FeatureForm({ feature, busy, onSave }: Props) {
           </div>
         ))}
         <div className="dim-row">
-          <label className="dim-label" htmlFor="pos-axis">主轴</label>
+          <label className="dim-label" htmlFor="pos-axis">{t("feature.axis")}</label>
           <select id="pos-axis" value={placement.axis} onChange={(event) => setPos("axis", event.target.value)}>
             <option value="X">X</option>
             <option value="Y">Y</option>
@@ -193,17 +195,17 @@ export default function FeatureForm({ feature, busy, onSave }: Props) {
       <div className="feat-actions">
         <label className="confirm-check">
           <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
-          <span>这些尺寸已经与用户确认</span>
+          <span>{t("feature.confirmed_label")}</span>
         </label>
         <div className="action-buttons">
           <button onClick={handleSave} disabled={busy} className="primary">
-            {busy ? "处理中" : "保存并重新建模"}
+            {busy ? t("feature.processing") : t("feature.save")}
           </button>
         </div>
       </div>
 
       <div className="feat-notes">
-        {feature?.evidence && <p className="note-evidence">证据：{feature.evidence}</p>}
+        {feature?.evidence && <p className="note-evidence">{t("feature.evidence", { value: feature.evidence })}</p>}
         {feature?.unresolved?.length > 0 && (
           <ul className="note-unresolved">
             {(feature.unresolved as string[]).map((item, index) => (

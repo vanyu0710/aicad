@@ -15,12 +15,21 @@ from build123d import Align, BuildPart, Cylinder, Box, Locations, Mode, PolarLoc
 
 from backend.schemas import FeaturePlanV3
 
+_LANG = "zh"
+
+
+def _msg(zh: str, en: str) -> str:
+    return en if _LANG == "en" else zh
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="MechCAD CAD worker")
     parser.add_argument("--plan", required=True, help="Path to FeaturePlan JSON")
     parser.add_argument("--out", required=True, help="Output directory")
+    parser.add_argument("--lang", default="zh", help="Output language (zh or en)")
     args = parser.parse_args()
+    global _LANG
+    _LANG = args.lang if args.lang in {"zh", "en"} else "zh"
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -125,19 +134,19 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
     dims = feature.dimensions
     axis = feature.placement.axis
     if axis != "Z":
-        _skip(report, feature, "当前受控执行器仅支持 Z 轴特征")
+        _skip(report, feature, _msg("当前受控执行器仅支持 Z 轴特征", "The controlled executor currently supports Z-axis features only"))
         return False
 
     if kind in {"through_hole", "blind_hole", "counterbore_hole"}:
         diameter = _value(dims, "diameter", "hole_diameter")
         if not _positive(diameter):
-            _skip(report, feature, "缺少有效孔径")
+            _skip(report, feature, _msg("缺少有效孔径", "Missing a valid hole diameter"))
             return False
         depth = _value(dims, "depth")
         if kind == "through_hole":
             depth = _through_depth(plan)
         elif not _positive(depth):
-            _skip(report, feature, "缺少有效孔深")
+            _skip(report, feature, _msg("缺少有效孔深", "Missing a valid hole depth"))
             return False
         x, y, z = _placement(feature)
         with Locations((x, y, z)):
@@ -151,7 +160,7 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         width = _value(dims, "width", "slot_width")
         depth = _value(dims, "height", "depth")
         if not _positive(length, width, depth):
-            _skip(report, feature, "缺少有效长度、宽度或深度")
+            _skip(report, feature, _msg("缺少有效长度、宽度或深度", "Missing valid length, width, or depth"))
             return False
         x, y, z = _placement(feature)
         with Locations((x, y, z)):
@@ -166,10 +175,10 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         width = _value(dims, "axial_width", "width")
         z_start = _value(dims, "z_start")
         if not _positive(outer, reduced, width) or z_start is None:
-            _skip(report, feature, "环槽缺少槽底外径、轴向宽度或起始位置")
+            _skip(report, feature, _msg("环槽缺少槽底外径、轴向宽度或起始位置", "Groove is missing root diameter, axial width, or start position"))
             return False
         if z_start < 0 or z_start + width > (_value(plan.base_feature.dimensions, "length") or 0) + 1e-6:
-            _skip(report, feature, "环槽位置超出基体长度，减料与主体不相交")
+            _skip(report, feature, _msg("环槽位置超出基体长度，减料与主体不相交", "Groove position exceeds the base length; the cut does not intersect the body"))
             return False
         with Locations((0.0, 0.0, z_start)):
             Cylinder(radius=outer / 2.0, height=width, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.SUBTRACT)
@@ -182,7 +191,7 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         diameter = _value(dims, "diameter", "outer_diameter")
         height = _value(dims, "height", "length")
         if not _positive(diameter, height):
-            _skip(report, feature, "缺少有效凸台直径或高度")
+            _skip(report, feature, _msg("缺少有效凸台直径或高度", "Missing a valid boss diameter or height"))
             return False
         x, y, z = _placement(feature)
         with Locations((x, y, z)):
@@ -196,7 +205,7 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         width = _value(dims, "width")
         height = _value(dims, "height", "depth")
         if not _positive(length, width, height):
-            _skip(report, feature, "缺少有效长度、宽度或高度")
+            _skip(report, feature, _msg("缺少有效长度、宽度或高度", "Missing valid length, width, or height"))
             return False
         x, y, z = _placement(feature)
         with Locations((x, y, z)):
@@ -210,7 +219,7 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         spacing = _value(dims, "spacing", "pitch")
         diameter = _value(dims, "diameter", "hole_diameter")
         if count < 2 or not _positive(spacing, diameter):
-            _skip(report, feature, "线性阵列缺少有效数量、间距或孔径")
+            _skip(report, feature, _msg("线性阵列缺少有效数量、间距或孔径", "Linear pattern is missing valid count, spacing, or hole diameter"))
             return False
         depth = _through_depth(plan)
         x, y, z = _placement(feature)
@@ -226,7 +235,7 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         radius = _value(dims, "pitch_radius", "bolt_circle_radius")
         diameter = _value(dims, "diameter", "hole_diameter")
         if count < 2 or not _positive(radius, diameter):
-            _skip(report, feature, "圆周阵列缺少有效数量、节圆半径或孔径")
+            _skip(report, feature, _msg("圆周阵列缺少有效数量、节圆半径或孔径", "Circular pattern is missing valid count, pitch radius, or hole diameter"))
             return False
         depth = _through_depth(plan)
         x, y, z = _placement(feature)
@@ -238,10 +247,10 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         return True
 
     if kind in {"fillet", "chamfer"}:
-        _skip(report, feature, "边选择不明确，无法安全执行圆角或倒角")
+        _skip(report, feature, _msg("边选择不明确，无法安全执行圆角或倒角", "Edge selection is unclear; fillet/chamfer cannot be executed safely"))
         return False
 
-    _skip(report, feature, f"不支持的特征类型：{kind}")
+    _skip(report, feature, _msg(f"不支持的特征类型：{kind}", f"Unsupported feature type: {kind}"))
     return False
 
 

@@ -134,5 +134,18 @@ def _snapshot(family: str) -> DesignSnapshot:
             store.get_project(project.project_id)
         with self.assertRaises(KeyError):
             store.delete_project(project.project_id)
+    def test_rename_project_updates_name_and_timestamp(self) -> None:
+        store = SessionStore()
+        project = store.create_project("Before")
+        renamed = store.rename_project(project.project_id, "After")
+        self.assertEqual(renamed.name, "After")
+        self.assertEqual(store.get_project(project.project_id).name, "After")
+        self.assertNotEqual(renamed.updated_at, project.updated_at)
+
+    def test_rename_missing_project_raises_key_error(self) -> None:
+        store = SessionStore()
+        with self.assertRaises(KeyError):
+            store.rename_project("nope", "New")
+
 if __name__ == "__main__":
     unittest.main()

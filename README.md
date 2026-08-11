@@ -2,6 +2,10 @@
 
 MechCAD is being upgraded from a Gradio MVP into an AI CAD IDE.
 
+## User Guide
+
+New users should start with [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+
 The old Gradio implementation is preserved in `legacy/gradio/`. The new mainline is:
 
 - `frontend/`: React + TypeScript + Vite + Three.js.
@@ -29,11 +33,29 @@ npm run dev
 
 Open `http://127.0.0.1:5173`.
 
-One-step startup on Windows:
+### 产品模式（Windows 桌面启动）
+
+首次运行会自动构建前端，并在桌面创建 `MechCAD IDE` 快捷方式：
 
 ```powershell
-.\start-mechcad.cmd
+.\start-mechcad-pro.cmd
 ```
+
+之后双击桌面快捷方式即可。FastAPI 会同时托管前端、API 和 WebSocket，访问 `http://127.0.0.1:8001/`；系统托盘提供“打开界面 / 重启服务 / 打开日志 / 退出”。
+
+可选参数：
+
+```powershell
+.\start-mechcad-pro.cmd --no-browser
+.\start-mechcad-pro.cmd --port 8080
+.\start-mechcad-pro.cmd --skip-shortcut
+```
+
+环境变量：`MECHCAD_PORT`、`MECHCAD_OPEN_BROWSER`、`MECHCAD_LOG_DIR`。
+
+### 开发模式
+
+`start-mechcad.cmd` 保留开发双进程模式（Vite + FastAPI），访问 `http://127.0.0.1:5173/`。
 
 ## Tests
 

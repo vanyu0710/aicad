@@ -708,6 +708,40 @@
   font-size: 12px;
 }
 
+.rename-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+
+.rename-input {
+  min-width: 0;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.rename-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.rename-actions button {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
 .danger-button {
   color: var(--seal) !important;
   border-color: rgba(163, 52, 40, 0.3) !important;
@@ -909,5 +943,431 @@
   .command-tabs {
     width: 100%;
     margin-left: 0;
+  }
+}
+
+
+/* ===== Fullscreen viewport + drawer workspace ===== */
+
+.ide-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 8px;
+  overflow: hidden;
+}
+
+.ide-shell .status-banner {
+  flex: none;
+}
+
+.ide-shell.focus-mode .status-banner {
+  display: none;
+}
+
+.top-shell {
+  position: relative;
+  z-index: 40;
+  display: block;
+  min-height: 0;
+}
+
+.title-bar.compact-top {
+  display: grid;
+  grid-template-columns: auto minmax(150px, 1fr) minmax(300px, auto) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 46px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 252, 0.86);
+  box-shadow: var(--shadow);
+}
+
+.title-bar.compact-top .brand-block h1 {
+  font-size: 20px;
+}
+
+.title-bar.compact-top .title-project strong {
+  font-size: 13px;
+}
+
+.title-bar.compact-top .title-project span {
+  font-size: 10px;
+}
+
+.title-bar.compact-top .menu-bar {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  overflow: visible;
+}
+
+.title-bar.compact-top .menu-button,
+.title-bar.compact-top .command-tab {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11px;
+}
+
+.title-bar.compact-top .command-tab.active {
+  border-color: rgba(88, 123, 114, 0.4);
+  color: var(--ink);
+  background: rgba(88, 123, 114, 0.12);
+}
+
+.title-bar.compact-top .command-tabs {
+  margin-left: auto;
+}
+
+.title-bar.compact-top .title-status {
+  justify-content: flex-end;
+}
+
+.title-bar.compact-top .quick-actions {
+  gap: 5px;
+}
+
+.title-bar.compact-top .quick-actions button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.title-bar.compact-top .focus-toggle.active {
+  border-color: rgba(88, 123, 114, 0.5);
+  color: var(--jade);
+  background: rgba(238, 244, 241, 0.66);
+}
+
+.ide-shell.focus-mode .top-shell {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  z-index: 50;
+  width: auto;
+  max-width: calc(100vw - 16px);
+  transform: translateX(-50%);
+}
+
+.ide-shell.focus-mode .title-bar.compact-top {
+  grid-template-columns: auto auto;
+  min-height: 40px;
+  padding: 3px 8px;
+}
+
+.ide-shell.focus-mode .title-project,
+.ide-shell.focus-mode .menu-bar,
+.ide-shell.focus-mode .title-status {
+  display: none;
+}
+
+.ide-shell.focus-mode .quick-actions button:not(.focus-toggle):not(.primary) {
+  display: none;
+}
+
+.ide-shell.focus-mode .quick-actions .primary {
+  padding: 0 12px;
+}
+
+.workspace-grid {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-center {
+  position: absolute;
+  inset: 0;
+  display: block;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 252, 0.28);
+  box-shadow: none;
+}
+
+.workspace-center .viewport-shell {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.workspace-center .viewport-canvas {
+  border-radius: 8px;
+}
+
+.edge-rail {
+  position: absolute;
+  top: 50%;
+  z-index: 6;
+  display: grid;
+  gap: 6px;
+  width: 48px;
+  padding: 6px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 252, 0.86);
+  box-shadow: var(--shadow);
+  transform: translateY(-50%);
+}
+
+.edge-rail-left {
+  left: 10px;
+}
+
+.edge-rail-right {
+  right: 10px;
+}
+
+.edge-rail-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  min-height: 40px;
+  margin: 0 auto;
+  padding: 4px 2px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--ink-soft);
+  background: transparent;
+  font-size: 10px;
+}
+
+.edge-rail-button:hover:not(:disabled) {
+  border-color: rgba(88, 123, 114, 0.45);
+  color: var(--ink);
+  background: rgba(238, 244, 241, 0.7);
+}
+
+.edge-rail-button.active {
+  border-color: rgba(88, 123, 114, 0.55);
+  color: var(--jade);
+  background: rgba(238, 244, 241, 0.82);
+}
+
+.rail-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 0.06em;
+}
+
+.edge-drawer {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  z-index: 20;
+  display: flex;
+  min-width: 300px;
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: rgba(255, 255, 252, 0.97);
+  box-shadow: 0 24px 60px rgba(47, 58, 63, 0.2);
+}
+
+.left-drawer {
+  left: 8px;
+}
+
+.right-drawer {
+  right: 8px;
+}
+
+.edge-drawer .manager-pane,
+.edge-drawer .task-pane-panel {
+  grid-area: auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.drawer-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 30;
+  width: 7px;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.drawer-resizer:hover {
+  background: rgba(88, 123, 114, 0.32);
+}
+
+.drawer-resizer-left {
+  right: -4px;
+}
+
+.drawer-resizer-right {
+  left: -4px;
+}
+
+.artifact-row {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 4;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 34px;
+  padding: 5px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 252, 0.86);
+  box-shadow: var(--shadow);
+}
+
+.artifact-row a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 5px;
+  font-size: 11px;
+  background: rgba(255, 255, 252, 0.8);
+}
+
+.artifact-row a:hover:not(.disabled) {
+  background: rgba(238, 244, 241, 0.82);
+}
+
+.bottom-statusbar {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 4;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 252, 0.84);
+  font-size: 10px;
+  transform: translateX(-50%);
+}
+
+.bottom-statusbar span:last-child {
+  margin-left: 0;
+}
+
+.viewport-status {
+  display: none;
+}
+
+@media (max-width: 1400px) {
+  .title-bar.compact-top {
+    grid-template-columns: auto minmax(130px, 1fr) auto;
+  }
+
+  .title-bar.compact-top .title-status {
+    display: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .title-bar.compact-top {
+    grid-template-columns: auto minmax(90px, 1fr) auto;
+  }
+
+  .title-bar.compact-top .title-project span {
+    display: none;
+  }
+
+  .title-bar.compact-top .command-tab {
+    padding: 0 8px;
+  }
+
+  .title-bar.compact-top .quick-actions button {
+    padding: 0 8px;
+  }
+
+  .menu-button {
+    padding: 0 8px;
+  }
+}
+
+@media (max-width: 980px) {
+  .ide-shell {
+    padding: 6px;
+  }
+
+  .title-bar.compact-top {
+    grid-template-columns: auto minmax(70px, 1fr) auto;
+    gap: 6px;
+  }
+
+  .title-bar.compact-top .title-project {
+    display: none;
+  }
+
+  .title-bar.compact-top .menu-bar {
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .edge-rail {
+    width: 40px;
+  }
+
+  .edge-rail-button {
+    width: 32px;
+    min-height: 34px;
+  }
+
+  .edge-drawer {
+    max-width: calc(100vw - 16px);
+  }
+
+  .bottom-statusbar {
+    display: none;
+  }
+
+  .artifact-row {
+    right: 8px;
+    bottom: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edge-drawer,
+  .top-shell {
+    transition: none;
   }
 }

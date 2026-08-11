@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { testModelConnection, type ModelConfig, type ModelRole, type ModelTestResult } from "./api";
+import { useT } from "./i18n";
+import { useAppStore } from "./store";
 
 type Props = {
   value: ModelConfig;
@@ -27,6 +29,8 @@ const presets: Record<string, Partial<ModelConfig>> = {
 };
 
 export default function ModelConfigPanel({ value, onChange, onApply, dirty, notice, saving, disabled }: Props) {
+  const t = useT();
+  const language = useAppStore((state) => state.language);
   const [results, setResults] = useState<Partial<Record<ModelRole, ModelTestResult>>>({});
   const [testing, setTesting] = useState<ModelRole | "">("");
   const [message, setMessage] = useState("");
@@ -36,9 +40,10 @@ export default function ModelConfigPanel({ value, onChange, onApply, dirty, noti
     setTesting(role);
     setMessage("");
     try {
-      const result = await testModelConnection(role, value);
+      const result = await testModelConnection(role, value, language);
       setResults((previous) => ({ ...previous, [role]: result }));
-      setMessage(`${role === "vision" ? "视觉读图模型" : "建模规划模型"}：${result.message}`);
+      const roleLabel = role === "vision" ? t("model.vision.role") : t("model.planner.role");
+      setMessage(t("model.test.message", { role: roleLabel, message: result.message }));
     } catch (error) {
       setMessage(String(error));
     } finally {
@@ -53,15 +58,15 @@ export default function ModelConfigPanel({ value, onChange, onApply, dirty, noti
     <section className="detailed-config">
       <div className="config-summary">
         <div className="config-summary-item">
-          <span>视觉模型</span>
-          <strong className={visionReady ? "ok" : ""}>{visionReady ? "已配置" : "使用 .env"}</strong>
+          <span>{t("model.vision")}</span>
+          <strong className={visionReady ? "ok" : ""}>{visionReady ? t("model.vision.ready") : t("model.use_env")}</strong>
         </div>
         <div className="config-summary-item">
-          <span>规划模型</span>
-          <strong className={plannerReady ? "ok" : ""}>{plannerReady ? "已配置" : "使用 .env"}</strong>
+          <span>{t("model.planner")}</span>
+          <strong className={plannerReady ? "ok" : ""}>{plannerReady ? t("model.planner.ready") : t("model.use_env")}</strong>
         </div>
         <div className="config-summary-item">
-          <span>默认协议</span>
+          <span>{t("model.protocol.default")}</span>
           <strong>{value.planner_protocol === "anthropic" ? "Anthropic" : "OpenAI"}</strong>
         </div>
       </div>
@@ -69,8 +74,8 @@ export default function ModelConfigPanel({ value, onChange, onApply, dirty, noti
       <div className="preset-row">
         <label className="field compact">
           <span className="field-label">
-            协议预设
-            <small>只切换协议与 Provider，不覆盖已有 Key。</small>
+            {t("model.preset")}
+            <small>{t("model.preset.hint")}</small>
           </span>
           <select
             value=""
@@ -78,9 +83,9 @@ export default function ModelConfigPanel({ value, onChange, onApply, dirty, noti
               if (event.target.value) update(presets[event.target.value]);
             }}
           >
-            <option value="">选择预设</option>
-            <option value="custom_openai">自定义 OpenAI 兼容</option>
-            <option value="custom_anthropic">自定义 Anthropic 兼容</option>
+            <option value="">{t("model.preset.select")}</option>
+            <option value="custom_openai">{t("model.preset.openai")}</option>
+            <option value="custom_anthropic">{t("model.preset.anthropic")}</option>
           </select>
         </label>
         <label className="confirm-check config-check">
@@ -90,12 +95,12 @@ export default function ModelConfigPanel({ value, onChange, onApply, dirty, noti
             onChange={(event) => update({ force_real_api: event.target.checked })}
           />
           <span>
-            强制使用真实 API
-            <small>关闭本地示例兜底；未配置模型时直接报错。</small>
+            {t("model.force_real")}
+            <small>{t("model.force_real.hint")}</small>
           </span>
         </label>
         <button type="button" className="apply-settings" onClick={onApply} disabled={disabled || saving || !dirty}>
-          {saving ? "保存中..." : dirty ? "应用配置" : "配置已应用"}
+          {saving ? t("model.saving") : dirty ? t("model.apply") : t("model.applied")}
         </button>
       </div>
 
@@ -141,11 +146,10 @@ function RoleCard({
   onTest: (role: ModelRole) => void;
   disabled?: boolean;
 }) {
+  const t = useT();
   const isVision = role === "vision";
-  const label = isVision ? "视觉读图模型" : "建模规划模型";
-  const subtitle = isVision
-    ? "从草图读取视图、尺寸标注、基准、特征证据和不确定项。"
-    : "把视觉读图结果转换成受控 FeaturePlan，再由 CAD Worker 执行。";
+  const label = isVision ? t("model.vision.role") : t("model.planner.role");
+  const subtitle = isVision ? t("model.vision.subtitle") : t("model.planner.subtitle");
   const field = (name: string) => `${role}_${name}` as keyof ModelConfig;
   const protocol = String(value[field("protocol")] || "openai");
 
@@ -164,8 +168,8 @@ function RoleCard({
       <div className="config-grid">
         <label className="field compact">
           <span className="field-label">
-            Provider
-            <small>服务商标识，如 custom、openai、minimax。</small>
+            {t("model.provider")}
+            <small>{t("model.provider.hint")}</small>
           </span>
           <input
             value={String(value[field("provider")] || "")}
@@ -176,19 +180,19 @@ function RoleCard({
 
         <label className="field compact">
           <span className="field-label">
-            协议
-            <small>决定请求体与鉴权格式。</small>
+            {t("model.protocol")}
+            <small>{t("model.protocol.hint")}</small>
           </span>
           <select value={protocol} onChange={(event) => onChange({ [field("protocol")]: event.target.value })}>
-            <option value="openai">OpenAI 兼容</option>
-            <option value="anthropic">Anthropic 兼容</option>
+            <option value="openai">{t("model.protocol.openai")}</option>
+            <option value="anthropic">{t("model.protocol.anthropic")}</option>
           </select>
         </label>
 
         <label className="field compact wide">
           <span className="field-label">
-            Base URL
-            <small>留空则使用 .env 默认值；OpenAI 兼容通常以 /v1 结尾。</small>
+            {t("model.base_url")}
+            <small>{t("model.base_url.hint")}</small>
           </span>
           <input
             value={String(value[field("base_url")] || "")}
@@ -199,26 +203,26 @@ function RoleCard({
 
         <label className="field compact">
           <span className="field-label">
-            模型名称
-            <small>填写完整模型 ID，例如 qwen2.5-vl-32b-instruct。</small>
+            {t("model.name")}
+            <small>{t("model.name.hint")}</small>
           </span>
           <input
             value={String(value[field("model")] || "")}
             onChange={(event) => onChange({ [field("model")]: event.target.value })}
-            placeholder={isVision ? "视觉模型 ID" : "规划模型 ID"}
+            placeholder={isVision ? t("model.name.vision") : t("model.name.planner")}
           />
         </label>
 
         <label className="field compact wide">
           <span className="field-label">
-            API Key
-            <small>仅保存在当前项目；页面不回显已配置密钥。</small>
+            {t("model.api_key")}
+            <small>{t("model.api_key.hint")}</small>
           </span>
           <input
             type="password"
             value={String(value[field("api_key")] || "")}
             onChange={(event) => onChange({ [field("api_key")]: event.target.value })}
-            placeholder="留空使用 .env"
+            placeholder={t("model.api_key.placeholder")}
             autoComplete="off"
           />
         </label>
@@ -226,11 +230,11 @@ function RoleCard({
 
       <div className="role-actions">
         <button type="button" onClick={() => onTest(role)} disabled={disabled || testing}>
-          {testing ? "测试中..." : "测试连接"}
+          {testing ? t("model.testing") : t("model.test")}
         </button>
         {result && (
           <span className={result.ok ? "test-ok" : "test-fail"}>
-            {result.ok ? "连接成功" : `失败：${result.message}`}
+            {result.ok ? t("model.test.ok") : t("model.test.fail", { message: result.message })}
           </span>
         )}
       </div>
@@ -238,12 +242,12 @@ function RoleCard({
       {result?.diagnostics && (
         <div className="test-diagnostics">
           <span>HTTP {result.diagnostics.status_code ?? "-"}</span>
-          <span>{result.diagnostics.content_type || "无 Content-Type"}</span>
-          <span>{result.diagnostics.used_env_fallback ? "使用了 .env" : "使用了项目配置"}</span>
+          <span>{result.diagnostics.content_type || t("model.diag.no_content_type")}</span>
+          <span>{result.diagnostics.used_env_fallback ? t("model.diag.env") : t("model.diag.project")}</span>
         </div>
       )}
 
-      <small className="help-text">测试只发送最小文本请求，不上传图片，也不会启动 CAD。</small>
+      <small className="help-text">{t("model.help")}</small>
     </div>
   );
 }

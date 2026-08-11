@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import {
   API_ROOT,
   artifactUrl,
@@ -10,6 +10,8 @@ import {
   listProjects,
   patchFeature,
   redo,
+  renameProject,
+  resolveWsRoot,
   updateProjectSettings,
   undo,
   type ModelConfig,
@@ -21,28 +23,30 @@ import TopCommandBar from "./layout/TopCommandBar";
 import SettingsDialog from "./SettingsDialog";
 import StartupScreen from "./StartupScreen";
 import Viewport from "./Viewport";
+import { useT } from "./i18n";
 import {
+  DEFAULT_SETTINGS,
+  clampDrawerWidth,
   markStartupSeen,
   readStartupMode,
   shouldShowStartup,
   useAppStore,
   writeStartupMode,
+  type ManagerTab,
+  type TaskTab,
 } from "./store";
 
-const statusLabels: Record<string, string> = {
-  empty: "等待输入",
-  ready: "可以生成",
-  analyzing: "正在分析",
-  awaiting_questions: "等待确认尺寸",
-  ready_to_review: "模型已生成",
-  failed: "执行失败",
+const statusLabelKeys: Record<string, string> = {
+  empty: "status.empty",
+  ready: "status.ready",
+  analyzing: "status.analyzing",
+  awaiting_questions: "status.awaiting_questions",
+  ready_to_review: "status.ready_to_review",
+  failed: "status.failed",
 };
 
-function getModeLabel(settings: ModelConfig) {
-  return settings.operation_mode === "strict" ? "严格模式" : "智能模式";
-}
-
 export default function App() {
+  const t = useT();
   const {
     project,
     description,
@@ -81,6 +85,7 @@ export default function App() {
     setUi,
   } = useAppStore();
   const bootRef = useRef(false);
+  const language = useAppStore((state) => state.language);
 
   const refreshProjects = async () => {
     try {
@@ -89,7 +94,7 @@ export default function App() {
       setBackendState("connected");
     } catch (err) {
       setBackendState("offline");
-      setError(`后端连接失败：${String(err)}。请确认 FastAPI 已在 8001 端口启动。`);
+      setError(t("app.backend.offline", { err: String(err) }));
     }
   };
 
@@ -104,7 +109,7 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
-      const { project: next } = await createProject("未命名 MechCAD 项目");
+      const { project: next } = await createProject(t("app.project.untitled"));
       setProject(next);
       setSettings(next.settings);
       setSettingsDirty(false);
@@ -115,7 +120,7 @@ export default function App() {
       await refreshProjects();
     } catch (err) {
       setBackendState("offline");
-      setError(`创建项目失败：${String(err)}`);
+      setError(t("app.create.failed", { err: String(err) }));
     } finally {
       setBusy(false);
     }
@@ -126,15 +131,17 @@ export default function App() {
     setError("");
     try {
       const next = await fetchProject(projectId);
-      setProject(next);
-      setSettings(next.settings);
+      const fallback = project?.project_id === projectId ? settings : { ...DEFAULT_SETTINGS };
+      const mergedSettings = mergeSettings(next.settings, fallback);
+      setProject({ ...next, settings: mergedSettings });
+      setSettings(mergedSettings);
       setSettingsDirty(false);
       setSelectedFeatureId("");
       enterWorkspace();
       setBackendState("connected");
       await refreshProjects();
     } catch (err) {
-      setError(`打开项目失败：${String(err)}`);
+      setError(t("app.open.failed", { err: String(err) }));
     } finally {
       setBusy(false);
     }
@@ -149,7 +156,25 @@ export default function App() {
       }
       await refreshProjects();
     } catch (err) {
-      setError(`删除项目失败：${String(err)}`);
+      setError(t("app.delete.failed", { err: String(err) }));
+    }
+  };
+
+  const handleRenameProject = async (projectId: string, name: string) => {
+    const clean = name.trim();
+    if (!clean) {
+      setError(t("startup.rename.empty"));
+      return;
+    }
+    setError("");
+    try {
+      const next = await renameProject(projectId, clean);
+      if (project?.project_id === projectId) {
+        setProject({ ...project, name: next.name, updated_at: next.updated_at });
+      }
+      await refreshProjects();
+    } catch (err) {
+      setError(t("app.rename.failed", { err: String(err) }));
     }
   };
 
@@ -161,6 +186,20 @@ export default function App() {
     }
   };
 
+  const toggleLeftDrawer = (tab: ManagerTab) => {
+    setUi({
+      leftTab: tab,
+      leftDrawerOpen: ui.leftDrawerOpen && ui.leftTab === tab ? false : true,
+    });
+  };
+
+  const toggleRightDrawer = (tab: TaskTab) => {
+    setUi({
+      rightTab: tab,
+      rightDrawerOpen: ui.rightDrawerOpen && ui.rightTab === tab ? false : true,
+    });
+  };
+
   const startResize = (side: "left" | "right", event: ReactMouseEvent) => {
     event.preventDefault();
     const startX = event.clientX;
@@ -168,9 +207,9 @@ export default function App() {
     const onMove = (move: MouseEvent) => {
       const delta = move.clientX - startX;
       if (side === "left") {
-        setUi({ leftWidth: Math.min(640, Math.max(320, startWidth + delta)) });
+        setUi({ leftWidth: clampDrawerWidth(startWidth + delta) });
       } else {
-        setUi({ rightWidth: Math.min(560, Math.max(300, startWidth - delta)) });
+        setUi({ rightWidth: clampDrawerWidth(startWidth - delta) });
       }
     };
     const onUp = () => {
@@ -200,13 +239,13 @@ export default function App() {
       return;
     }
 
-    const wsRoot = (import.meta as any).env?.VITE_WS_ROOT || API_ROOT.replace(/^http/, "ws");
+    const wsRoot = resolveWsRoot();
     const socket = new WebSocket(`${wsRoot}/ws/projects/${project.project_id}`);
     let socketConnected = false;
 
     socket.onopen = () => {
       socketConnected = true;
-      addEvents(["实时事件连接已建立"]);
+      addEvents([t("app.events.connected")]);
     };
     socket.onmessage = (message) => {
       const event = JSON.parse(message.data);
@@ -216,17 +255,17 @@ export default function App() {
     };
     socket.onerror = () => {
       if (!socketConnected) {
-        addEvents(["实时事件暂不可用，REST API 仍可继续操作"]);
+        addEvents([t("app.events.unavailable")]);
       }
     };
     socket.onclose = () => {
       if (socketConnected) {
-        addEvents(["实时事件连接已关闭，页面仍可继续操作"]);
+        addEvents([t("app.events.closed")]);
       }
     };
 
     return () => socket.close();
-  }, [project?.project_id, addEvents]);
+  }, [project?.project_id, addEvents, language]);
 
   const plan = project?.current.feature_plan;
   const questions = project?.current.questions || [];
@@ -255,7 +294,7 @@ export default function App() {
 
   useEffect(() => {
     if (questions.some((question) => question.required !== false && !question.answer)) {
-      setUi({ rightTab: "assistant" });
+      setUi({ rightTab: "assistant", rightDrawerOpen: true });
     }
   }, [questions, setUi]);
 
@@ -264,6 +303,7 @@ export default function App() {
   const canUndo = Boolean(project?.history?.length);
   const canRedo = Boolean(project?.redo_stack?.length);
   const hasRequiredQuestions = questions.some((question) => question.required !== false && !question.answer);
+  const modeLabel = settings.operation_mode === "strict" ? t("mode.strict") : t("mode.smart");
 
   const status = !project
     ? "empty"
@@ -300,13 +340,18 @@ export default function App() {
     setError("");
     setSettingsNotice("");
     try {
-      const next = await updateProjectSettings(project.project_id, nextSettings);
+      const sanitized = { ...nextSettings };
+      for (const role of ["vision", "planner"] as const) {
+        const key = `${role}_api_key` as "vision_api_key" | "planner_api_key";
+        if (sanitized[key] === SECRET_MASK) sanitized[key] = "";
+      }
+      const next = await updateProjectSettings(project.project_id, sanitized);
       replaceProject(next, nextSettings);
       setSettingsDirty(false);
-      setSettingsNotice("配置已保存到当前项目。");
+      setSettingsNotice(t("app.settings.saved"));
     } catch (err) {
       setSettingsDirty(true);
-      setSettingsNotice(`配置保存失败：${String(err)}`);
+      setSettingsNotice(t("app.save.failed", { err: String(err) }));
     } finally {
       setSettingsSaving(false);
     }
@@ -318,7 +363,7 @@ export default function App() {
     }
     setBusy(true);
     setError("");
-    addEvents(["已提交生成任务"]);
+    addEvents([t("app.generate.submitted")]);
     try {
       const imageDataUrl = imageFile ? await fileToDataUrl(imageFile) : null;
       const next = await generateProject(project.project_id, {
@@ -328,12 +373,13 @@ export default function App() {
         model_config: settings,
         image_data_url: imageDataUrl,
         image_name: imageFile?.name,
+        language,
       });
       replaceProject(next);
       setSettingsDirty(false);
       await refreshProjects();
     } catch (err) {
-      setError(`生成失败：${String(err)}`);
+      setError(t("app.generate.failed", { err: String(err) }));
     } finally {
       setBusy(false);
     }
@@ -346,12 +392,12 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
-      const next = await chatProject(project.project_id, chatMessage.trim());
+      const next = await chatProject(project.project_id, chatMessage.trim(), language);
       replaceProject(next);
       setChatMessage("");
       await refreshProjects();
     } catch (err) {
-      setError(`修改失败：${String(err)}`);
+      setError(t("app.chat.failed", { err: String(err) }));
     } finally {
       setBusy(false);
     }
@@ -364,11 +410,11 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
-      const next = await patchFeature(project.project_id, selectedFeature.id, payload);
+      const next = await patchFeature(project.project_id, selectedFeature.id, payload, language);
       replaceProject(next);
       await refreshProjects();
     } catch (err) {
-      setError(`保存特征失败：${String(err)}`);
+      setError(t("app.feature.failed", { err: String(err) }));
     } finally {
       setBusy(false);
     }
@@ -390,12 +436,13 @@ export default function App() {
         image_data_url: imageDataUrl,
         image_name: imageFile?.name,
         clarification_answers: answers,
+        language,
       });
       replaceProject(next);
       setSettingsDirty(false);
       await refreshProjects();
     } catch (err) {
-      setError(`确认问题失败：${String(err)}`);
+      setError(t("app.question.failed", { err: String(err) }));
     } finally {
       setBusy(false);
     }
@@ -403,13 +450,13 @@ export default function App() {
 
   const onUndo = () => {
     if (project && canUndo) {
-      undo(project.project_id).then(replaceProject).catch((err) => setError(`撤销失败：${String(err)}`));
+      undo(project.project_id).then(replaceProject).catch((err) => setError(t("app.undo.failed", { err: String(err) })));
     }
   };
 
   const onRedo = () => {
     if (project && canRedo) {
-      redo(project.project_id).then(replaceProject).catch((err) => setError(`重做失败：${String(err)}`));
+      redo(project.project_id).then(replaceProject).catch((err) => setError(t("app.redo.failed", { err: String(err) })));
     }
   };
 
@@ -433,6 +480,8 @@ export default function App() {
       } else if (mod && key === ",") {
         event.preventDefault();
         setUi({ settingsOpen: true });
+      } else if (event.key === "Escape") {
+        setUi({ leftDrawerOpen: false, rightDrawerOpen: false });
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -451,26 +500,36 @@ export default function App() {
         onCreate={() => void handleNewProject()}
         onOpen={(id) => void handleOpenProject(id)}
         onDelete={(id) => void handleDeleteProject(id)}
+        onRename={(id, name) => void handleRenameProject(id, name)}
         onModeChange={handleStartupModeChange}
       />
     );
   }
 
+  const renameCurrentProject = () => {
+    if (!project) return;
+    const name = window.prompt(t("startup.rename.prompt"), project.name);
+    if (name && name.trim()) void handleRenameProject(project.project_id, name);
+  };
+
+  const engineLabel = plan ? t("app.engine.ready") : t("app.engine.waiting");
+
   return (
-    <main className="app-shell ide-shell">
+    <main className={`app-shell ide-shell${ui.focusMode ? " focus-mode" : ""}`}>
       <TopCommandBar
         backendState={backendState}
         busy={busy}
         canRedo={canRedo}
         canUndo={canUndo}
-        engineLabel={plan ? "Build123d Worker（受控执行）" : "等待 FeaturePlan"}
-        modeLabel={getModeLabel(settings)}
+        engineLabel={engineLabel}
+        modeLabel={modeLabel}
         projectName={project.name || "MechCAD IDE"}
-        statusLabel={statusLabels[status]}
+        statusLabel={t(statusLabelKeys[status])}
         onGenerate={() => void onGenerate()}
         onRedo={onRedo}
         onUndo={onUndo}
         onNewProject={() => void handleNewProject()}
+        onRenameProject={renameCurrentProject}
         onBackToStart={() => setShowStartup(true)}
         onOpenSettings={() => setUi({ settingsOpen: true })}
       />
@@ -479,80 +538,146 @@ export default function App() {
 
       <section
         className="workspace-grid"
-        style={
-          {
-            "--left-width": `${ui.leftCollapsed ? 52 : ui.leftWidth}px`,
-            "--right-width": `${ui.rightCollapsed ? 52 : ui.rightWidth}px`,
-          } as any
-        }
+        onMouseDown={(event) => {
+          const target = event.target as HTMLElement;
+          if (target.closest(".edge-drawer") || target.closest(".edge-rail")) {
+            return;
+          }
+          setUi({ leftDrawerOpen: false, rightDrawerOpen: false });
+        }}
       >
-        <LeftManager
-          busy={busy}
-          description={description}
-          features={features}
-          imageFile={imageFile}
-          modeLabel={getModeLabel(settings)}
-          partFamily={plan?.part_family}
-          projectName={project.name || "未命名项目"}
-          selectedFeature={selectedFeature}
-          selectedFeatureId={selectedFeatureId}
-          statusLabel={statusLabels[status]}
-          unresolvedCount={unresolved.length}
-          onDescriptionChange={setDescription}
-          onImageChange={setImageFile}
-          onSelectFeature={setSelectedFeatureId}
-          onSaveFeature={(payload) => void onSaveFeature(payload)}
-          onOpenSettings={() => setUi({ settingsOpen: true })}
-        />
-        <div className="panel-resizer lresize" title="拖动调整左侧面板宽度" onMouseDown={(event) => startResize("left", event)} />
-
-        <section className="workspace-center" aria-label="3D 工作区">
-          <div className="center-statusbar">
-            <div>
-              <strong>{hasModel ? "模型预览" : hasRequiredQuestions ? "等待参数确认" : "空视口"}</strong>
-              <span>{plan ? `零件族：${plan.part_family}` : "上传草图或输入已知尺寸后开始"}</span>
-            </div>
-            <div className="center-statusbar-actions">
-              <span className={hasModel ? "status-dot ok" : hasRequiredQuestions ? "status-dot warn" : "status-dot idle"} />
-              <span>{statusLabels[status]}</span>
-            </div>
-          </div>
+        <section className="workspace-center" aria-label={t("app.viewport.aria")}>
           <Viewport
             objUrl={artifactUrl(runId, "obj")}
             stlUrl={artifactUrl(runId, "stl")}
-            breadcrumb={`草稿 / ${plan?.part_family || "FeaturePlan"} / ${selectedFeature?.id || "未选择"}`}
-            statusLabel={statusLabels[status]}
+            breadcrumb={t("app.breadcrumb", {
+              partFamily: plan?.part_family || "FeaturePlan",
+              feature: selectedFeature?.id || t("app.breadcrumb.none"),
+            })}
+            statusLabel={t(statusLabelKeys[status])}
           />
           <div className="artifact-row">
             <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "step")}>STEP</a>
             <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "stl")}>STL</a>
             <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "obj")}>OBJ</a>
-            <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "execution_report")}>执行报告</a>
+            <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "execution_report")}>{t("app.artifact.report")}</a>
           </div>
         </section>
-        <div className="panel-resizer rresize" title="拖动调整右侧面板宽度" onMouseDown={(event) => startResize("right", event)} />
 
-        <TaskPane
-          busy={busy}
-          chatMessage={chatMessage}
-          events={events}
-          featurePlan={project.current.feature_plan}
-          questions={questions}
-          reportMarkdown={project.current.report_markdown}
-          review={review}
-          unresolved={unresolved}
-          runId={runId}
-          engineLabel={plan ? "Build123d Worker（受控执行）" : "等待 FeaturePlan"}
-          onChatMessageChange={setChatMessage}
-          onClarificationContinue={(answers) => void onClarificationContinue(answers)}
-          onSendChat={() => void onChat()}
-        />
+        <aside className="edge-rail edge-rail-left" aria-label={t("rail.left.label")}>
+          <button
+            type="button"
+            className={ui.leftDrawerOpen && ui.leftTab === "feature" ? "edge-rail-button active" : "edge-rail-button"}
+            title={t("manager.feature_tree")}
+            onClick={() => toggleLeftDrawer("feature")}
+          >
+            <span className="rail-label">{t("rail.features")}</span>
+          </button>
+          <button
+            type="button"
+            className={ui.leftDrawerOpen && ui.leftTab === "property" ? "edge-rail-button active" : "edge-rail-button"}
+            title={t("manager.property")}
+            onClick={() => toggleLeftDrawer("property")}
+          >
+            <span className="rail-label">{t("rail.property")}</span>
+          </button>
+          <button
+            type="button"
+            className={ui.leftDrawerOpen && ui.leftTab === "configuration" ? "edge-rail-button active" : "edge-rail-button"}
+            title={t("manager.configuration")}
+            onClick={() => toggleLeftDrawer("configuration")}
+          >
+            <span className="rail-label">{t("rail.config")}</span>
+          </button>
+        </aside>
+
+        <aside className="edge-rail edge-rail-right" aria-label={t("rail.right.label")}>
+          <button
+            type="button"
+            className={ui.rightDrawerOpen && ui.rightTab === "assistant" ? "edge-rail-button active" : "edge-rail-button"}
+            title={t("task.assistant")}
+            onClick={() => toggleRightDrawer("assistant")}
+          >
+            <span className="rail-label">{t("rail.assistant")}</span>
+          </button>
+          <button
+            type="button"
+            className={ui.rightDrawerOpen && ui.rightTab === "review" ? "edge-rail-button active" : "edge-rail-button"}
+            title={t("task.review")}
+            onClick={() => toggleRightDrawer("review")}
+          >
+            <span className="rail-label">{t("rail.review")}</span>
+          </button>
+          <button
+            type="button"
+            className={ui.rightDrawerOpen && ui.rightTab === "logs" ? "edge-rail-button active" : "edge-rail-button"}
+            title={t("task.logs")}
+            onClick={() => toggleRightDrawer("logs")}
+          >
+            <span className="rail-label">{t("rail.logs")}</span>
+          </button>
+          <button
+            type="button"
+            className={ui.rightDrawerOpen && ui.rightTab === "export" ? "edge-rail-button active" : "edge-rail-button"}
+            title={t("task.export")}
+            onClick={() => toggleRightDrawer("export")}
+          >
+            <span className="rail-label">{t("rail.export")}</span>
+          </button>
+        </aside>
+
+        {ui.leftDrawerOpen && (
+          <div className="edge-drawer left-drawer" style={{ width: `${ui.leftWidth}px` }}>
+            <div className="drawer-resizer drawer-resizer-left" title={t("app.left.resize")} onMouseDown={(event) => startResize("left", event)} />
+            <LeftManager
+              busy={busy}
+              description={description}
+              features={features}
+              imageFile={imageFile}
+              modeLabel={modeLabel}
+              partFamily={plan?.part_family}
+              projectName={project.name || t("app.project.untitled")}
+              selectedFeature={selectedFeature}
+              selectedFeatureId={selectedFeatureId}
+              statusLabel={t(statusLabelKeys[status])}
+              unresolvedCount={unresolved.length}
+              onDescriptionChange={setDescription}
+              onImageChange={setImageFile}
+              onSelectFeature={setSelectedFeatureId}
+              onSaveFeature={(payload) => void onSaveFeature(payload)}
+              onOpenSettings={() => setUi({ settingsOpen: true })}
+              onClose={() => setUi({ leftDrawerOpen: false })}
+            />
+          </div>
+        )}
+
+        {ui.rightDrawerOpen && (
+          <div className="edge-drawer right-drawer" style={{ width: `${ui.rightWidth}px` }}>
+            <div className="drawer-resizer drawer-resizer-right" title={t("app.right.resize")} onMouseDown={(event) => startResize("right", event)} />
+            <TaskPane
+              busy={busy}
+              chatMessage={chatMessage}
+              events={events}
+              featurePlan={project.current.feature_plan}
+              questions={questions}
+              reportMarkdown={project.current.report_markdown}
+              review={review}
+              unresolved={unresolved}
+              runId={runId}
+              engineLabel={engineLabel}
+              onChatMessageChange={setChatMessage}
+              onClarificationContinue={(answers) => void onClarificationContinue(answers)}
+              onSendChat={() => void onChat()}
+              onClose={() => setUi({ rightDrawerOpen: false })}
+            />
+          </div>
+        )}
       </section>
 
       <footer className="bottom-statusbar">
-        <span>坐标：0.00, 0.00, 0.00</span>
-        <span>{statusLabels[status]}</span>
-        <span>Ctrl+G 生成 · Ctrl+Z 撤销 · Ctrl+, 设置</span>
+        <span>{t("app.statusbar.coords")}</span>
+        <span>{t(statusLabelKeys[status])}</span>
+        <span>{t("app.statusbar.shortcuts")}</span>
       </footer>
 
       <SettingsDialog
@@ -577,8 +702,12 @@ function mergeSettings(publicSettings: ModelConfig, draftSettings: ModelConfig):
   const merged = { ...publicSettings };
   for (const role of ["vision", "planner"] as const) {
     const key = `${role}_api_key` as "vision_api_key" | "planner_api_key";
-    if (publicSettings[key] === SECRET_MASK && draftSettings[key] && draftSettings[key] !== SECRET_MASK) {
-      merged[key] = draftSettings[key];
+    if (publicSettings[key] === SECRET_MASK) {
+      if (draftSettings[key] && draftSettings[key] !== SECRET_MASK) {
+        merged[key] = draftSettings[key];
+      } else {
+        merged[key] = "";
+      }
     }
   }
   return merged;

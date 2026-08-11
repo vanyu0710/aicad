@@ -1,6 +1,8 @@
-﻿import ModelConfigPanel from "./ModelConfigPanel";
+import ModelConfigPanel from "./ModelConfigPanel";
 import type { ModelConfig } from "./api";
 import type { StartupMode } from "./store";
+import { useAppStore } from "./store";
+import { useT } from "./i18n";
 
 type Props = {
   open: boolean;
@@ -27,6 +29,10 @@ export default function SettingsDialog({
   onApply,
   onStartupModeChange,
 }: Props) {
+  const t = useT();
+  const language = useAppStore((state) => state.language);
+  const setLanguage = useAppStore((state) => state.setLanguage);
+
   if (!open) {
     return null;
   }
@@ -35,37 +41,47 @@ export default function SettingsDialog({
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <section className="settings-dialog" role="dialog" aria-modal="true" aria-label="设置中心">
+      <section className="settings-dialog" role="dialog" aria-modal="true" aria-label={t("settings.title")}>
         <header className="settings-header">
           <div>
             <p className="eyebrow">SETTINGS</p>
-            <h2>设置中心</h2>
+            <h2>{t("settings.title")}</h2>
           </div>
-          <button type="button" className="icon-button" onClick={onClose} title="关闭设置">
-            关闭
+          <button type="button" className="icon-button" onClick={onClose} title={t("settings.close.title")}>
+            {t("settings.close")}
           </button>
         </header>
 
         <div className="settings-body">
           <section className="settings-section">
             <div className="settings-section-title">
-              <h3>通用</h3>
-              <span>启动页与工作台偏好</span>
+              <h3>{t("settings.general")}</h3>
+              <span>{t("settings.general.hint")}</span>
             </div>
             <label className="settings-mode-field">
-              <span>启动页行为</span>
+              <span>{t("settings.language")}</span>
+              <select
+                value={language}
+                onChange={(event) => setLanguage(event.target.value as "zh" | "en")}
+              >
+                <option value="zh">{t("settings.language.zh")}</option>
+                <option value="en">{t("settings.language.en")}</option>
+              </select>
+            </label>
+            <label className="settings-mode-field">
+              <span>{t("startup.behavior")}</span>
               <select value={startupMode} onChange={(event) => onStartupModeChange(event.target.value as StartupMode)}>
-                <option value="always">每次启动显示</option>
-                <option value="first">仅首次显示</option>
-                <option value="off">关闭，直接进入工作台</option>
+                <option value="always">{t("startup.mode.always")}</option>
+                <option value="first">{t("startup.mode.first")}</option>
+                <option value="off">{t("startup.mode.off")}</option>
               </select>
             </label>
           </section>
 
           <section className="settings-section settings-model-section">
             <div className="settings-section-title">
-              <h3>模型配置</h3>
-              <span>视觉读图模型与建模规划模型，可分别配置协议、地址、模型名和密钥。</span>
+              <h3>{t("settings.models")}</h3>
+              <span>{t("settings.models.hint")}</span>
             </div>
             <ModelConfigPanel
               value={settings}
@@ -79,9 +95,9 @@ export default function SettingsDialog({
         </div>
 
         <footer className="settings-footer">
-          <span>{dirty ? "有未保存的配置修改" : "配置已保存"}</span>
+          <span>{dirty ? t("settings.dirty") : t("settings.saved")}</span>
           <button type="button" className="primary" onClick={onClose}>
-            完成
+            {t("settings.done")}
           </button>
         </footer>
       </section>

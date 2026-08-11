@@ -44,10 +44,11 @@ beforeEach(() => {
     ui: {
       leftTab: "feature",
       rightTab: "assistant",
-      leftCollapsed: false,
-      rightCollapsed: false,
-      leftWidth: 420,
-      rightWidth: 380,
+      leftDrawerOpen: false,
+      rightDrawerOpen: false,
+      leftWidth: 380,
+      rightWidth: 360,
+      focusMode: false,
       settingsOpen: false,
       commandTab: "features",
     },
@@ -67,6 +68,34 @@ describe("LeftManager", () => {
     await user.click(screen.getByRole("tab", { name: "属性" }));
     expect(screen.getByText("PropertyManager")).toBeInTheDocument();
     expect(screen.getByText("尺寸参数")).toBeInTheDocument();
+  });
+
+  it("closes the drawer from the header close button", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <LeftManager
+        busy={false}
+        description="测试描述"
+        features={[feature]}
+        imageFile={null}
+        modeLabel="严格模式"
+        partFamily="plate"
+        projectName="测试项目"
+        selectedFeature={feature}
+        selectedFeatureId="base_plate"
+        statusLabel="可以生成"
+        unresolvedCount={0}
+        onDescriptionChange={vi.fn()}
+        onImageChange={vi.fn()}
+        onSelectFeature={vi.fn()}
+        onSaveFeature={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onClose={onClose}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("switches to configuration and opens settings", async () => {

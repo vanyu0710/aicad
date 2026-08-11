@@ -1,6 +1,7 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import FeatureForm from "../FeatureForm";
 import { useAppStore, type ManagerTab } from "../store";
+import { useT } from "../i18n";
 
 type Props = {
   busy: boolean;
@@ -19,12 +20,13 @@ type Props = {
   onSelectFeature: (featureId: string) => void;
   onSaveFeature: (payload: any) => void;
   onOpenSettings: () => void;
+  onClose?: () => void;
 };
 
-const tabs: { id: ManagerTab; label: string }[] = [
-  { id: "feature", label: "特征树" },
-  { id: "property", label: "属性" },
-  { id: "configuration", label: "配置" },
+const tabs: { id: ManagerTab; labelKey: string }[] = [
+  { id: "feature", labelKey: "manager.feature_tree" },
+  { id: "property", labelKey: "manager.property" },
+  { id: "configuration", labelKey: "manager.configuration" },
 ];
 
 export default function LeftManager({
@@ -44,9 +46,10 @@ export default function LeftManager({
   onSelectFeature,
   onSaveFeature,
   onOpenSettings,
+  onClose,
 }: Props) {
+  const t = useT();
   const leftTab = useAppStore((state) => state.ui.leftTab);
-  const leftCollapsed = useAppStore((state) => state.ui.leftCollapsed);
   const setUi = useAppStore((state) => state.setUi);
   const [inputOpen, setInputOpen] = useState(true);
 
@@ -59,8 +62,8 @@ export default function LeftManager({
         </div>
         <div className="manager-header-actions">
           <span className="workspace-chip">{statusLabel}</span>
-          <button type="button" className="collapse-button" onClick={() => setUi({ leftCollapsed: !leftCollapsed })}>
-            {leftCollapsed ? "展开" : "折叠"}
+          <button type="button" className="collapse-button drawer-close-button" title={t("manager.close.title")} onClick={() => onClose?.()}>
+            {t("manager.close")}
           </button>
         </div>
       </div>
@@ -75,7 +78,7 @@ export default function LeftManager({
             className={leftTab === tab.id ? "manager-tab active" : "manager-tab"}
             onClick={() => setUi({ leftTab: tab.id })}
           >
-            {tab.label}
+            {t(tab.labelKey)}
           </button>
         ))}
       </div>
@@ -85,15 +88,15 @@ export default function LeftManager({
           <div className="manager-tab-page">
             <section className="input-section">
               <button type="button" className="input-toggle" onClick={() => setInputOpen((open) => !open)}>
-                <span>项目输入</span>
-                <span>{inputOpen ? "收起" : "展开"}</span>
+                <span>{t("manager.input")}</span>
+                <span>{inputOpen ? t("manager.input.close") : t("manager.input.open")}</span>
               </button>
               {inputOpen && (
                 <div className="input-body">
                   <label className="field">
                     <span className="field-label">
-                      草图图片
-                      <small>支持 PNG / JPG，先本地预处理再交给视觉模型。</small>
+                      {t("manager.image")}
+                      <small>{t("manager.image.hint")}</small>
                     </span>
                     <input
                       type="file"
@@ -106,20 +109,20 @@ export default function LeftManager({
                       <strong>{imageFile.name}</strong>
                       <small>{Math.round(imageFile.size / 1024)} KB</small>
                       <button type="button" onClick={() => onImageChange(null)}>
-                        移除
+                        {t("manager.image.remove")}
                       </button>
                     </div>
                   )}
                   <label className="field">
                     <span className="field-label">
-                      零件功能与已知尺寸
-                      <small>写用途、材料、配合关系、标注尺寸；未知项交给系统提问。</small>
+                      {t("manager.description")}
+                      <small>{t("manager.description.hint")}</small>
                     </span>
                     <textarea
                       value={description}
                       onChange={(event) => onDescriptionChange(event.target.value)}
                       rows={6}
-                      placeholder="例如：铝制套筒，外径 50mm，内径 30mm，长度 80mm，顶部有环槽。"
+                      placeholder={t("manager.description.placeholder")}
                     />
                   </label>
                 </div>
@@ -128,8 +131,8 @@ export default function LeftManager({
 
             <section className="feature-manager-section">
               <div className="manager-section-title">
-                <h3>FeatureManager</h3>
-                <span>{features.length} 项</span>
+                <h3>{t("manager.feature_title")}</h3>
+                <span>{t("manager.feature_count", { count: features.length })}</span>
               </div>
               <div className="feature-tree">
                 {features.map((feature, index) => {
@@ -142,26 +145,26 @@ export default function LeftManager({
                       className={isSelected ? "feature-node selected" : "feature-node"}
                       onClick={() => onSelectFeature(feature.id)}
                     >
-                      <span className="feature-index">{index === 0 ? "基体" : `F${index}`}</span>
+                      <span className="feature-index">{index === 0 ? t("manager.base") : `F${index}`}</span>
                       <span className="feature-name">{feature.id}</span>
                       <span className="feature-type">{feature.type}</span>
                       <span className={unresolved ? "feature-state warn" : feature.confirmed_by_user ? "feature-state ok" : "feature-state"}>
-                        {unresolved ? "待确认" : feature.confirmed_by_user ? "已确认" : "草案"}
+                        {unresolved ? t("manager.pending") : feature.confirmed_by_user ? t("manager.confirmed") : t("manager.draft")}
                       </span>
                     </button>
                   );
                 })}
                 {!features.length && (
                   <div className="empty-tree">
-                    <strong>尚未生成特征树</strong>
-                    <p>生成后这里会显示基体、减料、加料、阵列和修饰的建模顺序。</p>
+                    <strong>{t("manager.empty_tree")}</strong>
+                    <p>{t("manager.empty_tree.hint")}</p>
                   </div>
                 )}
               </div>
               <div className="project-meta">
-                <span>零件族：{partFamily || "未识别"}</span>
-                <span>未决项：{unresolvedCount}</span>
-                <span>模式：{modeLabel}</span>
+                <span>{t("manager.part_family", { value: partFamily || t("manager.unrecognized") })}</span>
+                <span>{t("manager.unresolved", { count: unresolvedCount })}</span>
+                <span>{t("manager.mode", { value: modeLabel })}</span>
               </div>
             </section>
           </div>
@@ -170,15 +173,15 @@ export default function LeftManager({
         {leftTab === "property" && (
           <div className="manager-tab-page">
             <div className="manager-section-title">
-              <h3>PropertyManager</h3>
-              <span>{selectedFeature ? selectedFeature.type : "未选择"}</span>
+              <h3>{t("manager.property_title")}</h3>
+              <span>{selectedFeature ? selectedFeature.type : t("manager.none_selected")}</span>
             </div>
             {selectedFeature ? (
               <FeatureForm key={selectedFeature.id} feature={selectedFeature} busy={busy} onSave={onSaveFeature} />
             ) : (
               <div className="inspector-empty">
-                <strong>没有可编辑特征</strong>
-                <span>先生成 FeaturePlan，或从特征树选择一个特征。</span>
+                <strong>{t("manager.no_feature")}</strong>
+                <span>{t("manager.no_feature.hint")}</span>
               </div>
             )}
           </div>
@@ -187,29 +190,27 @@ export default function LeftManager({
         {leftTab === "configuration" && (
           <div className="manager-tab-page">
             <div className="manager-section-title">
-              <h3>ConfigurationManager</h3>
-              <span>项目与模型</span>
+              <h3>{t("manager.config_title")}</h3>
+              <span>{t("manager.config_subtitle")}</span>
             </div>
             <div className="config-summary">
               <div className="config-summary-item">
-                <span>工作模式</span>
+                <span>{t("manager.work_mode")}</span>
                 <strong>{modeLabel}</strong>
               </div>
               <div className="config-summary-item">
-                <span>零件族</span>
-                <strong>{partFamily || "未识别"}</strong>
+                <span>{t("manager.part_family_label")}</span>
+                <strong>{partFamily || t("manager.unrecognized")}</strong>
               </div>
               <div className="config-summary-item">
-                <span>CAD 引擎</span>
+                <span>{t("manager.cad_engine")}</span>
                 <strong>Build123d Worker</strong>
               </div>
             </div>
             <div className="configuration-actions">
-              <p>
-                视觉读图模型与建模规划模型、协议、Base URL、API Key、智能策略都在设置中心管理，避免工作台被底层配置占据。
-              </p>
+              <p>{t("manager.config.hint")}</p>
               <button type="button" className="primary" onClick={onOpenSettings}>
-                打开设置中心
+                {t("manager.open_settings")}
               </button>
             </div>
           </div>

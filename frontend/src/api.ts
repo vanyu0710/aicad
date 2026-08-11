@@ -1,4 +1,7 @@
-﻿export type ModelConfig = {
+import { readLanguage } from "./store";
+import { translate } from "./i18n";
+
+export type ModelConfig = {
   vision_provider: string;
   vision_model: string;
   vision_base_url: string;
@@ -92,7 +95,18 @@ export type ProjectState = {
   redo_stack: unknown[];
 };
 
-export const API_ROOT = (import.meta as any).env?.VITE_API_ROOT || "http://127.0.0.1:8001";
+export function resolveApiRoot(env: any = (import.meta as any).env): string {
+  return env?.VITE_API_ROOT || "";
+}
+
+export const API_ROOT = resolveApiRoot();
+
+export function resolveWsRoot(env: any = (import.meta as any).env, apiRoot: string = API_ROOT): string {
+  const override = env?.VITE_WS_ROOT;
+  if (override) return override;
+  if (apiRoot) return apiRoot.replace(/^http/, "ws");
+  return `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+}
 
 export async function createProject(name = "MechCAD Project") {
   const response = await fetch(`${API_ROOT}/api/projects`, {
@@ -107,6 +121,15 @@ export async function createProject(name = "MechCAD Project") {
 export async function listProjects() {
   const response = await fetch(`${API_ROOT}/api/projects`);
   return parseResponse<{ projects: ProjectState[] }>(response);
+}
+
+export async function renameProject(projectId: string, name: string) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  return parseResponse<ProjectState>(response);
 }
 
 export async function deleteProject(projectId: string) {
@@ -136,20 +159,20 @@ export async function generateProject(projectId: string, payload: any) {
   return parseResponse<ProjectState>(response);
 }
 
-export async function chatProject(projectId: string, message: string) {
+export async function chatProject(projectId: string, message: string, language: string) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, language }),
   });
   return parseResponse<ProjectState>(response);
 }
 
-export async function patchFeature(projectId: string, featureId: string, payload: any) {
+export async function patchFeature(projectId: string, featureId: string, payload: any, language: string) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}/features/${featureId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, language }),
   });
   return parseResponse<ProjectState>(response);
 }
@@ -164,11 +187,11 @@ export async function redo(projectId: string) {
   return parseResponse<ProjectState>(response);
 }
 
-export async function testModelConnection(role: ModelRole, config: ModelConfig) {
+export async function testModelConnection(role: ModelRole, config: ModelConfig, language: string) {
   const response = await fetch(`${API_ROOT}/api/model/test`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role, config }),
+    body: JSON.stringify({ role, config, language }),
   });
   return parseResponse<ModelTestResult>(response);
 }
@@ -179,10 +202,10 @@ async function parseResponse<T>(response: Response): Promise<T> {
   try {
     data = raw ? JSON.parse(raw) : {};
   } catch {
-    throw new Error(`后端返回了非 JSON（HTTP ${response.status}）。请确认后端地址和服务状态。`);
+    throw new Error(translate(readLanguage(), "api.error.non_json", { status: response.status }));
   }
   if (!response.ok) {
-    throw new Error(data?.detail || data?.message || `请求失败（HTTP ${response.status}）`);
+    throw new Error(data?.detail || data?.message || translate(readLanguage(), "api.error.request", { status: response.status }));
   }
   return data as T;
 }

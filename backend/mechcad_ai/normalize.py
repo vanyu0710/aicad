@@ -54,7 +54,7 @@ _FEATURE_KEY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
 _OPERATION_MAP = {"add": "add", "cut": "remove", "remove": "remove", "subtract": "remove", "pattern": "pattern", "base": "base"}
 
 
-def normalize_ai_plan(raw: dict[str, Any]) -> dict[str, Any]:
+def normalize_ai_plan(raw: dict[str, Any], language: str = "zh") -> dict[str, Any]:
     """Convert a planner model JSON object into a strict FeaturePlanV3-compatible dict."""
     if not isinstance(raw, dict):
         raise ValueError("planner output is not an object")
@@ -83,7 +83,7 @@ def normalize_ai_plan(raw: dict[str, Any]) -> dict[str, Any]:
         "base_feature": base,
         "features": features,
         "assumptions": _normalize_strings(raw.get("assumptions")),
-        "unresolved": _normalize_unresolved(raw.get("unresolved"), base, features),
+        "unresolved": _normalize_unresolved(raw.get("unresolved"), base, features, language),
         "self_checks": raw.get("self_checks") if isinstance(raw.get("self_checks"), dict) else {},
     }
     review = raw.get("design_review")
@@ -278,7 +278,9 @@ def _normalize_strings(raw: Any) -> list[str]:
     return result
 
 
-def _normalize_unresolved(raw: Any, base: dict[str, Any] | None, features: list[dict[str, Any]]) -> list[dict[str, str]]:
+def _normalize_unresolved(
+    raw: Any, base: dict[str, Any] | None, features: list[dict[str, Any]], language: str = "zh"
+) -> list[dict[str, str]]:
     """Convert heterogeneous unresolved items into [{feature, reason}]."""
     result: list[dict[str, str]] = []
     if isinstance(raw, str):
@@ -305,7 +307,11 @@ def _normalize_unresolved(raw: Any, base: dict[str, Any] | None, features: list[
             result.append(
                 {
                     "feature": base.get("id", "base"),
-                    "reason": f"{base.get('type')} 缺少可执行基体尺寸: {', '.join(missing)}; 请先确认整体外形尺寸",
+                    "reason": (
+                        f"{base.get('type')} is missing executable base dimensions: {', '.join(missing)}; confirm overall outline dimensions first"
+                        if language == "en"
+                        else f"{base.get('type')} 缺少可执行基体尺寸: {', '.join(missing)}; 请先确认整体外形尺寸"
+                    ),
                 }
             )
 
@@ -331,7 +337,11 @@ def _normalize_unresolved(raw: Any, base: dict[str, Any] | None, features: list[
             result.append(
                 {
                     "feature": feature.get("id", "feature"),
-                    "reason": f"{feature_type} 缺少可执行尺寸: {', '.join(missing)};特征已保留但未建模,请补充尺寸",
+                    "reason": (
+                        f"{feature_type} is missing executable dimensions: {', '.join(missing)}; the feature was kept but not modeled, provide dimensions"
+                        if language == "en"
+                        else f"{feature_type} 缺少可执行尺寸: {', '.join(missing)};特征已保留但未建模,请补充尺寸"
+                    ),
                 }
             )
     return result

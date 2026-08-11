@@ -9,10 +9,11 @@ beforeEach(() => {
     ui: {
       leftTab: "feature",
       rightTab: "assistant",
-      leftCollapsed: false,
-      rightCollapsed: false,
-      leftWidth: 420,
-      rightWidth: 380,
+      leftDrawerOpen: false,
+      rightDrawerOpen: false,
+      leftWidth: 380,
+      rightWidth: 360,
+      focusMode: false,
       settingsOpen: false,
       commandTab: "features",
     },
@@ -44,6 +45,31 @@ describe("TaskPane", () => {
     renderPane();
     expect(screen.getByRole("tab", { name: "AI 助手" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/把中心孔改成 12mm/)).toBeInTheDocument();
+  });
+
+  it("closes the drawer from the header close button", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <TaskPane
+        busy={false}
+        chatMessage=""
+        events={[]}
+        featurePlan={null}
+        questions={[]}
+        reportMarkdown=""
+        review={undefined}
+        unresolved={[]}
+        runId=""
+        engineLabel="Build123d Worker（受控执行）"
+        onChatMessageChange={vi.fn()}
+        onClarificationContinue={vi.fn()}
+        onSendChat={vi.fn()}
+        onClose={onClose}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("switches to design review", async () => {

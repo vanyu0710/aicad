@@ -31,7 +31,7 @@ OK_ARTIFACTS = ArtifactSet(
 )
 
 
-def _fake_worker_ok(plan, timeout: int = 45):
+def _fake_worker_ok(plan, timeout: int = 45, language: str = "zh"):
     return OK_ARTIFACTS, [f"worker ok for {plan.part_family}"], True
 
 
@@ -107,6 +107,41 @@ class MechCADApiTests(unittest.TestCase):
         self.assertEqual(body["role"], "vision")
         self.assertIn("配置不完整", body["message"])
         self.assertTrue(body["diagnostics"]["used_env_fallback"])
+
+    def test_model_test_english_message_has_no_chinese(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "MECHCAD_VISION_API_KEY": "",
+                "MECHCAD_VISION_BASE_URL": "",
+                "MECHCAD_VISION_MODEL": "",
+                "MECHCAD_VISION_PROTOCOL": "",
+            },
+        ):
+            response = self.client.post(
+                "/api/model/test",
+                json={
+                    "role": "vision",
+                    "language": "en",
+                    "config": {
+                        "vision_provider": "custom",
+                        "vision_protocol": "openai",
+                        "vision_base_url": "",
+                        "vision_model": "",
+                        "vision_api_key": "",
+                        "planner_provider": "custom",
+                        "planner_protocol": "openai",
+                        "planner_base_url": "",
+                        "planner_model": "",
+                        "planner_api_key": "",
+                        "operation_mode": "strict",
+                        "smart_fill_policy": "suggest_only",
+                    },
+                },
+            )
+        body = response.json()
+        self.assertFalse(body["ok"])
+        self.assertFalse(any("\u4e00" <= char <= "\u9fff" for char in body["message"]), body["message"])
 
     def test_project_response_masks_api_keys(self) -> None:
         project_id = self._create_project()
@@ -197,6 +232,26 @@ class MechCADApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         settings = response.json()["settings"]
         self.assertEqual(settings["operation_mode"], "strict")
+
+    def test_english_generate_returns_english_report_and_questions(self) -> None:
+        project_id = self._create_project()
+        with patch.object(main_module, "run_freecad_worker", side_effect=_fake_worker_ok):
+            response = self.client.post(
+                f"/api/projects/{project_id}/generate",
+                json={
+                    "description": "60mm x 30mm x 4mm plate with two 6mm through holes",
+                    "language": "en",
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        current = body["current"]
+        combined = (
+            current["report_markdown"]
+            + "\n".join(current["logs"])
+            + "\n".join(question["text"] for question in current["questions"])
+        )
+        self.assertFalse(any("\u4e00" <= char <= "\u9fff" for char in combined), combined)
 
     def test_chat_edit_creates_new_snapshot(self) -> None:
         project_id = self._create_project()
@@ -319,6 +374,49 @@ class MechCADApiTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/projects/{project_id}").status_code, 404)
         ids = [item["project_id"] for item in self.client.get("/api/projects").json()["projects"]]
         self.assertNotIn(project_id, ids)
+
+    def test_rename_project(self) -> None:
+        project_id = self._create_project()
+        response = self.client.patch(f"/api/projects/{project_id}", json={"name": "Renamed API"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["name"], "Renamed API")
+        fetched = self.client.get(f"/api/projects/{project_id}").json()
+        self.assertEqual(fetched["name"], "Renamed API")
+
+    def test_rename_project_rejects_blank_name(self) -> None:
+        project_id = self._create_project()
+        response = self.client.patch(f"/api/projects/{project_id}", json={"name": "   "})
+        self.assertEqual(response.status_code, 422)
+
+    def test_rename_missing_project_is_404(self) -> None:
+        response = self.client.patch("/api/projects/does-not-exist", json={"name": "Nope"})
+        self.assertEqual(response.status_code, 404)
+
+    def test_settings_update_preserves_configured_api_keys_when_blank(self) -> None:
+        project_id = self._create_project()
+        project = main_module.store.get_project(project_id)
+        project.settings.vision_api_key = "sk-vision-keep"
+        project.settings.planner_api_key = "sk-planner-keep"
+        payload = {
+            "vision_provider": "custom",
+            "vision_protocol": "openai",
+            "vision_base_url": "https://vision.example.test/v1",
+            "vision_model": "vision-test",
+            "vision_api_key": "",
+            "planner_provider": "custom",
+            "planner_protocol": "openai",
+            "planner_base_url": "https://planner.example.test/v1",
+            "planner_model": "planner-test",
+            "planner_api_key": "***configured***",
+            "operation_mode": "smart",
+            "smart_fill_policy": "limited_fill",
+        }
+        response = self.client.patch(f"/api/projects/{project_id}/settings", json=payload)
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = main_module.store.get_project(project_id).settings
+        self.assertEqual(stored.vision_api_key, "sk-vision-keep")
+        self.assertEqual(stored.planner_api_key, "sk-planner-keep")
+
     def _create_project(self) -> str:
         response = self.client.post("/api/projects", json={"name": "api-test"})
         return response.json()["project_id"]

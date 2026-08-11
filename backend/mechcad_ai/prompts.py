@@ -6,21 +6,23 @@ from pathlib import Path
 import yaml
 
 PROMPTS_PATH = Path(__file__).resolve().parents[2] / "prompts" / "prompts.yaml"
+PROMPTS_EN_PATH = Path(__file__).resolve().parents[2] / "prompts" / "prompts_en.yaml"
 
 
-@lru_cache(maxsize=1)
-def load_prompts() -> dict[str, dict]:
-    """Load the centralized prompts file. Cached for the process lifetime."""
-    if not PROMPTS_PATH.exists():
-        raise FileNotFoundError(f"prompts file not found: {PROMPTS_PATH}")
-    with PROMPTS_PATH.open("r", encoding="utf-8") as fh:
+@lru_cache(maxsize=2)
+def load_prompts(language: str = "zh") -> dict[str, dict]:
+    """Load the centralized prompts file for the requested language."""
+    path = PROMPTS_PATH if language != "en" else PROMPTS_EN_PATH
+    if not path.exists():
+        raise FileNotFoundError(f"prompts file not found: {path}")
+    with path.open("r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     return data if isinstance(data, dict) else {}
 
 
-def get_prompt(name: str) -> str:
-    """Return the raw prompt text for a named prompt (vision_analysis, feature_planning, ...)."""
-    prompts = load_prompts()
+def get_prompt(name: str, language: str = "zh") -> str:
+    """Return the raw prompt text for a named prompt and language."""
+    prompts = load_prompts(language)
     entry = prompts.get(name)
     if not isinstance(entry, dict):
         raise KeyError(f"prompt not found: {name}")

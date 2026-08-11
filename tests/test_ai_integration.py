@@ -263,5 +263,36 @@ class PromptTests(unittest.TestCase):
         self.assertIn("FeaturePlanV3", text)
 
 
+class BilingualTests(unittest.TestCase):
+    @staticmethod
+    def _has_cjk(value: str) -> bool:
+        return any("\u4e00" <= char <= "\u9fff" for char in value)
+
+    def test_english_prompt_variant_loads(self):
+        text = get_prompt("feature_planning", "en")
+        self.assertIn("FeaturePlanV3", text)
+        self.assertNotIn("\u4e00", text)
+
+    def test_english_stub_plan_and_questions_have_no_chinese(self):
+        request = GenerateRequest(
+            description="tube outer diameter 50 inner diameter 38 length 300 top groove slot width 10",
+            language="en",
+        )
+        plan, questions = build_initial_feature_plan(request.description, request, language="en")
+        plan_text = (
+            " ".join(plan.assumptions)
+            + " "
+            + " ".join(plan.design_review.warnings + plan.design_review.suggestions)
+            + " "
+            + " ".join(item["reason"] for item in plan.unresolved)
+        )
+        self.assertFalse(self._has_cjk(plan_text), plan_text)
+        for question in questions:
+            combined = " ".join(
+                [question.text, question.impact or "", question.reason or "", *question.options]
+            )
+            self.assertFalse(self._has_cjk(combined), combined)
+
+
 if __name__ == "__main__":
     unittest.main()

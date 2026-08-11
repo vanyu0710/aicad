@@ -1,4 +1,5 @@
 import FeatureForm from "../FeatureForm";
+import { useT } from "../i18n";
 
 type Props = {
   busy?: boolean;
@@ -15,13 +16,14 @@ type Props = {
 };
 
 export default function RightPropertyManager({ busy, review, selectedFeature, unresolved, onSaveFeature }: Props) {
+  const t = useT();
   return (
-    <aside className="workspace-inspector right-manager" aria-label="属性管理器">
+    <aside className="workspace-inspector right-manager" aria-label={t("legacy.property_manager")}>
       <section className="manager-section inspector-header">
         <div className="section-title-row">
           <div>
-            <h2>属性管理器</h2>
-            <p>{selectedFeature ? selectedFeature.id : "未选择特征"}</p>
+            <h2>{t("legacy.property_manager")}</h2>
+            <p>{selectedFeature ? selectedFeature.id : t("legacy.no_feature")}</p>
           </div>
           {selectedFeature && <span className="workspace-chip">{selectedFeature.type}</span>}
         </div>
@@ -32,27 +34,27 @@ export default function RightPropertyManager({ busy, review, selectedFeature, un
           <FeatureForm key={selectedFeature.id} feature={selectedFeature} busy={busy} onSave={onSaveFeature} />
         ) : (
           <div className="inspector-empty">
-            <strong>没有可编辑特征</strong>
-            <span>先生成 FeaturePlan，或从左侧特征树选择一个特征。</span>
+            <strong>{t("manager.no_feature")}</strong>
+            <span>{t("manager.no_feature.hint")}</span>
           </div>
         )}
       </section>
 
       <section className="manager-section review-summary">
         <div className="section-title-row">
-          <h2>设计检查</h2>
-          {review?.requires_confirmation && <span className="workspace-chip danger">需确认</span>}
+          <h2>{t("legacy.design_check")}</h2>
+          {review?.requires_confirmation && <span className="workspace-chip danger">{t("legacy.requires_confirmation")}</span>}
         </div>
         {unresolved.length > 0 && (
           <div className="mini-list warn-list">
             {unresolved.slice(0, 4).map((item, index) => (
               <p key={`${item.feature}-${index}`}>
-                <b>{item.feature}</b>：{item.reason}
+                <b>{item.feature}</b>: {item.reason}
               </p>
             ))}
           </div>
         )}
-        {!unresolved.length && !review && <p className="empty-note">生成后这里会显示设计警告、制造建议和标准化提示。</p>}
+        {!unresolved.length && !review && <p className="empty-note">{t("legacy.review.empty")}</p>}
         {review && (
           <div className="mini-list">
             {[...(review.warnings || []), ...(review.suggestions || []), ...(review.manufacturability || []), ...(review.standards || [])]
