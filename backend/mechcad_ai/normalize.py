@@ -345,3 +345,72 @@ def _normalize_unresolved(
                 }
             )
     return result
+
+
+def normalize_feature_edit_set(raw: dict[str, Any], language: str = "zh") -> dict[str, Any]:
+    """Convert planner edit output into a strict FeatureEditSet-compatible dict.
+
+    The model is instructed to return only feature-level operations. If it
+    returns a full FeaturePlan instead, that is treated as an invalid edit
+    payload so the backend never silently replaces the whole plan.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("planner edit output is not an object")
+    if any(key in raw for key in ("schema_version", "base_feature", "features")):
+        raise ValueError("planner returned a full FeaturePlan instead of FeatureEditSet")
+
+    operations: list[dict[str, Any]] = []
+    for item in raw.get("operations") or []:
+        if not isinstance(item, dict):
+            continue
+        op = str(item.get("op") or item.get("operation") or "").lower()
+        op_map = {"add": "add", "create": "add", "update": "update", "modify": "update", "edit": "update", "delete": "delete", "remove": "delete", "change_type": "change_type", "convert": "change_type"}
+        op = op_map.get(op)
+        if op not in {"add", "update", "delete", "change_type"}:
+            continue
+        normalized: dict[str, Any] = {
+            "op": op,
+            "feature_id": item.get("feature_id") or item.get("id"),
+            "type": item.get("type"),
+            "extent": item.get("extent"),
+            "depends_on": item.get("depends_on") or [],
+            "evidence": item.get("evidence") or item.get("reason") or "",
+            "source": item.get("source") or ("user" if op != "add" else "assumption"),
+            "confirmed_by_user": bool(item.get("confirmed_by_user", op != "add")),
+            "reason": item.get("reason") or "",
+            "cascade": bool(item.get("cascade", False)),
+        }
+        dimensions: dict[str, Any] = {}
+        for key, value in (item.get("dimensions") or {}).items():
+            if isinstance(value, dict):
+                dim = dict(value)
+                dim.setdefault("unit", "mm")
+                if "value" not in dim and "size" in dim:
+                    dim["value"] = dim["size"]
+                dimensions[str(key)] = dim
+            elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                dimensions[str(key)] = {
+                    "value": float(value),
+                    "unit": "mm",
+                    "source": normalized["source"],
+                    "confirmed_by_user": normalized["confirmed_by_user"],
+                    "evidence": normalized["evidence"],
+                }
+        if dimensions:
+            normalized["dimensions"] = dimensions
+        if item.get("placement") and isinstance(item["placement"], dict):
+            normalized["placement"] = item["placement"]
+        operations.append(normalized)
+
+    questions: list[dict[str, Any]] = []
+    for item in raw.get("questions") or []:
+        if isinstance(item, dict):
+            questions.append(item)
+        elif isinstance(item, str):
+            questions.append({"text": item, "required": True})
+
+    return {
+        "operations": operations,
+        "questions": questions,
+        "message": str(raw.get("message") or ""),
+    }

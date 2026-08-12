@@ -10,11 +10,37 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 OperationMode = Literal["strict", "smart"]
 SmartFillPolicy = Literal["suggest_only", "limited_fill", "aggressive_fill", "full_autonomous"]
 FeatureOperation = Literal["base", "add", "remove", "modify", "pattern"]
-StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error"]
+StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error", "process_step_started", "process_step_done", "process_step_failed", "process_step_blocked"]
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+ProcessStage = Literal["upload", "vision", "planning", "validation", "chat_edit", "cad", "export"]
+ProcessStatus = Literal["pending", "running", "completed", "failed", "skipped", "blocked"]
+FeatureEditOp = Literal["add", "update", "delete", "change_type"]
+
+
+class ProcessStep(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex[:10])
+    stage: ProcessStage
+    status: ProcessStatus
+    label: str
+    summary: str = ""
+    detail: str = ""
+    feature_id: str | None = None
+    operation: str | None = None
+    changed: dict[str, Any] | None = None
+    started_at: str = Field(default_factory=now_iso)
+    completed_at: str | None = None
+    error: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+    @field_validator("label", "summary", "detail", mode="before")
+    @classmethod
+    def text_or_default(cls, value: Any) -> str:
+        return "" if value is None else str(value)
 
 
 class DimensionV3(BaseModel):
@@ -166,6 +192,38 @@ class FeaturePlanV3(BaseModel):
         return self
 
 
+class FeatureEditOperation(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    op: FeatureEditOp
+    feature_id: str | None = None
+    type: str | None = None
+    dimensions: dict[str, DimensionV3] = Field(default_factory=dict)
+    placement: PlacementV3 | None = None
+    extent: str | None = None
+    depends_on: list[str] = Field(default_factory=list)
+    evidence: str = ""
+    source: Literal["drawing", "user", "assumption", "derived", "unknown"] = "user"
+    confirmed_by_user: bool = True
+    reason: str = ""
+    cascade: bool = False
+
+    @field_validator("feature_id", "type", "evidence", "reason", mode="before")
+    @classmethod
+    def text_or_none(cls, value: Any) -> Any:
+        if value is None:
+            return value
+        return "" if value == "" else str(value)
+
+
+class FeatureEditSet(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    operations: list[FeatureEditOperation] = Field(default_factory=list)
+    questions: list[ClarificationQuestion] = Field(default_factory=list)
+    message: str = ""
+
+
 class ArtifactSet(BaseModel):
     run_id: str | None = None
     step: str | None = None
@@ -184,6 +242,7 @@ class DesignSnapshot(BaseModel):
     design_review: DesignReview = Field(default_factory=DesignReview)
     report_markdown: str = ""
     logs: list[str] = Field(default_factory=list)
+    process: list[ProcessStep] = Field(default_factory=list)
 
 
 class ModelConfig(BaseModel):

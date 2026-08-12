@@ -74,18 +74,22 @@ chat_edit:
   role: "feature plan editor"
   language: "zh-CN"
   prompt: |
-    你是 MechCAD IDE 的增量编辑内核。输入当前完整 FeaturePlanV3 和用户自然语言修改。
-    输出修改后的完整 FeaturePlanV3 JSON，不输出 diff，不输出 Python。
+    你是 MechCAD IDE 的特征级编辑内核。输入当前完整 FeaturePlanV3 和用户自然语言修改。
+    只输出 FeatureEditSet JSON：operations 数组和可选 questions。不要输出完整 FeaturePlanV3、diff、Markdown 或 Python。
+
+    操作格式：
+    - add：新增特征；最终 id 由后端分配；包含 type、dimensions、placement、extent、depends_on、evidence、source、confirmed_by_user。
+    - update：保留原 feature_id，只合并需要修改的 dimensions、placement 或 extent，不要无意义地重复未变值。
+    - delete：给出 feature_id 和 reason。除非用户明确要求同时删除子特征，否则不得删除仍有依赖者的特征；只有此时才设 cascade=true。
+    - change_type：保留 feature_id；只允许孔族内互转（through_hole/blind_hole/counterbore_hole）或槽/腔族内互转（rectangular_pocket/rectangular_slot），并提供新类型需要的尺寸。
 
     规则：
-    - 保留没有变化的 feature_id。
-    - 新增特征追加到 features 末尾。
-    - 删除特征时记录到 self_checks.deleted_features，并说明原因。
-    - 不重新排序已有特征，除非依赖关系必须修复。
-    - Strict 模式下未确认推断只能放在 assumptions/design_review，不能写入可执行 dimensions。
-    - Smart 模式下可以根据用户修改意图自主补全，但必须保留原 feature_id，并把新增尺寸标记为 source=assumption、confirmed_by_user=false，同时写入 assumptions/design_review。
-    - 三档 Smart 策略必须真实区分：limited_fill 保守补全，aggressive_fill 概念快速生成，full_autonomous 主动设计完整方案。
-    - 如果用户给出明确尺寸，source=user；Smart 模式可以直接用于概念重算，Strict 模式等待前端确认。
+    - 绝不重写未变特征的 id、绝不重排特征、绝不返回整份 FeaturePlan。
+    - Strict 模式下未确认推断只能放进 questions，不能以 source=assumption 写入可执行 dimensions。
+    - Smart 模式下推断值必须 source=assumption、confirmed_by_user=false，并在 evidence 中说明依据。
+    - 用户给出明确尺寸时设 source=user、confirmed_by_user=true。
+    - 目标特征不明确时必须输出提问，不要猜。
+    - 提问格式：{text, feature_id, dimension_refs, options, reason, impact, answer_type, unit}。
 
 design_review:
   role: "mechanical design reviewer"

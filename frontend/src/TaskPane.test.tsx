@@ -26,6 +26,7 @@ function renderPane() {
       busy={false}
       chatMessage=""
       events={["worker ok"]}
+      processSteps={[]}
       featurePlan={null}
       questions={[]}
       reportMarkdown=""
@@ -36,6 +37,7 @@ function renderPane() {
       onChatMessageChange={vi.fn()}
       onClarificationContinue={vi.fn()}
       onSendChat={vi.fn()}
+      onSelectProcessStep={vi.fn()}
     />,
   );
 }
@@ -55,6 +57,7 @@ describe("TaskPane", () => {
         busy={false}
         chatMessage=""
         events={[]}
+        processSteps={[]}
         featurePlan={null}
         questions={[]}
         reportMarkdown=""
@@ -65,6 +68,7 @@ describe("TaskPane", () => {
         onChatMessageChange={vi.fn()}
         onClarificationContinue={vi.fn()}
         onSendChat={vi.fn()}
+        onSelectProcessStep={vi.fn()}
         onClose={onClose}
       />,
     );
@@ -78,6 +82,48 @@ describe("TaskPane", () => {
     await user.click(screen.getByRole("tab", { name: "设计评审" }));
     expect(screen.getByText("壁厚偏薄")).toBeInTheDocument();
     expect(screen.getByText("增加圆角")).toBeInTheDocument();
+  });
+
+  it("shows the process timeline and selects a feature from a step", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    useAppStore.setState({ ui: { ...useAppStore.getState().ui, rightTab: "process" } });
+    render(
+      <TaskPane
+        busy={false}
+        chatMessage=""
+        events={[]}
+        processSteps={[
+          {
+            id: "step-1",
+            stage: "cad",
+            status: "failed",
+            label: "CAD 建模",
+            summary: "特征 top_groove 执行失败",
+            detail: "groove position exceeds the base length",
+            feature_id: "top_groove",
+            operation: "update",
+            started_at: "2026-08-11T00:00:00Z",
+            warnings: [],
+          },
+        ]}
+        featurePlan={null}
+        questions={[]}
+        reportMarkdown=""
+        review={undefined}
+        unresolved={[]}
+        runId=""
+        engineLabel="Build123d Worker（受控执行）"
+        onChatMessageChange={vi.fn()}
+        onClarificationContinue={vi.fn()}
+        onSendChat={vi.fn()}
+        onSelectProcessStep={onSelect}
+      />,
+    );
+    expect(screen.getByText("失败")).toBeInTheDocument();
+    expect(screen.getByText("groove position exceeds the base length")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /CAD 建模/ }));
+    expect(onSelect).toHaveBeenCalledWith("top_groove");
   });
 
   it("switches to export and renders download links", async () => {

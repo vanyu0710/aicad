@@ -21,6 +21,7 @@ from backend.ai import (
 )
 from backend.cad import run_freecad_worker
 from backend.events import EventBus
+from backend.process import ProcessRecorder
 from backend.schemas import (
     ChatEditRequest,
     CreateProjectRequest,
@@ -32,6 +33,7 @@ from backend.schemas import (
     ModelTestResponse,
     ModelTestDiagnostics,
     ProjectSettingsRequest,
+    ProcessStep,
     RenameProjectRequest,
     StageEvent,
 )
@@ -43,7 +45,7 @@ from backend.static_assets import mount_frontend
 
 load_dotenv()
 
-app = FastAPI(title="MechCAD IDE API", version="0.3.0")
+app = FastAPI(title="MechCAD IDE API", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8001", "http://127.0.0.1:8001"],
@@ -139,6 +141,17 @@ async def generate(project_id: str, request: GenerateRequest):
     project = store.get_project(project_id)
 
     image = _decode_image(request.image_data_url)
+    recorder = ProcessRecorder(project_id, language, publish=_publish_process_step)
+    upload_step = recorder.started(
+        "upload",
+        _loc(language, "接收输入", "Receive input"),
+        summary=_loc(language, "接收草图与功能描述", "Receiving sketch and description"),
+    )
+    recorder.completed(
+        upload_step,
+        summary=_loc(language, "草图与描述已接收", "Sketch and description received"),
+        warnings=[] if image is not None else [_loc(language, "无图片", "No image")],
+    )
     await _emit(project_id, "stage_started", "upload", _loc(language, "已接收草图与描述", "Sketch and description received"))
     if image is not None:
         await _emit(project_id, "stage_done", "upload", _loc(language, f"图片已解析：{request.image_name or 'uploaded image'}", f"Image parsed: {request.image_name or 'uploaded image'}"))
@@ -146,11 +159,16 @@ async def generate(project_id: str, request: GenerateRequest):
         await _emit(project_id, "stage_progress", "upload", _loc(language, "未提供可用图片，正在仅基于描述继续", "No usable image provided; continuing with the description only"))
 
     await _emit(project_id, "stage_started", "planning", _loc(language, "正在生成 FeaturePlanV3", "Generating FeaturePlanV3"))
-    plan, questions = build_initial_feature_plan(request.description, request, image, settings=settings, language=language)
+    plan, questions = build_initial_feature_plan(request.description, request, image, settings=settings, language=language, recorder=recorder)
     plan = apply_clarification_answers(plan, request.clarification_answers, language=language)
     questions = questions_from_plan(plan, language)
     await _emit(project_id, "question_required", "planning", _loc(language, "已生成澄清问题", "Clarification questions generated"), {"questions": [q.model_dump() for q in questions]})
 
+    validation_step = recorder.started(
+        "validation",
+        _loc(language, "执行前校验", "Pre-execution validation"),
+        summary=_loc(language, "检查尺寸、定位、依赖与模式约束", "Checking dimensions, placement, dependencies, and mode constraints"),
+    )
     blocking_questions = [q for q in questions if q.required and not q.answer]
     executable, gate_logs = _execution_gate(plan, settings, blocking_questions, language)
     if not executable and blocking_questions and settings.operation_mode == "strict":
@@ -165,15 +183,48 @@ async def generate(project_id: str, request: GenerateRequest):
         await _emit(project_id, "error", "planning", _loc(language, "FeaturePlan 未通过执行前检查，未执行 CAD", "FeaturePlan did not pass the pre-execution checks; CAD was not executed"), {"logs": logs})
     else:
         await _emit(project_id, "stage_started", "cad", _loc(language, "正在启动受控 CAD Worker", "Starting controlled CAD Worker"))
-        artifacts, logs, ok = run_freecad_worker(plan, language=language)
+        cad_step = recorder.started(
+            "cad",
+            _loc(language, "CAD 建模", "CAD modeling"),
+            summary=_loc(language, "受控 Worker 逐个执行特征", "Controlled worker executing features one by one"),
+        )
+
+        def on_worker_step(payload):
+            try:
+                recorder.ingest(ProcessStep.model_validate(payload))
+            except Exception:
+                pass
+
+        artifacts, logs, ok = run_freecad_worker(plan, language=language, on_step=on_worker_step)
         if settings.operation_mode == "smart":
             logs.insert(0, _loc(language, f"智能模式已执行自主设计，策略：{settings.smart_fill_policy}。", f"Smart mode executed autonomous design; policy: {settings.smart_fill_policy}."))
             if plan.assumptions:
                 logs.append(_loc(language, f"智能假设数量：{len(plan.assumptions)}，请在设计评审中确认。", f"Smart assumption count: {len(plan.assumptions)}; review them in Design Review."))
+        if ok:
+            recorder.completed(cad_step, summary=_loc(language, "CAD Worker 建模完成", "CAD Worker finished modeling"))
+        else:
+            recorder.failed(cad_step, error="; ".join(logs) or _loc(language, "CAD Worker 执行失败", "CAD Worker execution failed"))
+    if ok:
+        recorder.completed(validation_step, summary=_loc(language, "FeaturePlan 已通过执行前检查", "FeaturePlan passed the pre-execution checks"))
+    elif blocking_questions:
+        recorder.blocked(validation_step, reason=_loc(language, "等待用户确认必要尺寸或定位", "Waiting for user confirmation of required dimensions or placement"))
+    else:
+        recorder.failed(validation_step, error="; ".join(logs) or _loc(language, "FeaturePlan 未通过执行前检查", "FeaturePlan did not pass the pre-execution checks"))
+
     if ok:
         await _emit(project_id, "artifact_ready", "cad", _loc(language, "已生成 STEP/STL/OBJ", "STEP/STL/OBJ generated"), artifacts.model_dump())
     else:
         await _emit(project_id, "error", "cad", _loc(language, "CAD Worker 执行失败", "CAD Worker execution failed"), {"artifacts": artifacts.model_dump(), "logs": logs})
+
+    export_step = recorder.started(
+        "export",
+        _loc(language, "导出", "Export"),
+        summary=_loc(language, "整理 STEP/STL/OBJ 产物", "Preparing STEP/STL/OBJ artifacts"),
+    )
+    if ok:
+        recorder.completed(export_step, summary=_loc(language, "导出完成", "Export completed"))
+    else:
+        recorder.failed(export_step, error=_loc(language, "没有可导出的模型产物", "No model artifacts to export"))
 
     snapshot = DesignSnapshot(
         feature_plan=plan,
@@ -182,6 +233,7 @@ async def generate(project_id: str, request: GenerateRequest):
         design_review=plan.design_review,
         report_markdown=_build_report(project.project_id, ok, questions, logs, language),
         logs=logs,
+        process=recorder.steps,
     )
     store.commit_snapshot(project_id, snapshot)
     return _public_project(store.get_project(project_id))
@@ -193,12 +245,48 @@ async def chat_edit(project_id: str, request: ChatEditRequest):
     language = request.language
     await _emit(project_id, "stage_started", "chat_edit", _loc(language, "正在处理自然语言修改", "Processing natural-language edit"))
     project = store.get_project(project_id)
-    plan, questions = apply_chat_edit(project.current.feature_plan, request.message, project.settings, language=language)
+    recorder = ProcessRecorder(project_id, language, publish=_publish_process_step)
+    plan, questions, edit_set, edit_steps = apply_chat_edit(project.current.feature_plan, request.message, project.settings, language=language)
+    for step in edit_steps:
+        recorder.ingest(step)
+    validation_step = recorder.started(
+        "validation",
+        _loc(language, "执行前校验", "Pre-execution validation"),
+        summary=_loc(language, "检查修改后的尺寸、定位与依赖", "Checking updated dimensions, placement, and dependencies"),
+    )
     executable, gate_logs = _execution_gate(plan, project.settings, questions, language)
     if executable:
-        artifacts, logs, ok = run_freecad_worker(plan, language=language)
+        recorder.completed(validation_step, summary=_loc(language, "修改后的 FeaturePlan 已通过校验", "Updated FeaturePlan passed validation"))
+        cad_step = recorder.started(
+            "cad",
+            _loc(language, "CAD 重建", "CAD rebuild"),
+            summary=_loc(language, "重新执行修改后的特征树", "Re-executing the edited feature tree"),
+        )
+
+        def on_worker_step(payload):
+            try:
+                recorder.ingest(ProcessStep.model_validate(payload))
+            except Exception:
+                pass
+
+        artifacts, logs, ok = run_freecad_worker(plan, language=language, on_step=on_worker_step)
+        if ok:
+            recorder.completed(cad_step, summary=_loc(language, "CAD 重建完成", "CAD rebuild completed"))
+        else:
+            recorder.failed(cad_step, error="; ".join(logs) or _loc(language, "CAD Worker 执行失败", "CAD Worker execution failed"))
     else:
+        recorder.blocked(validation_step, reason=_loc(language, "修改结果缺少可执行数据或存在阻塞问题", "The edit is missing executable data or has blocking issues"))
         artifacts, logs, ok = DesignSnapshot().artifacts, gate_logs, False
+    export_step = recorder.started(
+        "export",
+        _loc(language, "导出", "Export"),
+        summary=_loc(language, "整理修改后的模型产物", "Preparing edited model artifacts"),
+    )
+    if ok:
+        recorder.completed(export_step, summary=_loc(language, "导出完成", "Export completed"))
+    else:
+        recorder.failed(export_step, error=_loc(language, "没有可导出的模型产物", "No model artifacts to export"))
+
     snapshot = DesignSnapshot(
         feature_plan=plan,
         artifacts=artifacts,
@@ -206,6 +294,7 @@ async def chat_edit(project_id: str, request: ChatEditRequest):
         design_review=plan.design_review,
         report_markdown=_build_report(project_id, ok, questions, logs, language),
         logs=project.current.logs + logs,
+        process=recorder.steps,
     )
     store.commit_snapshot(project_id, snapshot)
     await _emit(project_id, "stage_done", "chat_edit", _loc(language, "增量修改完成", "Incremental edit completed"))
@@ -216,13 +305,64 @@ async def chat_edit(project_id: str, request: ChatEditRequest):
 async def patch_project_feature(project_id: str, feature_id: str, request: FeaturePatchRequest):
     project = _project_or_404(project_id)
     language = request.language
+    recorder = ProcessRecorder(project_id, language, publish=_publish_process_step)
+    before = _feature_snapshot_from_plan(project.current.feature_plan, feature_id)
     plan = patch_feature(project.current.feature_plan, feature_id, request.model_dump(exclude_none=True))
+    after = _feature_snapshot_from_plan(plan, feature_id)
+    edit_step = recorder.started(
+        "chat_edit",
+        _loc(language, "属性修改", "Property edit"),
+        summary=_loc(language, "正在修改特征参数", "Editing feature parameters"),
+        feature_id=feature_id,
+        operation="update",
+    )
+    if after is None:
+        recorder.failed(edit_step, error=_loc(language, "找不到特征", "Feature not found"))
+    else:
+        recorder.completed(
+            edit_step,
+            summary=_loc(language, "属性修改已应用", "Property edit applied"),
+            changed={"before": before, "after": after},
+        )
     questions = questions_from_plan(plan, language)
+    validation_step = recorder.started(
+        "validation",
+        _loc(language, "执行前校验", "Pre-execution validation"),
+        summary=_loc(language, "检查属性修改后的尺寸与定位", "Checking the property edit"),
+    )
     executable, gate_logs = _execution_gate(plan, project.settings, questions, language)
     if executable:
-        artifacts, logs, ok = run_freecad_worker(plan, language=language)
+        recorder.completed(validation_step, summary=_loc(language, "属性修改已通过校验", "Property edit passed validation"))
+        cad_step = recorder.started(
+            "cad",
+            _loc(language, "CAD 重建", "CAD rebuild"),
+            summary=_loc(language, "重新执行特征树", "Re-executing the feature tree"),
+        )
+
+        def on_worker_step(payload):
+            try:
+                recorder.ingest(ProcessStep.model_validate(payload))
+            except Exception:
+                pass
+
+        artifacts, logs, ok = run_freecad_worker(plan, language=language, on_step=on_worker_step)
+        if ok:
+            recorder.completed(cad_step, summary=_loc(language, "CAD 重建完成", "CAD rebuild completed"))
+        else:
+            recorder.failed(cad_step, error="; ".join(logs) or _loc(language, "CAD Worker 执行失败", "CAD Worker execution failed"))
     else:
+        recorder.blocked(validation_step, reason=_loc(language, "属性修改缺少可执行数据或存在阻塞问题", "The property edit is missing executable data or has blocking issues"))
         artifacts, logs, ok = DesignSnapshot().artifacts, gate_logs, False
+    export_step = recorder.started(
+        "export",
+        _loc(language, "导出", "Export"),
+        summary=_loc(language, "整理模型产物", "Preparing model artifacts"),
+    )
+    if ok:
+        recorder.completed(export_step, summary=_loc(language, "导出完成", "Export completed"))
+    else:
+        recorder.failed(export_step, error=_loc(language, "没有可导出的模型产物", "No model artifacts to export"))
+
     snapshot = DesignSnapshot(
         feature_plan=plan,
         artifacts=artifacts,
@@ -230,6 +370,7 @@ async def patch_project_feature(project_id: str, feature_id: str, request: Featu
         design_review=plan.design_review,
         report_markdown=_build_report(project_id, ok, questions, logs, language),
         logs=project.current.logs + logs,
+        process=recorder.steps,
     )
     store.commit_snapshot(project_id, snapshot)
     await _emit(project_id, "stage_done", "feature_patch", _loc(language, f"特征 {feature_id} 已更新", f"Feature {feature_id} updated"))
@@ -343,6 +484,20 @@ async def _emit(project_id: str, event_type: str, stage: str, message: str, payl
     await events.publish(
         StageEvent(type=event_type, project_id=project_id, stage=stage, message=message, payload=payload or {})
     )
+
+
+def _feature_snapshot_from_plan(plan, feature_id: str) -> dict | None:
+    candidates = [plan.base_feature] if plan.base_feature else []
+    candidates.extend(plan.features)
+    feature = next((candidate for candidate in candidates if candidate.id == feature_id), None)
+    return feature.model_dump() if feature else None
+
+
+async def _publish_process_step(project_id: str, event_type: str, step: ProcessStep) -> None:
+    payload = {"process_step": step.model_dump()}
+    if step.detail:
+        payload["logs"] = [step.detail]
+    await _emit(project_id, event_type, step.stage, step.label, payload)
 
 
 def _build_report(project_id: str, cad_ok: bool, questions, logs: list[str], language: str = "zh") -> str:

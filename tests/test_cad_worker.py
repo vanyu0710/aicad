@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import unittest
 from pathlib import Path
@@ -63,6 +64,61 @@ class CADWorkerTests(unittest.TestCase):
         self.assertTrue(artifacts.execution_report is not None)
         report = Path(artifacts.execution_report).read_text(encoding="utf-8")
         self.assertIn("no base_feature", report.lower())
+
+
+
+    def test_real_worker_emits_unique_process_steps(self) -> None:
+        seen: list[dict] = []
+        artifacts, logs, ok = run_freecad_worker(_plan(), on_step=seen.append)
+        self.assertTrue(ok, logs)
+        ids = [step["id"] for step in seen]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertTrue(any(step["status"] == "completed" for step in seen))
+        report = json.loads(Path(artifacts.execution_report).read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(report["process_steps"]), 1)
+
+    def test_real_worker_reports_skipped_feature_step(self) -> None:
+        artifacts, logs, ok = run_freecad_worker(_tube_plan_with_missing_groove(), on_step=lambda payload: None)
+        self.assertTrue(ok, logs)
+        report = json.loads(Path(artifacts.execution_report).read_text(encoding="utf-8"))
+        skipped = [
+            step
+            for step in report.get("process_steps", [])
+            if step.get("feature_id") == "top_groove" and step["status"] == "skipped"
+        ]
+        self.assertTrue(skipped)
+
+
+def _tube_plan_with_missing_groove() -> FeaturePlanV3:
+    return FeaturePlanV3.model_validate(
+        {
+            "part_family": "tube",
+            "base_feature": {
+                "id": "base_tube",
+                "type": "hollow_cylinder",
+                "operation": "base",
+                "dimensions": {
+                    "outer_diameter": {"value": 20, "unit": "mm", "confirmed_by_user": True},
+                    "inner_diameter": {"value": 16, "unit": "mm", "confirmed_by_user": True},
+                    "length": {"value": 60, "unit": "mm", "confirmed_by_user": True},
+                },
+                "placement": {"reference": "center", "axis": "Z"},
+            },
+            "features": [
+                {
+                    "id": "top_groove",
+                    "type": "annular_groove",
+                    "operation": "remove",
+                    "dimensions": {
+                        "reduced_outer_diameter": {"value": 14, "unit": "mm", "confirmed_by_user": True},
+                        "z_start": {"value": 50, "unit": "mm", "confirmed_by_user": True},
+                    },
+                    "placement": {"reference": "bottom_end_center", "axis": "Z"},
+                    "depends_on": ["base_tube"],
+                }
+            ],
+        }
+    )
 
 
 if __name__ == "__main__":

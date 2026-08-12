@@ -15,6 +15,7 @@ import {
   updateProjectSettings,
   undo,
   type ModelConfig,
+  type ProcessStep,
   type ProjectState,
 } from "./api";
 import LeftManager from "./layout/LeftManager";
@@ -55,6 +56,7 @@ export default function App() {
     selectedFeatureId,
     chatMessage,
     events,
+    processSteps,
     busy,
     error,
     backendState,
@@ -72,6 +74,7 @@ export default function App() {
     setSelectedFeatureId,
     setChatMessage,
     addEvents,
+    addProcessStep,
     clearEvents,
     setBusy,
     setError,
@@ -82,6 +85,7 @@ export default function App() {
     setSettingsDirty,
     setSettingsSaving,
     setSettingsNotice,
+    setProcessSteps,
     setUi,
   } = useAppStore();
   const bootRef = useRef(false);
@@ -115,6 +119,7 @@ export default function App() {
       setSettingsDirty(false);
       setSelectedFeatureId("");
       clearEvents();
+      setProcessSteps([]);
       enterWorkspace();
       setBackendState("connected");
       await refreshProjects();
@@ -137,6 +142,7 @@ export default function App() {
       setSettings(mergedSettings);
       setSettingsDirty(false);
       setSelectedFeatureId("");
+      setProcessSteps([]);
       enterWorkspace();
       setBackendState("connected");
       await refreshProjects();
@@ -249,6 +255,9 @@ export default function App() {
     };
     socket.onmessage = (message) => {
       const event = JSON.parse(message.data);
+      if (typeof event.type === "string" && event.type.startsWith("process_step_") && event.payload?.process_step) {
+        addProcessStep(event.payload.process_step as ProcessStep);
+      }
       const payloadLogs = Array.isArray(event.payload?.logs) ? event.payload.logs : [];
       const detail = payloadLogs.map((item: unknown) => String(item));
       addEvents([`${event.stage}: ${event.message}`, ...detail]);
@@ -323,6 +332,7 @@ export default function App() {
     const mergedSettings = mergeSettings(next.settings, draftSettings);
     setProject({ ...next, settings: mergedSettings });
     setSettings(mergedSettings);
+    setProcessSteps(next.current?.process || []);
     setBackendState("connected");
   };
 
@@ -610,6 +620,14 @@ export default function App() {
           </button>
           <button
             type="button"
+            className={ui.rightDrawerOpen && ui.rightTab === "process" ? "edge-rail-button active" : "edge-rail-button"}
+            title={t("task.process")}
+            onClick={() => toggleRightDrawer("process")}
+          >
+            <span className="rail-label">{t("rail.process")}</span>
+          </button>
+          <button
+            type="button"
             className={ui.rightDrawerOpen && ui.rightTab === "logs" ? "edge-rail-button active" : "edge-rail-button"}
             title={t("task.logs")}
             onClick={() => toggleRightDrawer("logs")}
@@ -658,6 +676,7 @@ export default function App() {
               busy={busy}
               chatMessage={chatMessage}
               events={events}
+              processSteps={processSteps}
               featurePlan={project.current.feature_plan}
               questions={questions}
               reportMarkdown={project.current.report_markdown}
@@ -668,6 +687,10 @@ export default function App() {
               onChatMessageChange={setChatMessage}
               onClarificationContinue={(answers) => void onClarificationContinue(answers)}
               onSendChat={() => void onChat()}
+              onSelectProcessStep={(featureId) => {
+                setSelectedFeatureId(featureId);
+                setUi({ leftDrawerOpen: true, leftTab: "feature" });
+              }}
               onClose={() => setUi({ rightDrawerOpen: false })}
             />
           </div>

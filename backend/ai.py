@@ -1,27 +1,32 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from copy import deepcopy
 import re
 from typing import Any
+from uuid import uuid4
 
 from PIL import Image
 
 from backend.mechcad_ai import planner as ai_planner
 from backend.mechcad_ai import vision as ai_vision
+from backend.process import ProcessRecorder
 from backend.schemas import (
     ClarificationQuestion,
     DesignAssumption,
     DesignReview,
     DimensionV3,
+    FeatureEditOperation,
+    FeatureEditSet,
     FeaturePlanV3,
     FeatureV3,
     GenerateRequest,
     PlacementV3,
+    ProcessStep,
 )
 
 
 _NUM = r"(\d+(?:\.\d+)?)\s*(?:mm|毫米)?"
-_SEP = r"\s*[:=：]?\s*"
+_SEP = r"\s*(?:[:=：]|(?:改为|改成|调为|设为|到|加宽到|加长到|加大到|to))?\s*"
 _DIAMETER_PREFIX = r"(?:φ|Φ|Ø)?\s*"
 
 # Keep a few mojibake aliases because old tests and historical user inputs
@@ -33,7 +38,7 @@ _DIM_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(rf"(?:槽底外径|槽径|groove\s*diameter){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "groove_diameter"),
     (re.compile(rf"(?:外径|外圆直径|澶栧緞|outer\s*diameter|od){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "outer_diameter"),
     (re.compile(rf"(?:内径|孔内径|鍐呭緞|inner\s*diameter|id|bore){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "inner_diameter"),
-    (re.compile(rf"(?:孔径|孔直径|直径|鐩村緞|diameter){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "diameter"),
+    (re.compile(rf"(?:中心孔径|中心孔|孔径|孔直径|直径|鐩村緞|diameter){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "diameter"),
     (re.compile(rf"(?:长|长度|总长|闀|闀垮害|overall\s*length|length|L){_SEP}{_NUM}", re.IGNORECASE), "length"),
     (re.compile(rf"(?:宽|宽度|width|W){_SEP}{_NUM}", re.IGNORECASE), "width"),
     (re.compile(rf"(?:厚|厚度|高度|height|thickness|T){_SEP}{_NUM}", re.IGNORECASE), "height"),
@@ -49,25 +54,73 @@ def _loc(language: str, zh: str, en: str) -> str:
 
 
 def build_initial_feature_plan(
-    description: str, request: GenerateRequest, image: Image.Image | None = None, settings=None, language: str = "zh"
+    description: str,
+    request: GenerateRequest,
+    image: Image.Image | None = None,
+    settings=None,
+    language: str = "zh",
+    recorder=None,
 ) -> tuple[FeaturePlanV3, list[ClarificationQuestion]]:
     """Build the first FeaturePlanV3 for a generation request."""
     if settings is None:
         settings = request.settings
     if settings is not None:
-        vision_json = ai_vision.analyze_sketch(image, description, settings, language=language)
-        plan = ai_planner.generate_feature_plan(
-            description,
-            vision_json,
-            settings,
-            mode=settings.operation_mode or "strict",
-            smart_fill_policy=settings.smart_fill_policy or "limited_fill",
-            language=language,
-        )
+        vision_json = None
+        vision_step = None
+        if recorder is not None:
+            if image is None:
+                vision_step = recorder.started(
+                    "vision",
+                    _loc(language, "视觉读图", "Vision analysis"),
+                    summary=_loc(language, "没有可用图片，跳过视觉读图", "No image available; skipping vision analysis"),
+                )
+                recorder.skipped(vision_step, reason=_loc(language, "未提供图片", "No image provided"))
+            else:
+                vision_step = recorder.started(
+                    "vision",
+                    _loc(language, "视觉读图", "Vision analysis"),
+                    summary=_loc(language, "正在分析手绘草图", "Analyzing hand-drawn sketch"),
+                )
+        if image is not None:
+            try:
+                vision_json = ai_vision.analyze_sketch(image, description, settings, language=language)
+                if recorder is not None and vision_step is not None:
+                    recorder.completed(vision_step, summary=_loc(language, "视觉读图完成", "Vision analysis completed"))
+            except Exception as exc:
+                if recorder is not None and vision_step is not None:
+                    recorder.failed(vision_step, error=str(exc))
+
+        plan_step = None
+        if recorder is not None:
+            plan_step = recorder.started(
+                "planning",
+                _loc(language, "特征规划", "Feature planning"),
+                summary=_loc(language, "正在生成 FeaturePlanV3", "Generating FeaturePlanV3"),
+            )
+        try:
+            plan = ai_planner.generate_feature_plan(
+                description,
+                vision_json,
+                settings,
+                mode=settings.operation_mode or "strict",
+                smart_fill_policy=settings.smart_fill_policy or "limited_fill",
+                language=language,
+            )
+        except Exception as exc:
+            if recorder is not None and plan_step is not None:
+                recorder.failed(plan_step, error=str(exc))
+            plan = None
+        if recorder is not None and plan_step is not None:
+            if plan is not None:
+                recorder.completed(plan_step, summary=_loc(language, "FeaturePlan 生成完成", "FeaturePlan generated"))
+            else:
+                recorder.skipped(plan_step, reason=_loc(language, "未配置模型或模型返回无效，使用本地确定性规划", "Model not configured or returned invalid output; using local deterministic planning"))
         if plan is not None:
             if settings.operation_mode == "smart":
                 plan = _apply_smart_autonomy(plan, description, settings.smart_fill_policy or "limited_fill", language)
             return plan, questions_from_plan(plan, language)
+    if recorder is not None and image is None and settings is not None:
+        pass
     plan, questions = _build_stub_feature_plan(description, request, language)
     if settings is not None and settings.operation_mode == "smart":
         plan = _apply_smart_autonomy(plan, description, settings.smart_fill_policy or "limited_fill", language)
@@ -169,41 +222,542 @@ def _build_stub_feature_plan(description: str, request: GenerateRequest, languag
 
 def apply_chat_edit(
     plan: FeaturePlanV3, message: str, settings=None, language: str = "zh"
-) -> tuple[FeaturePlanV3, list[ClarificationQuestion]]:
-    """Apply a natural-language edit, using the planner model when configured."""
-    if settings is not None:
-        ai_updated = ai_planner.chat_edit_feature_plan(plan, message, settings, language=language)
-        if ai_updated is not None:
-            if settings.operation_mode == "smart":
-                ai_updated = _apply_smart_autonomy(ai_updated, message, settings.smart_fill_policy or "limited_fill", language)
-            return ai_updated, questions_from_plan(ai_updated, language)
+) -> tuple[FeaturePlanV3, list[ClarificationQuestion], FeatureEditSet, list[ProcessStep]]:
+    """Apply a natural-language edit as feature-level operations.
 
+    Returns the updated plan, derived questions, the edit set that was applied,
+    and one ProcessStep per operation for the process timeline.
+    """
+    edit_set: FeatureEditSet | None = None
+    if settings is not None:
+        edit_set = ai_planner.chat_edit_operations(plan, message, settings, language=language)
+    if edit_set is None:
+        edit_set = _local_feature_edit(plan, message, language)
+
+    updated, questions, steps = apply_feature_operations(plan, edit_set, settings, language=language)
+    return updated, questions, edit_set, steps
+
+
+def apply_feature_operations(
+    plan: FeaturePlanV3,
+    edit_set: FeatureEditSet,
+    settings=None,
+    language: str = "zh",
+) -> tuple[FeaturePlanV3, list[ClarificationQuestion], list[ProcessStep]]:
+    """Apply a validated FeatureEditSet without replacing the whole plan."""
     updated = deepcopy(plan)
+    mode = getattr(settings, "operation_mode", "strict") if settings is not None else "strict"
+    questions = [q for q in edit_set.questions]
+    recorder = ProcessRecorder("local", language)
+
+    for op in edit_set.operations:
+        step = ProcessStep(
+            stage="chat_edit",
+            status="running",
+            label=_op_label(op, language),
+            summary=_loc(language, "正在应用特征级修改", "Applying feature-level edit"),
+            feature_id=op.feature_id,
+            operation=op.op,
+        )
+        if op.op == "add":
+            _apply_add_operation(updated, op, mode, language, recorder, step, questions)
+        elif op.op == "update":
+            _apply_update_operation(updated, op, mode, language, recorder, step)
+        elif op.op == "delete":
+            _apply_delete_operation(updated, op, language, recorder, step, questions)
+        elif op.op == "change_type":
+            _apply_change_type_operation(updated, op, mode, language, recorder, step)
+        recorder.append(step)
+
+    _sync_assumption_details(updated)
+    _refresh_smart_resolution(updated)
+    combined = list(questions)
+    existing = {q.id for q in combined}
+    for q in questions_from_plan(updated, language):
+        if q.id not in existing:
+            combined.append(q)
+    return updated, combined, recorder.steps
+
+
+def _op_label(op: FeatureEditOperation, language: str) -> str:
+    labels = {
+        "add": _loc(language, "新增特征", "Add feature"),
+        "update": _loc(language, "修改特征", "Modify feature"),
+        "delete": _loc(language, "删除特征", "Delete feature"),
+        "change_type": _loc(language, "转换特征类型", "Change feature type"),
+    }
+    return labels.get(op.op, op.op)
+
+
+def _feature_snapshot(feature: FeatureV3 | None) -> dict[str, Any] | None:
+    if feature is None:
+        return None
+    return {
+        "id": feature.id,
+        "type": feature.type,
+        "dimensions": {key: dim.model_dump() for key, dim in feature.dimensions.items()},
+        "placement": feature.placement.model_dump(),
+        "extent": feature.extent,
+        "depends_on": list(feature.depends_on),
+    }
+
+
+def _apply_add_operation(
+    plan: FeaturePlanV3,
+    op: FeatureEditOperation,
+    mode: str,
+    language: str,
+    recorder: ProcessRecorder,
+    step: ProcessStep,
+    questions: list,
+) -> None:
+    if op.type is None or op.type in {"box_base", "cylinder_base", "hollow_cylinder", "revolved_axial_profile"}:
+        recorder.blocked(step, reason=_loc(language, "不允许通过聊天新增主基体，请先确认整体外形", "Main body cannot be added via chat; confirm the overall outline first"))
+        return
+    if mode == "strict" and any(dim.source == "assumption" and not dim.confirmed_by_user for dim in op.dimensions.values()):
+        recorder.blocked(step, reason=_loc(language, "严格模式禁止未确认的推断尺寸", "Strict mode rejects unconfirmed inferred dimensions"))
+        return
+    base_id = plan.base_feature.id if plan.base_feature else None
+    depends = [dep for dep in op.depends_on if _find_feature(plan, dep) is not None] or ([base_id] if base_id else [])
+    missing_deps = [dep for dep in op.depends_on if _find_feature(plan, dep) is None]
+    if missing_deps:
+        recorder.blocked(step, reason=_loc(language, f"依赖特征不存在：{', '.join(missing_deps)}", f"Missing dependency: {', '.join(missing_deps)}"))
+        return
+
+    feature_id = op.feature_id or f"{op.type}_{uuid4().hex[:6]}"
+    if _find_feature(plan, feature_id) is not None:
+        feature_id = f"{op.type}_{uuid4().hex[:6]}"
+    feature = FeatureV3(
+        id=feature_id,
+        type=op.type,
+        operation="add" if not op.type.startswith("base") else "base",
+        dimensions=deepcopy(op.dimensions),
+        placement=deepcopy(op.placement) if op.placement else PlacementV3(reference="model_center", axis="Z"),
+        extent=op.extent,
+        depends_on=depends,
+        evidence=op.evidence or _loc(language, "用户通过聊天要求新增特征", "User requested this feature through chat"),
+        confirmed_by_user=op.confirmed_by_user,
+    )
+    if op.source == "assumption" and not op.confirmed_by_user:
+        feature.assumptions.append(_loc(language, "该特征由 AI 推断，未经用户确认", "This feature is AI-inferred and not user-confirmed"))
+    plan.features.append(feature)
+    _record_missing(plan, feature, language)
+    recorder.completed(step, 
+        summary=_loc(language, f"已新增特征 {feature_id}（{op.type}）", f"Added feature {feature_id} ({op.type})"),
+        changed={"before": None, "after": _feature_snapshot(feature)},
+        warnings=feature.unresolved,
+    )
+
+
+def _apply_update_operation(
+    plan: FeaturePlanV3,
+    op: FeatureEditOperation,
+    mode: str,
+    language: str,
+    recorder: ProcessRecorder,
+    step: ProcessStep,
+) -> None:
+    feature = _find_feature(plan, op.feature_id)
+    if feature is None:
+        recorder.failed(step, error=_loc(language, f"找不到特征 {op.feature_id}", f"Feature {op.feature_id} not found"))
+        return
+    before = _feature_snapshot(feature)
+    changed_keys: list[str] = []
+    for key, dim in op.dimensions.items():
+        if mode == "strict" and dim.source == "assumption" and not dim.confirmed_by_user:
+            continue
+        feature.dimensions[key] = dim
+        changed_keys.append(key)
+        _clear_unresolved(plan, feature.id, key)
+    if op.placement is not None:
+        feature.placement = op.placement
+        changed_keys.append("placement")
+        _clear_unresolved(plan, feature.id, "position")
+    if op.extent is not None:
+        feature.extent = op.extent
+        changed_keys.append("extent")
+    after = _feature_snapshot(feature)
+    if not changed_keys:
+        recorder.blocked(step, reason=_loc(language, "严格模式下未确认推断不会被应用", "Unconfirmed inference was not applied in strict mode"))
+        return
+    _record_missing(plan, feature, language)
+    recorder.completed(step, 
+        summary=_loc(language, f"已更新特征 {feature.id}：{', '.join(changed_keys)}", f"Updated feature {feature.id}: {', '.join(changed_keys)}"),
+        changed={"before": before, "after": after},
+        warnings=feature.unresolved,
+    )
+
+
+def _apply_delete_operation(
+    plan: FeaturePlanV3,
+    op: FeatureEditOperation,
+    language: str,
+    recorder: ProcessRecorder,
+    step: ProcessStep,
+    questions: list,
+) -> None:
+    feature = _find_feature(plan, op.feature_id)
+    if feature is None:
+        recorder.failed(step, error=_loc(language, f"找不到特征 {op.feature_id}", f"Feature {op.feature_id} not found"))
+        return
+    if feature is plan.base_feature:
+        recorder.blocked(step, reason=_loc(language, "主基体不能通过聊天删除，请新建项目或重新生成", "The main body cannot be deleted via chat; create a new project or regenerate"))
+        return
+    children = [candidate for candidate in plan.features if feature.id in candidate.depends_on]
+    if children and not op.cascade:
+        names = ", ".join(child.id for child in children)
+        questions.append(
+            ClarificationQuestion(
+                text=_loc(language, f"删除 {feature.id} 会让 {names} 失去父实体。是否同时删除这些子特征？", f"Deleting {feature.id} would orphan {names}. Delete its children too?"),
+                feature_id=feature.id,
+                dimension_refs=[],
+                required=True,
+                options=_loc(language, ["同时删除子特征", "保留父特征"], ["Delete children too", "Keep parent feature"]),
+                reason=_loc(language, "依赖关系需要确认", "Dependency graph requires confirmation"),
+                impact=_loc(language, "不确认时不会执行删除", "Delete will not execute until confirmed"),
+                answer_type="choice",
+            )
+        )
+        recorder.blocked(step, reason=_loc(language, f"特征 {feature.id} 仍有子特征，等待用户确认", f"Feature {feature.id} still has children; waiting for user confirmation"))
+        return
+    to_remove = {feature.id}
+    if op.cascade:
+        changed = True
+        while changed:
+            changed = False
+            for candidate in plan.features:
+                if candidate.id in to_remove:
+                    continue
+                if any(dep in to_remove for dep in candidate.depends_on):
+                    to_remove.add(candidate.id)
+                    changed = True
+    before = _feature_snapshot(feature)
+    plan.features = [candidate for candidate in plan.features if candidate.id not in to_remove]
+    plan.unresolved = [item for item in plan.unresolved if str(item.get("feature")) not in to_remove]
+    recorder.completed(step, 
+        summary=_loc(language, f"已删除特征 {feature.id}", f"Deleted feature {feature.id}"),
+        detail=_loc(language, f"同时删除：{', '.join(sorted(to_remove - {feature.id}))}", f"Also deleted: {', '.join(sorted(to_remove - {feature.id}))}") if len(to_remove) > 1 else "",
+        changed={"before": before, "after": None},
+    )
+
+
+def _apply_change_type_operation(
+    plan: FeaturePlanV3,
+    op: FeatureEditOperation,
+    mode: str,
+    language: str,
+    recorder: ProcessRecorder,
+    step: ProcessStep,
+) -> None:
+    feature = _find_feature(plan, op.feature_id)
+    if feature is None:
+        recorder.failed(step, error=_loc(language, f"找不到特征 {op.feature_id}", f"Feature {op.feature_id} not found"))
+        return
+    hole_family = {"through_hole", "blind_hole", "counterbore_hole"}
+    slot_family = {"rectangular_pocket", "rectangular_slot"}
+    allowed = (feature.type in hole_family and op.type in hole_family) or (feature.type in slot_family and op.type in slot_family)
+    if not allowed or op.type is None:
+        recorder.blocked(step, reason=_loc(language, f"不允许从 {feature.type} 转为 {op.type}；仅支持孔族或槽/腔族内转换", f"Cannot convert {feature.type} to {op.type}; only hole-family or pocket/slot-family conversions are allowed"))
+        return
+    before = _feature_snapshot(feature)
+    feature.type = op.type
+    for key, dim in op.dimensions.items():
+        if mode == "strict" and dim.source == "assumption" and not dim.confirmed_by_user:
+            continue
+        feature.dimensions[key] = dim
+        _clear_unresolved(plan, feature.id, key)
+    if op.placement is not None:
+        feature.placement = op.placement
+    if op.extent is not None:
+        feature.extent = op.extent
+    _record_missing(plan, feature, language)
+    recorder.completed(step, 
+        summary=_loc(language, f"特征 {feature.id} 已转为 {op.type}", f"Feature {feature.id} converted to {op.type}"),
+        changed={"before": before, "after": _feature_snapshot(feature)},
+        warnings=feature.unresolved,
+    )
+
+
+def _find_feature(plan: FeaturePlanV3, feature_id: str | None) -> FeatureV3 | None:
+    if not feature_id:
+        return None
+    return next((feature for feature in _all_features(plan) if feature.id == feature_id), None)
+
+
+def _record_missing(plan: FeaturePlanV3, feature: FeatureV3, language: str) -> None:
+    required = _required_dimensions(feature.type)
+    missing = [name for name in required if feature.dimensions.get(name) is None or feature.dimensions[name].value is None]
+    if not missing:
+        return
+    reason = _loc(language, f"{feature.type} 缺少可执行尺寸：{', '.join(missing)}", f"{feature.type} is missing executable dimensions: {', '.join(missing)}")
+    feature.unresolved.append(reason)
+    plan.unresolved.append({"feature": feature.id, "reason": reason})
+
+
+def _required_dimensions(feature_type: str) -> list[str]:
+    return {
+        "box_base": ["length", "width", "height"],
+        "cylinder_base": ["outer_diameter", "length"],
+        "hollow_cylinder": ["outer_diameter", "inner_diameter", "length"],
+        "through_hole": ["diameter"],
+        "blind_hole": ["diameter", "depth"],
+        "counterbore_hole": ["diameter", "depth"],
+        "rectangular_slot": ["length", "width", "depth"],
+        "rectangular_pocket": ["length", "width", "depth"],
+        "annular_groove": ["reduced_outer_diameter", "axial_width", "z_start"],
+        "boss_cylinder": ["diameter", "height"],
+        "rectangular_pad": ["length", "width", "height"],
+        "rib_box": ["length", "width", "height"],
+        "linear_pattern": ["count", "spacing", "diameter"],
+        "circular_pattern": ["count", "pitch_radius", "diameter"],
+    }.get(feature_type, [])
+
+
+def _local_feature_edit(plan: FeaturePlanV3, message: str, language: str = "zh") -> FeatureEditSet:
+    """Deterministic fallback that turns common edits into feature operations."""
     text = message.strip()
     if not text:
-        return updated, questions_from_plan(updated, language)
-
+        return FeatureEditSet()
     lowered = text.lower()
+    operations: list[FeatureEditOperation] = []
+    questions: list[ClarificationQuestion] = []
+    is_delete = any(token in text for token in ["删除", "去掉", "移除", "remove", "delete"])
+    is_add = any(token in text for token in ["新增", "添加", "增加", "add", "create"])
+    is_move = "移动" in text or "move" in lowered
+    is_update = any(token in text for token in ["改成", "改为", "修改", "调为", "设为", "调整", "变为"]) or any(token in lowered for token in ["change", "update", "modify", "edit"])
+
+
+    if "删除" in text or "去掉" in text or "移除" in text:
+        target = _pick_delete_target(plan, text, language)
+        if target is None:
+            questions.append(
+                ClarificationQuestion(
+                    text=_loc(language, "你想删除哪个特征？请说明特征名称或类型，例如“删除顶部槽”。", "Which feature do you want to delete? Name it, for example: delete the top groove."),
+                    required=True,
+                    reason=_loc(language, "删除目标不明确", "Delete target is ambiguous"),
+                    impact=_loc(language, "未确认前不会执行删除", "No deletion will run before confirmation"),
+                    answer_type="text",
+                )
+            )
+        else:
+            operations.append(FeatureEditOperation(op="delete", feature_id=target.id, reason=_loc(language, f"用户请求删除 {target.id}", f"User requested deletion of {target.id}")))
+
     parsed = _extract_dimension_clues(text)
-    if "删除" in text or "去掉" in text:
-        updated.assumptions.append(_loc(language, f"用户请求删除或弱化特征：{text}", f"User requested to delete or weaken features: {text}"))
-    if any(word in lowered for word in ["孔", "hole", "槽", "slot", "台阶", "凸台", "圆角", "倒角"]):
-        updated.design_review.suggestions.append(_loc(language, f"已记录修改请求：{text}", f"Modification request recorded: {text}"))
-    if parsed:
-        target = updated.base_feature or (updated.features[0] if updated.features else None)
-        if target is not None:
-            for key, value in parsed.items():
-                if key in target.dimensions:
-                    target.dimensions[key] = DimensionV3(
-                        value=value,
-                        unit="mm",
-                        evidence=f"user chat: {text}",
+    if not is_add and not is_delete and parsed:
+        target = _pick_update_target(plan, text, parsed, language)
+        if target is None:
+            questions.append(
+                ClarificationQuestion(
+                    text=_loc(language, "你想修改哪个特征？请说明特征名称或类型。", "Which feature do you want to modify? Name it or its type."),
+                    required=True,
+                    reason=_loc(language, "修改目标不明确", "Modify target is ambiguous"),
+                    impact=_loc(language, "未确认前不会修改", "No change will run before confirmation"),
+                    answer_type="text",
+                )
+            )
+        else:
+            dimensions = _matching_dimensions(target, parsed, language)
+            if dimensions:
+                operations.append(
+                    FeatureEditOperation(
+                        op="update",
+                        feature_id=target.id,
+                        dimensions=dimensions,
+                        evidence=_loc(language, f"用户聊天：{text}", f"User chat: {text}"),
                         source="user",
                         confirmed_by_user=True,
                     )
-                    _clear_unresolved(updated, target.id, key)
+                )
 
-    return updated, questions_from_plan(updated, language)
+    if is_move and not is_add:
+        move_target = _pick_update_target(plan, text, parsed, language)
+        move_op = _move_feature_operation(move_target, text, language)
+        if move_op is not None:
+            operations.append(move_op)
+        else:
+            questions.append(
+                ClarificationQuestion(
+                    text=_loc(language, "要移动的孔缺少当前中心位置或移动量。请说明“向内/向外移动多少 mm”。", "The hole to move lacks a current center position or distance. Say: move inward/outward by N mm."),
+                    required=True,
+                    feature_id=move_target.id if move_target else None,
+                    reason=_loc(language, "孔位或移动量不明确", "Hole position or move distance is unclear"),
+                    impact=_loc(language, "未确认前不会移动孔", "The hole will not move until confirmed"),
+                    answer_type="text",
+                    unit="mm",
+                )
+            )
+
+    if is_add:
+        operations.extend(_local_add_operations(plan, text, parsed, language))
+
+
+    if not operations and not questions:
+        questions.append(
+            ClarificationQuestion(
+                text=_loc(language, "你想修改哪个特征？请说明特征名称或类型。", "Which feature do you want to modify? Name it or its type."),
+                reason=_loc(language, "修改目标不明确", "Modify target is ambiguous"),
+                impact=_loc(language, "未确认前不会修改", "No change will run before confirmation"),
+                answer_type="text",
+            )
+        )
+    return FeatureEditSet(operations=operations, questions=questions, message=text)
+
+
+def _pick_delete_target(plan: FeaturePlanV3, text: str, language: str) -> FeatureV3 | None:
+    features = _all_features(plan)
+    if any(token in text for token in ["槽", "groove", "slot"]):
+        candidates = [f for f in features if f.type in {"annular_groove", "rectangular_slot", "rectangular_pocket"}]
+    elif any(token in text for token in ["孔", "hole"]):
+        candidates = [f for f in features if f.type in {"through_hole", "blind_hole", "counterbore_hole"}]
+    elif any(token in text for token in ["凸台", "boss"]):
+        candidates = [f for f in features if f.type == "boss_cylinder"]
+    else:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        for candidate in candidates:
+            if candidate.id in text or any(hint in text for hint in [candidate.id, "顶部", "top"]):
+                return candidate
+    return None
+
+
+def _pick_update_target(plan: FeaturePlanV3, text: str, parsed: dict[str, float], language: str) -> FeatureV3 | None:
+    features = _all_features(plan)
+    if any(token in text for token in ["槽", "groove", "slot"]):
+        candidates = [f for f in features if f.type in {"annular_groove", "rectangular_slot", "rectangular_pocket"}]
+        return candidates[0] if len(candidates) == 1 else (next((f for f in candidates if f.id in text), None))
+    if any(token in text for token in ["孔", "hole"]):
+        candidates = [f for f in features if f.type in {"through_hole", "blind_hole", "counterbore_hole", "circular_pattern", "linear_pattern"}]
+        if "中心" in text or "center" in text.lower():
+            center = next((f for f in candidates if "center" in f.id or "中心" in f.id), None)
+            if center:
+                return center
+        return candidates[0] if len(candidates) == 1 else None
+    if any(key in parsed for key in ("length", "width", "height", "outer_diameter", "inner_diameter")):
+        return plan.base_feature
+    if ("移动" in text or "move" in text.lower()) and any(token in text for token in ["孔", "hole"]):
+        candidates = [f for f in features if f.type in {"through_hole", "blind_hole", "counterbore_hole"}]
+        return candidates[0] if len(candidates) == 1 else None
+    return None
+
+
+def _matching_dimensions(feature: FeatureV3, parsed: dict[str, float], language: str) -> dict[str, DimensionV3]:
+    aliases = {
+        "length": ("length", "slot_length"),
+        "width": ("width", "slot_width"),
+        "height": ("height", "depth", "thickness"),
+        "outer_diameter": ("outer_diameter", "diameter"),
+        "inner_diameter": ("inner_diameter",),
+        "diameter": ("diameter", "hole_diameter"),
+        "slot_width": ("axial_width", "width", "slot_width"),
+        "slot_length": ("length", "slot_length"),
+        "slot_depth": ("depth", "height"),
+        "groove_diameter": ("reduced_outer_diameter", "groove_diameter"),
+        "depth": ("depth",),
+    }
+    result: dict[str, DimensionV3] = {}
+    if feature.type in {"through_hole", "blind_hole", "counterbore_hole"} and parsed.get("width") and "diameter" in feature.dimensions:
+        result["diameter"] = DimensionV3(
+            value=parsed["width"],
+            unit="mm",
+            evidence=_loc(language, "用户聊天中的明确尺寸", "Explicit dimension from user chat"),
+            source="user",
+            confirmed_by_user=True,
+        )
+    for parsed_key, value in parsed.items():
+        for target_key in aliases.get(parsed_key, []):
+            if target_key in feature.dimensions:
+                result[target_key] = DimensionV3(
+                    value=value,
+                    unit="mm",
+                    evidence=_loc(language, "用户聊天中的明确尺寸", "Explicit dimension from user chat"),
+                    source="user",
+                    confirmed_by_user=True,
+                )
+                break
+    return result
+
+
+
+def _move_feature_operation(feature: FeatureV3 | None, text: str, language: str) -> FeatureEditOperation | None:
+    if feature is None:
+        return None
+    match = re.search(r"(?:移动|move)\s*(\d+(?:\.\d+)?)\s*(?:mm|毫米)?", text, re.IGNORECASE)
+    if not match:
+        return None
+    distance = float(match.group(1))
+    outward = any(token in text for token in ["向外", "outward", "外移"])
+    x = feature.placement.x or 0.0
+    y = feature.placement.y or 0.0
+    z = feature.placement.z or 0.0
+    if abs(x) >= abs(y) and x != 0:
+        new_x = x + distance if outward else (x - distance if x > 0 else x + distance)
+        new_y = y
+    elif y != 0:
+        new_x = x
+        new_y = y + distance if outward else (y - distance if y > 0 else y + distance)
+    else:
+        return None
+    return FeatureEditOperation(
+        op="update",
+        feature_id=feature.id,
+        placement=PlacementV3(reference=feature.placement.reference, x=new_x, y=new_y, z=z, axis=feature.placement.axis),
+        evidence=_loc(language, f"用户聊天：{text}", f"User chat: {text}"),
+        source="user",
+        confirmed_by_user=True,
+    )
+
+
+def _local_add_operations(plan: FeaturePlanV3, text: str, parsed: dict[str, float], language: str) -> list[FeatureEditOperation]:
+    lowered = text.lower()
+    diameter = parsed.get("diameter") or parsed.get("metric_thread")
+    count = _extract_count(text)
+    if "m6" in lowered:
+        diameter = 6.0
+    elif "m8" in lowered:
+        diameter = 8.0
+    elif "m10" in lowered:
+        diameter = 10.0
+    if not diameter:
+        return []
+
+    wants_pattern = (count is not None and count > 1) or "阵列" in text or "pattern" in lowered
+    if wants_pattern:
+        dimensions: dict[str, float] = {"diameter": diameter}
+        if count is not None:
+            dimensions["count"] = float(count)
+        if "线性" in text or "linear" in lowered or (plan.part_family == "plate" and "圆周" not in text and "circular" not in lowered):
+            feature_type = "linear_pattern"
+        else:
+            feature_type = "circular_pattern"
+        return [FeatureEditOperation(op="add", type=feature_type, dimensions=_dimension_map(dimensions, language), evidence=_loc(language, f"用户请求新增阵列：{text}", f"User requested pattern: {text}"))]
+
+    return [FeatureEditOperation(op="add", type="through_hole", dimensions=_dimension_map({"diameter": diameter}, language), evidence=_loc(language, f"用户请求新增孔：{text}", f"User requested hole: {text}"))]
+
+
+
+def _extract_count(text: str) -> int | None:
+    match = re.search(r"(\d+)\s*(?:个|只|处|holes?\b|x\s*(\d+))", text, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"\b(\d+)\s*(?:个|只|处)", text)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _dimension_map(values: dict[str, float], language: str) -> dict[str, DimensionV3]:
+    return {
+        key: DimensionV3(
+            value=value,
+            unit="mm",
+            evidence=_loc(language, "用户聊天中的明确尺寸", "Explicit dimension from user chat"),
+            source="user",
+            confirmed_by_user=True,
+        )
+        for key, value in values.items()
+    }
 
 
 def patch_feature(plan: FeaturePlanV3, feature_id: str, patch: dict[str, Any]) -> FeaturePlanV3:

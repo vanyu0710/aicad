@@ -4,13 +4,20 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 from backend.schemas import ArtifactSet, FeaturePlanV3
 from backend.storage import create_run_dir
 
 
-def run_freecad_worker(plan: FeaturePlanV3, timeout: int | None = None, language: str = "zh") -> tuple[ArtifactSet, list[str], bool]:
+def run_freecad_worker(
+    plan: FeaturePlanV3,
+    timeout: int | None = None,
+    language: str = "zh",
+    on_step=None,
+) -> tuple[ArtifactSet, list[str], bool]:
     if timeout is None:
         timeout = int(os.getenv("MECHCAD_CAD_TIMEOUT", "90"))
     run_id, run_dir = create_run_dir()
@@ -20,9 +27,22 @@ def run_freecad_worker(plan: FeaturePlanV3, timeout: int | None = None, language
     command = [sys.executable, str(worker), "--plan", str(plan_path), "--out", str(run_dir), "--lang", language]
     engine = os.getenv("MECHCAD_CAD_ENGINE", "build123d").strip().lower() or "build123d"
     logs: list[str] = [f"Starting controlled {engine} CAD worker for run {run_id} (timeout={timeout}s)."]
+    stop_watcher = threading.Event()
+    watcher = None
+    seen_step_ids: set[str] = set()
+    if on_step is not None:
+        watcher = threading.Thread(
+            target=_tail_process_steps,
+            args=(run_dir, on_step, stop_watcher, seen_step_ids),
+            daemon=True,
+        )
+        watcher.start()
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
+        stop_watcher.set()
+        if watcher is not None:
+            watcher.join(timeout=1)
         stdout = _decode_output(exc.stdout)
         stderr = _decode_output(exc.stderr)
         report = {
@@ -31,10 +51,19 @@ def run_freecad_worker(plan: FeaturePlanV3, timeout: int | None = None, language
             "error": f"{engine} worker timeout after {timeout}s",
             "stdout": stdout,
             "stderr": stderr,
+            "process_steps": _read_process_steps(run_dir),
         }
         (run_dir / "execution_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         _remove_failed_model_artifacts(run_dir)
         return _artifacts(run_id, run_dir), logs + [report["error"]], False
+
+    stop_watcher.set()
+    if watcher is not None:
+        watcher.join(timeout=2)
+    for payload in _read_process_steps(run_dir):
+        if on_step is not None and payload.get("id") not in seen_step_ids:
+            seen_step_ids.add(payload.get("id"))
+            on_step(payload)
 
     if completed.stdout:
         logs.append(completed.stdout.strip())
@@ -55,6 +84,51 @@ def run_freecad_worker(plan: FeaturePlanV3, timeout: int | None = None, language
     if not ok:
         _remove_failed_model_artifacts(run_dir)
     return _artifacts(run_id, run_dir), logs, ok
+
+
+def _tail_process_steps(run_dir: Path, on_step, stop_event: threading.Event, seen_step_ids: set[str]) -> None:
+    path = run_dir / "process_steps.jsonl"
+    position = 0
+    while not stop_event.is_set():
+        try:
+            if path.exists():
+                with path.open("r", encoding="utf-8") as fh:
+                    fh.seek(position)
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            payload = json.loads(line)
+                            step_id = payload.get("id")
+                            if step_id in seen_step_ids:
+                                continue
+                            seen_step_ids.add(step_id)
+                            on_step(payload)
+                        except Exception:
+                            continue
+                    position = fh.tell()
+        except OSError:
+            pass
+        time.sleep(0.05)
+
+
+def _read_process_steps(run_dir: Path) -> list[dict]:
+    path = run_dir / "process_steps.jsonl"
+    if not path.exists():
+        return []
+    result: list[dict] = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    result.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return []
+    return result
 
 
 def _decode_output(value: bytes | str | None) -> str:

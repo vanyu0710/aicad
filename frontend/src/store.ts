@@ -1,9 +1,9 @@
 import { create } from "zustand";
-import type { ModelConfig, ProjectState } from "./api";
+import type { ModelConfig, ProcessStep, ProjectState } from "./api";
 
 export type Lang = "zh" | "en";
 export type ManagerTab = "feature" | "property" | "configuration";
-export type TaskTab = "assistant" | "review" | "logs" | "plan" | "export";
+export type TaskTab = "assistant" | "review" | "process" | "logs" | "plan" | "export";
 export type StartupMode = "always" | "first" | "off";
 
 export const DEFAULT_DESCRIPTION_ZH =
@@ -78,6 +78,7 @@ type AppState = {
   selectedFeatureId: string;
   chatMessage: string;
   events: string[];
+  processSteps: ProcessStep[];
   busy: boolean;
   error: string;
   backendState: "connected" | "offline";
@@ -97,6 +98,8 @@ type AppState = {
   setChatMessage: (value: string) => void;
   addEvents: (items: string[]) => void;
   clearEvents: () => void;
+  addProcessStep: (step: ProcessStep) => void;
+  setProcessSteps: (steps: ProcessStep[]) => void;
   setBusy: (busy: boolean) => void;
   setError: (error: string) => void;
   setBackendState: (state: "connected" | "offline") => void;
@@ -152,6 +155,7 @@ export const useAppStore = create<AppState>((set) => ({
   selectedFeatureId: "",
   chatMessage: "",
   events: [],
+  processSteps: [],
   busy: false,
   error: "",
   backendState: "connected",
@@ -192,6 +196,15 @@ export const useAppStore = create<AppState>((set) => ({
   addEvents: (items) =>
     set((state) => ({ events: [...items, ...state.events].slice(0, 120) })),
   clearEvents: () => set({ events: [] }),
+  addProcessStep: (step) =>
+    set((state) => {
+      const exists = state.processSteps.some((item) => item.id === step.id);
+      if (exists) {
+        return { processSteps: state.processSteps.map((item) => (item.id === step.id ? step : item)) };
+      }
+      return { processSteps: [...state.processSteps, step] };
+    }),
+  setProcessSteps: (processSteps) => set({ processSteps }),
   setBusy: (busy) => set({ busy }),
   setError: (error) => set({ error }),
   setBackendState: (backendState) => set({ backendState }),

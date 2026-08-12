@@ -1,5 +1,5 @@
 import ClarificationPanel from "../ClarificationPanel";
-import { artifactUrl } from "../api";
+import { artifactUrl, type ProcessStep } from "../api";
 import { useAppStore, type TaskTab } from "../store";
 import { useT } from "../i18n";
 
@@ -7,6 +7,7 @@ type Props = {
   busy: boolean;
   chatMessage: string;
   events: string[];
+  processSteps: ProcessStep[];
   featurePlan: any;
   questions: any[];
   reportMarkdown?: string;
@@ -24,12 +25,14 @@ type Props = {
   onChatMessageChange: (value: string) => void;
   onClarificationContinue: (answers: string) => void;
   onSendChat: () => void;
+  onSelectProcessStep?: (featureId: string) => void;
   onClose?: () => void;
 };
 
 const tabs: { id: TaskTab; labelKey: string }[] = [
   { id: "assistant", labelKey: "task.assistant" },
   { id: "review", labelKey: "task.review" },
+  { id: "process", labelKey: "task.process" },
   { id: "logs", labelKey: "task.logs" },
   { id: "plan", labelKey: "task.plan" },
   { id: "export", labelKey: "task.export" },
@@ -39,6 +42,7 @@ export default function TaskPane({
   busy,
   chatMessage,
   events,
+  processSteps,
   featurePlan,
   questions,
   reportMarkdown,
@@ -49,6 +53,7 @@ export default function TaskPane({
   onChatMessageChange,
   onClarificationContinue,
   onSendChat,
+  onSelectProcessStep,
   onClose,
 }: Props) {
   const t = useT();
@@ -145,6 +150,48 @@ export default function TaskPane({
                 <ReviewColumn title={t("task.review.manufacturability")} items={review.manufacturability || []} />
                 <ReviewColumn title={t("task.review.standards")} items={review.standards || []} />
               </div>
+            )}
+          </div>
+        )}
+
+        {rightTab === "process" && (
+          <div className="task-pane-section process-pane">
+            {processSteps.length ? (
+              <div className="process-timeline">
+                {Array.from(new Set(processSteps.map((step) => step.stage))).map((stage) => (
+                  <section className="process-stage-group" key={stage}>
+                    <h4>{t(`process.stage.${stage}`)}</h4>
+                    {processSteps
+                      .filter((step) => step.stage === stage)
+                      .map((step) => (
+                        <button
+                          type="button"
+                          className={`process-step ${step.status}`}
+                          key={step.id}
+                          disabled={!step.feature_id}
+                          onClick={() => step.feature_id && onSelectProcessStep?.(step.feature_id)}
+                        >
+                          <span className="process-step-row">
+                            <span className="process-status">{t(`process.status.${step.status}`)}</span>
+                            <span className="process-label">{step.label}</span>
+                            {step.operation && <span className="process-operation">{step.operation}</span>}
+                          </span>
+                          {step.summary && <span className="process-summary">{step.summary}</span>}
+                          {step.detail && <span className="process-detail">{step.detail}</span>}
+                          {step.error && <span className="process-error">{step.error}</span>}
+                          {step.changed && (
+                            <details className="process-changed">
+                              <summary>{t("process.changed")}</summary>
+                              <pre>{JSON.stringify(step.changed, null, 2)}</pre>
+                            </details>
+                          )}
+                        </button>
+                      ))}
+                  </section>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-note">{t("task.process.empty")}</p>
             )}
           </div>
         )}

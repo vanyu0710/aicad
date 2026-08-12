@@ -1371,3 +1371,132 @@
     transition: none;
   }
 }
+
+.process-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.process-stage-group {
+  border-left: 2px solid var(--ink-soft, #b9c4c0);
+  padding-left: 12px;
+}
+
+.process-stage-group h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted, #596763);
+  text-transform: uppercase;
+}
+
+.process-step {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline, #d8dedb);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  text-align: left;
+  cursor: default;
+}
+
+.process-step:not(:disabled) {
+  cursor: pointer;
+}
+
+.process-step:not(:disabled):hover {
+  border-color: var(--accent, #4f7c78);
+}
+
+.process-step-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.process-status {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #eef2f0;
+  color: var(--ink-muted, #596763);
+}
+
+.process-step.completed .process-status {
+  background: #e6f2ec;
+  color: #2f6b52;
+}
+
+.process-step.running .process-status {
+  background: #e9f0f7;
+  color: #2f5f8f;
+}
+
+.process-step.failed .process-status,
+.process-step.blocked .process-status {
+  background: #f8e8e5;
+  color: #a04438;
+}
+
+.process-step.skipped .process-status {
+  background: #f1ede3;
+  color: #806c3b;
+}
+
+.process-label {
+  font-weight: 600;
+  color: var(--ink, #2e383c);
+}
+
+.process-operation {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--accent, #4f7c78);
+  background: rgba(79, 124, 120, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.process-summary,
+.process-detail,
+.process-error {
+  width: 100%;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-muted, #596763);
+}
+
+.process-error {
+  color: #a04438;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+}
+
+.process-changed {
+  width: 100%;
+  font-size: 12px;
+}
+
+.process-changed summary {
+  cursor: pointer;
+  color: var(--accent, #4f7c78);
+}
+
+.process-changed pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 11px;
+  background: #f6f8f7;
+  border-radius: 4px;
+}

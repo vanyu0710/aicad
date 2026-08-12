@@ -31,7 +31,7 @@ OK_ARTIFACTS = ArtifactSet(
 )
 
 
-def _fake_worker_ok(plan, timeout: int = 45, language: str = "zh"):
+def _fake_worker_ok(plan, timeout: int = 45, language: str = "zh", on_step=None):
     return OK_ARTIFACTS, [f"worker ok for {plan.part_family}"], True
 
 
@@ -48,7 +48,7 @@ class MechCADApiTests(unittest.TestCase):
         # Never call the real vision/planner models during API tests.
         cls._vision_patch = patch.object(ai_module.ai_vision, "analyze_sketch", return_value=None)
         cls._planner_patch = patch.object(ai_module.ai_planner, "generate_feature_plan", return_value=None)
-        cls._chat_patch = patch.object(ai_module.ai_planner, "chat_edit_feature_plan", return_value=None)
+        cls._chat_patch = patch.object(ai_module.ai_planner, "chat_edit_operations", return_value=None)
         cls._vision_patch.start()
         cls._planner_patch.start()
         cls._chat_patch.start()
@@ -341,6 +341,10 @@ class MechCADApiTests(unittest.TestCase):
         self.assertIsNotNone(artifacts["stl"])
         self.assertIsNotNone(artifacts["obj"])
         self.assertIsNotNone(artifacts["execution_report"])
+        # Worker feature steps must survive ingestion into the snapshot timeline.
+        process = response.json()["current"]["process"]
+        cad_feature_steps = [step for step in process if step["stage"] == "cad" and step.get("feature_id")]
+        self.assertTrue(cad_feature_steps)
         # The exported artifact must be downloadable.
         run_id = artifacts["run_id"]
         download = self.client.get(f"/api/artifacts/{run_id}/step")
@@ -416,6 +420,60 @@ class MechCADApiTests(unittest.TestCase):
         stored = main_module.store.get_project(project_id).settings
         self.assertEqual(stored.vision_api_key, "sk-vision-keep")
         self.assertEqual(stored.planner_api_key, "sk-planner-keep")
+
+
+    def test_generate_records_full_process_timeline(self) -> None:
+        project_id = self._create_project()
+        with patch.object(main_module, "run_freecad_worker", side_effect=_fake_worker_ok):
+            response = self.client.post(
+                f"/api/projects/{project_id}/generate",
+                json={"description": "60mm x 30mm x 4mm plate"},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        process = response.json()["current"]["process"]
+        stages = [step["stage"] for step in process]
+        for expected in ("upload", "vision", "planning", "validation", "cad", "export"):
+            self.assertIn(expected, stages)
+        positions = [stages.index(expected) for expected in ("upload", "vision", "planning", "validation", "cad", "export")]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_chat_edit_records_feature_level_process_step(self) -> None:
+        project_id = self._create_project()
+        with patch.object(main_module, "run_freecad_worker", side_effect=_fake_worker_ok):
+            self.client.post(
+                f"/api/projects/{project_id}/generate",
+                json={"description": "60mm x 30mm x 4mm plate"},
+            )
+            response = self.client.post(f"/api/projects/{project_id}/chat", json={"message": "thickness=8mm"})
+        self.assertEqual(response.status_code, 200, response.text)
+        process = response.json()["current"]["process"]
+        chat_steps = [step for step in process if step["stage"] == "chat_edit"]
+        self.assertTrue(chat_steps)
+        completed = [step for step in chat_steps if step["status"] == "completed"]
+        self.assertTrue(completed)
+        changed = completed[0]["changed"]
+        self.assertIsNotNone(changed)
+        self.assertEqual(changed["after"]["dimensions"]["height"]["value"], 8.0)
+
+
+    def test_patch_feature_records_update_process_step(self) -> None:
+        project_id = self._create_project()
+        with patch.object(main_module, "run_freecad_worker", side_effect=_fake_worker_ok):
+            generated = self.client.post(
+                f"/api/projects/{project_id}/generate",
+                json={"description": "60mm x 30mm x 4mm plate"},
+            ).json()
+            feature_id = generated["current"]["feature_plan"]["base_feature"]["id"]
+            response = self.client.patch(
+                f"/api/projects/{project_id}/features/{feature_id}",
+                json={"dimensions": {"length": {"value": 25, "unit": "mm", "confirmed_by_user": True}}},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        process = response.json()["current"]["process"]
+        edits = [step for step in process if step["stage"] == "chat_edit" and step["operation"] == "update"]
+        self.assertTrue(edits)
+        self.assertEqual(edits[0]["status"], "completed")
+        self.assertEqual(edits[0]["changed"]["after"]["dimensions"]["length"]["value"], 25.0)
 
     def _create_project(self) -> str:
         response = self.client.post("/api/projects", json={"name": "api-test"})

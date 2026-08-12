@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import struct
 import sys
@@ -20,6 +21,39 @@ _LANG = "zh"
 
 def _msg(zh: str, en: str) -> str:
     return en if _LANG == "en" else zh
+
+
+def _emit_cad_step(
+    report: dict[str, Any],
+    out_dir: Path,
+    status: str,
+    label: str,
+    *,
+    feature_id: str | None = None,
+    operation: str | None = None,
+    summary: str = "",
+    detail: str = "",
+    error: str | None = None,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    step = {
+        "id": f"cad_{len(report['process_steps']) + 1}",
+        "stage": "cad",
+        "status": status,
+        "label": label,
+        "summary": summary or label,
+        "detail": detail,
+        "feature_id": feature_id,
+        "operation": operation,
+        "started_at": now,
+        "completed_at": now if status != "running" else None,
+        "error": error,
+        "warnings": [],
+    }
+    report["process_steps"].append(step)
+    step_path = out_dir / "process_steps.jsonl"
+    with step_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(step, ensure_ascii=False) + "\n")
 
 
 def main() -> int:
@@ -43,11 +77,12 @@ def main() -> int:
         "skipped_features": [],
         "warnings": [],
         "artifacts": {},
+        "process_steps": [],
     }
 
     try:
         plan = FeaturePlanV3.model_validate(plan_raw)
-        part = _build_part(plan, report)
+        part = _build_part(plan, report, out_dir)
         step_path = out_dir / "model.step"
         stl_path = out_dir / "model.stl"
         obj_path = out_dir / "model.obj"
@@ -82,14 +117,28 @@ def main() -> int:
     return 0 if report["ok"] else 1
 
 
-def _build_part(plan: FeaturePlanV3, report: dict[str, Any]) -> BuildPart:
+def _build_part(plan: FeaturePlanV3, report: dict[str, Any], out_dir: Path) -> BuildPart:
     with BuildPart() as part:
         base = plan.base_feature
         if base is None:
             raise RuntimeError("FeaturePlan has no base_feature")
-        _apply_base(base, report)
+        _emit_cad_step(report, out_dir, "running", _msg("主基体", "Main body"), feature_id=base.id, operation="base", summary=_msg(f"开始建模主基体 {base.id}", f"Start modeling main body {base.id}"))
+        try:
+            _apply_base(base, report)
+            _emit_cad_step(report, out_dir, "completed", _msg("主基体", "Main body"), feature_id=base.id, operation="base", summary=_msg(f"主基体 {base.id} 已完成", f"Main body {base.id} completed"))
+        except Exception as exc:
+            _emit_cad_step(report, out_dir, "failed", _msg("主基体", "Main body"), feature_id=base.id, operation="base", summary=_msg("主基体建模失败", "Main body modeling failed"), error=str(exc))
+            raise
         for feature in plan.features:
-            _apply_feature(feature, plan, report)
+            _emit_cad_step(report, out_dir, "running", feature.type, feature_id=feature.id, operation=feature.operation, summary=_msg(f"开始执行 {feature.id}", f"Start executing {feature.id}"))
+            modeled = _apply_feature(feature, plan, report)
+            if modeled:
+                _emit_cad_step(report, out_dir, "completed", feature.type, feature_id=feature.id, operation=feature.operation, summary=_msg(f"特征 {feature.id} 已建模", f"Feature {feature.id} modeled"))
+            elif feature.execution_status == "skipped":
+                reason = next((item.get("reason", "") for item in reversed(report["skipped_features"]) if item.get("feature") == feature.id), "")
+                _emit_cad_step(report, out_dir, "skipped", feature.type, feature_id=feature.id, operation=feature.operation, summary=_msg(f"特征 {feature.id} 已跳过", f"Feature {feature.id} skipped"), detail=reason, error=reason)
+            else:
+                _emit_cad_step(report, out_dir, "failed", feature.type, feature_id=feature.id, operation=feature.operation, summary=_msg(f"特征 {feature.id} 执行失败", f"Feature {feature.id} failed"))
     return part
 
 

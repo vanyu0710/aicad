@@ -6,9 +6,9 @@ import json
 from typing import Any
 
 from backend.mechcad_ai.client import ApiCallError, chat_completion, has_configured_model, parse_json_object
-from backend.mechcad_ai.normalize import normalize_ai_plan
+from backend.mechcad_ai.normalize import normalize_ai_plan, normalize_feature_edit_set
 from backend.mechcad_ai.prompts import get_prompt
-from backend.schemas import ClarificationQuestion, FeaturePlanV3
+from backend.schemas import ClarificationQuestion, FeatureEditSet, FeaturePlanV3
 
 
 def generate_feature_plan(
@@ -82,13 +82,17 @@ def generate_feature_plan(
     return plan
 
 
-def chat_edit_feature_plan(
+def chat_edit_operations(
     plan: FeaturePlanV3,
     message: str,
     settings,
     language: str = "zh",
-) -> FeaturePlanV3 | None:
-    """Ask the planner model for an incremental edit of the current plan."""
+) -> FeatureEditSet | None:
+    """Ask the planner model for feature-level edit operations.
+
+    The model must return a FeatureEditSet, never a full FeaturePlanV3. The
+    backend applies and validates the operations itself.
+    """
     if not has_configured_model(settings, "planner"):
         return None
 
@@ -100,7 +104,7 @@ def chat_edit_feature_plan(
             "mode": getattr(settings, "operation_mode", "strict"),
             "smart_fill_policy": getattr(settings, "smart_fill_policy", "limited_fill"),
         }
-        instruction = "\n\nOutput the edited complete FeaturePlanV3 JSON. Do not output diff, Markdown, or explanatory prose."
+        instruction = "\n\nOutput FeatureEditSet JSON: operations (add/update/delete/change_type) and optional questions. Do not output a full FeaturePlanV3, Markdown, or explanatory prose."
     else:
         context = {
             "当前 FeaturePlanV3": plan.model_dump(),
@@ -108,7 +112,7 @@ def chat_edit_feature_plan(
             "模式": getattr(settings, "operation_mode", "strict"),
             "智能补全策略": getattr(settings, "smart_fill_policy", "limited_fill"),
         }
-        instruction = "\n\n请输出修改后的完整 FeaturePlanV3 JSON。不要输出 diff、Markdown 或解释性散文。"
+        instruction = "\n\n请输出 FeatureEditSet JSON：operations（add/update/delete/change_type）和可选 questions。不要输出完整 FeaturePlanV3、Markdown 或解释性散文。"
     messages = [
         {"role": "system", "content": prompt},
         {
@@ -131,12 +135,12 @@ def chat_edit_feature_plan(
 
     try:
         parsed = parse_json_object(content)
-        updated = FeaturePlanV3.model_validate(normalize_ai_plan(parsed, language))
+        edit_set = FeatureEditSet.model_validate(normalize_feature_edit_set(parsed, language))
     except Exception:
         return None
-    if updated.base_feature is None:
+    if not edit_set.operations and not edit_set.questions:
         return None
-    return updated
+    return edit_set
 
 
 def _stub_seed_from_description(description: str, language: str = "zh") -> dict[str, Any]:

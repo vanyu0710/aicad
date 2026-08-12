@@ -19,6 +19,25 @@ export type ModelConfig = {
 
 export type ModelRole = "vision" | "planner";
 
+export type ProcessStep = {
+  id: string;
+  stage: "upload" | "vision" | "planning" | "validation" | "chat_edit" | "cad" | "export";
+  status: "pending" | "running" | "completed" | "failed" | "skipped" | "blocked";
+  label: string;
+  summary: string;
+  detail: string;
+  feature_id?: string | null;
+  operation?: string | null;
+  changed?: {
+    before?: any;
+    after?: any;
+  } | null;
+  started_at: string;
+  completed_at?: string | null;
+  error?: string | null;
+  warnings: string[];
+};
+
 export type ModelTestResult = {
   ok: boolean;
   role: ModelRole;
@@ -90,6 +109,7 @@ export type ProjectState = {
     }[];
     report_markdown: string;
     logs: string[];
+    process: ProcessStep[];
   };
   history: unknown[];
   redo_stack: unknown[];

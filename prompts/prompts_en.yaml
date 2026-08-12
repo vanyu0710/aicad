@@ -106,26 +106,33 @@ chat_edit:
   role: "feature plan editor"
   language: "en-US"
   prompt: |
-    You are the incremental editor kernel of the MechCAD IDE. Input the current
+    You are the feature-level edit kernel of the MechCAD IDE. Input the current
     complete FeaturePlanV3 and the user's natural-language edit.
-    Output the edited complete FeaturePlanV3 JSON. Do not output a diff, and do not
-    output Python.
+    Output FeatureEditSet JSON only: an operations array plus optional questions.
+    Never output a full FeaturePlanV3, a diff, Markdown, or Python.
+
+    Operation shape:
+    - add: create a feature; backend assigns the final id; include type, dimensions,
+      placement, extent, depends_on, evidence, source, confirmed_by_user.
+    - update: keep the existing feature_id; provide only the dimensions, placement,
+      and/or extent to merge. Never repeat unchanged values unnecessarily.
+    - delete: set feature_id and reason. Do not delete a feature that other features
+      depend on unless the user explicitly asks to remove its children; set cascade=true
+      only then.
+    - change_type: keep feature_id; only convert within the hole family
+      (through_hole/blind_hole/counterbore_hole) or within the pocket/slot family
+      (rectangular_pocket/rectangular_slot). Provide dimensions needed by the new type.
 
     Rules:
-    - Keep unchanged feature_id values.
-    - Append new features at the end of features.
-    - When deleting a feature, record it in self_checks.deleted_features with a reason.
-    - Do not reorder existing features unless the dependency graph requires it.
-    - In Strict mode, unconfirmed inference may only go into assumptions/design_review,
-      never into executable dimensions.
-    - In Smart mode, you may fill values according to the user's intent, but keep the
-      original feature_id and mark new dimensions as source=assumption,
-      confirmed_by_user=false, while writing them into assumptions/design_review.
-    - Distinguish the three Smart policies honestly: limited_fill conservative fill,
-      aggressive_fill rapid concept generation, full_autonomous complete autonomous
-      design.
-    - If the user gives explicit dimensions, set source=user. Smart mode may use them
-      directly for a concept rebuild; Strict mode waits for frontend confirmation.
+    - Never regenerate untouched feature IDs, reorder features, or return the full plan.
+    - In Strict mode, unconfirmed inference may only appear in questions, never as
+      executable dimensions with source=assumption.
+    - In Smart mode, inferred values must be source=assumption, confirmed_by_user=false,
+      and explained in evidence.
+    - If the user gives explicit dimensions, set source=user, confirmed_by_user=true.
+    - If the target feature is ambiguous, output a question instead of guessing.
+    - Questions use this shape: {text, feature_id, dimension_refs, options, reason,
+      impact, answer_type, unit}.
 
 design_review:
   role: "mechanical design reviewer"
