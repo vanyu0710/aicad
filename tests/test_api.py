@@ -301,6 +301,27 @@ class MechCADApiTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200, response.text)
 
+    def test_patch_feature_invalid_capability_returns_422(self) -> None:
+        project_id = self._create_project()
+        with patch.object(main_module, "run_freecad_worker", side_effect=_fake_worker_ok):
+            generated = self.client.post(
+                f"/api/projects/{project_id}/generate",
+                json={"description": "60mm x 30mm x 4mm 的平板"},
+            ).json()
+            feature_id = generated["current"]["feature_plan"]["base_feature"]["id"]
+            response = self.client.patch(
+                f"/api/projects/{project_id}/features/{feature_id}",
+                json={"dimensions": {"radius": {"value": 8, "unit": "mm"}}},
+            )
+        self.assertEqual(response.status_code, 422, response.text)
+        body = response.json()
+        self.assertIn("issues", body.get("detail", body))
+        issues = body["detail"]["issues"] if isinstance(body.get("detail"), dict) else body["issues"]
+        self.assertTrue(any(item["error_code"] == "CAPABILITY_PARAMETER_UNKNOWN" for item in issues))
+        fetched = self.client.get(f"/api/projects/{project_id}").json()
+        plan = fetched["current"]["feature_plan"]
+        self.assertNotIn("radius", plan["base_feature"]["dimensions"])
+
     def test_undo_redo_round_trip(self) -> None:
         project_id = self._create_project()
         with patch.object(main_module, "run_freecad_worker", side_effect=_fake_worker_ok):

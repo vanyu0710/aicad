@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 import re
 from typing import Any
 from uuid import uuid4
@@ -10,6 +11,12 @@ from PIL import Image
 from backend.mechcad_ai import planner as ai_planner
 from backend.mechcad_ai import vision as ai_vision
 from backend.process import ProcessRecorder
+from backend.capabilities import (
+    CapabilityValidationError,
+    validate_feature_edit_set,
+    validate_feature_operation,
+    validate_feature_patch,
+)
 from backend.validation import order_feature_plan
 from backend.schemas import (
     ClarificationQuestion,
@@ -254,6 +261,7 @@ def apply_feature_operations(
     mode = getattr(settings, "operation_mode", "strict") if settings is not None else "strict"
     questions = [q for q in edit_set.questions]
     recorder = ProcessRecorder("local", language)
+    validate_feature_edit_set(edit_set, plan)
 
     for op in edit_set.operations:
         step = ProcessStep(
@@ -264,6 +272,16 @@ def apply_feature_operations(
             feature_id=op.feature_id,
             operation=op.op,
         )
+        capability_issues = validate_feature_operation(op, plan)
+        if capability_issues:
+            reasons = "; ".join(f"{issue.error_code}: {issue.reason}" for issue in capability_issues)
+            step.detail = json.dumps([issue.model_dump() for issue in capability_issues], ensure_ascii=False)
+            recorder.blocked(
+                step,
+                reason=_loc(language, "能力校验未通过：", "Capability check failed: ") + reasons,
+            )
+            recorder.append(step)
+            continue
         if op.op == "add":
             _apply_add_operation(updated, op, mode, language, recorder, step, questions)
         elif op.op == "update":
@@ -769,6 +787,12 @@ def _dimension_map(values: dict[str, float], language: str) -> dict[str, Dimensi
 
 def patch_feature(plan: FeaturePlanV3, feature_id: str, patch: dict[str, Any]) -> FeaturePlanV3:
     updated = deepcopy(plan)
+    target = _find_feature(updated, feature_id)
+    if target is None:
+        return updated
+    capability_issues = validate_feature_patch(target.type, patch.get("dimensions"), patch.get("placement"))
+    if capability_issues:
+        raise CapabilityValidationError(capability_issues)
     for feature in _all_features(updated):
         if feature.id != feature_id:
             continue

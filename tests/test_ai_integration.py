@@ -19,6 +19,7 @@ from backend.mechcad_ai.client import (
 )
 from backend.mechcad_ai.normalize import normalize_ai_plan
 from backend.mechcad_ai.prompts import get_prompt, load_prompts
+from backend import ai as ai_module
 from backend.ai import build_initial_feature_plan
 from backend.schemas import FeaturePlanV3, GenerateRequest, ModelConfig
 
@@ -250,6 +251,17 @@ class NormalizeTests(unittest.TestCase):
 
 
 class StubQualityTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        # Keep stub-quality tests deterministic even if another test module
+        # has already loaded .env and configured a real planner.
+        cls._planner_patch = patch.object(ai_module.ai_planner, "generate_feature_plan", return_value=None)
+        cls._planner_patch.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._planner_patch.stop()
+
     def test_tube_top_groove_becomes_candidate_with_targeted_question(self):
         plan, questions = build_initial_feature_plan(
             "tube outer diameter 50 inner diameter 38 length 300 top groove slot width 10",

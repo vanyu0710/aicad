@@ -20,6 +20,7 @@ from backend.ai import (
     questions_from_plan,
 )
 from backend.cad import run_freecad_worker
+from backend.capabilities import CapabilityValidationError
 from backend.events import EventBus
 from backend.process import ProcessRecorder
 from backend.schemas import (
@@ -46,7 +47,7 @@ from backend.static_assets import mount_frontend
 
 load_dotenv()
 
-app = FastAPI(title="MechCAD IDE API", version="0.4.0")
+app = FastAPI(title="MechCAD IDE API", version="0.5.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8001", "http://127.0.0.1:8001"],
@@ -308,7 +309,24 @@ async def patch_project_feature(project_id: str, feature_id: str, request: Featu
     language = request.language
     recorder = ProcessRecorder(project_id, language, publish=_publish_process_step)
     before = _feature_snapshot_from_plan(project.current.feature_plan, feature_id)
-    plan = patch_feature(project.current.feature_plan, feature_id, request.model_dump(exclude_none=True))
+    try:
+        plan = patch_feature(project.current.feature_plan, feature_id, request.model_dump(exclude_none=True))
+    except CapabilityValidationError as exc:
+        issues = [issue.model_dump() for issue in exc.issues]
+        await _emit(
+            project_id,
+            "error",
+            "chat_edit",
+            _loc(language, "属性修改未通过能力校验", "Property edit failed capability validation"),
+            {"capability_issues": issues},
+        )
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": _loc(language, "属性修改未通过能力校验", "Property edit failed capability validation"),
+                "issues": issues,
+            },
+        )
     after = _feature_snapshot_from_plan(plan, feature_id)
     edit_step = recorder.started(
         "chat_edit",

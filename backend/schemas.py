@@ -224,6 +224,45 @@ class FeatureEditSet(BaseModel):
     message: str = ""
 
 
+ParameterValueType = Literal["float", "int", "string", "placement", "extent", "boolean"]
+
+
+class ParameterSpec(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    value_type: ParameterValueType = "float"
+    unit: str | None = None
+    editable: bool = True
+    minimum: float | None = None
+    maximum: float | None = None
+    required: bool = False
+    aliases: list[str] = Field(default_factory=list)
+
+
+class FeatureCapability(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    feature_type: str
+    editable_parameters: list[ParameterSpec] = Field(default_factory=list)
+    allowed_operations: list[FeatureEditOp] = Field(default_factory=list)
+    reference_types: list[str] = Field(default_factory=list)
+    convert_to_types: list[str] = Field(default_factory=list)
+    implementation_status: str = "supported"
+
+
+class CapabilityIssue(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    error_code: str
+    feature_type: str | None = None
+    feature_id: str | None = None
+    operation: str | None = None
+    parameter: str | None = None
+    reason: str
+    recoverable: bool = False
+
+
 class ArtifactSet(BaseModel):
     run_id: str | None = None
     step: str | None = None

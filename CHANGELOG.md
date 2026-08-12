@@ -1,3 +1,15 @@
+## v0.5.0 Phase 1 - Capability & Generic Edit Runtime Foundation
+
+- Added static capability metadata (`ParameterSpec`, `FeatureCapability`, `CapabilityIssue`) to `backend/schemas.py`.
+- Added `CapabilityRegistry` and a module-level `CAPABILITIES` singleton with 14 real feature types: 3 bases, 3 holes, 2 slots/pockets, 1 annular groove, 3 additive features, and 2 patterns.
+- Chat edits, LLM edits, and property-panel patches now share one structural validation gate before the existing FeaturePlan checks.
+- Invalid operations fail individually as blocked ProcessSteps; valid operations in the same edit set still execute.
+- Property-panel patches that violate capability rules return HTTP 422 with structured `CapabilityIssue` data.
+- Unknown features, disallowed operations, unknown/read-only parameters, negative values, and wrong value types use fixed error codes.
+- `fillet`, `chamfer`, `thread`, `gear`, and `sheet_metal` are intentionally unregistered and are reported as unsupported instead of being silently accepted.
+- Added `docs/capability_runtime.md` describing the registry, error codes, edit flow, responsibility boundary, and how to register new capabilities.
+- Stabilized stub-quality AI tests so they stay deterministic when `.env` has real model credentials configured.
+
 ## v0.4.3 - Complex Part Validation and UTF-8 Regression Guard
 
 - Added realistic complex part validation through the controlled Build123d Worker:
