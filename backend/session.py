@@ -69,6 +69,11 @@ class SessionStore:
         project.updated_at = now_iso()
         self._save()
         return project
+    def save_project(self, project_id: str) -> ProjectState:
+        project = self.get_project(project_id)
+        self._save()
+        return project
+
     def update_config(self, project_id: str, model_config: ModelConfig) -> ProjectState:
         project = self.get_project(project_id)
         project.settings = model_config

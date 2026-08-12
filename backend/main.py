@@ -40,6 +40,7 @@ from backend.schemas import (
 from backend.mechcad_ai.client import resolve_role_config, test_model_connection
 from backend.session import SessionStore
 from backend.storage import artifact_path
+from backend.validation import validate_feature_plan
 from backend.static_assets import mount_frontend
 
 
@@ -380,13 +381,15 @@ async def patch_project_feature(project_id: str, feature_id: str, request: Featu
 @app.post("/api/projects/{project_id}/undo")
 def undo(project_id: str):
     _project_or_404(project_id)
-    return _public_project(store.undo(project_id))
+    project = store.undo(project_id)
+    return _public_project(_refresh_restored_validation(project))
 
 
 @app.post("/api/projects/{project_id}/redo")
 def redo(project_id: str):
     _project_or_404(project_id)
-    return _public_project(store.redo(project_id))
+    project = store.redo(project_id)
+    return _public_project(_refresh_restored_validation(project))
 
 
 @app.get("/api/artifacts/{run_id}/{kind}")
@@ -421,55 +424,35 @@ def _project_or_404(project_id: str):
         raise HTTPException(status_code=404, detail="Project not found") from exc
 
 
-def _base_feature_ready(plan) -> tuple[bool, list[str]]:
-    base = plan.base_feature
-    if base is None:
-        return False, ["base_feature"]
-    required = {
-        "box_base": ("length", "width", "height"),
-        "cylinder_base": ("outer_diameter", "length"),
-        "hollow_cylinder": ("outer_diameter", "inner_diameter", "length"),
-    }.get(base.type)
-    if required is None:
-        return False, [f"unsupported base type: {base.type}"]
-    missing = [name for name in required if base.dimensions.get(name) is None or base.dimensions[name].value is None]
-    return not missing, missing
+def _refresh_restored_validation(project):
+    """Re-run deterministic checks on a restored snapshot without rebuilding CAD."""
+    if project.current.feature_plan is not None:
+        mode = project.settings.operation_mode or "strict"
+        validate_feature_plan(project.current.feature_plan, mode, "zh")
+        store.save_project(project.project_id)
+    return project
 
 
 def _execution_gate(plan, settings, questions, language: str = "zh") -> tuple[bool, list[str]]:
-    """Centralize policy and geometry checks before starting a CAD subprocess."""
+    """Centralize deterministic validation and policy before starting CAD."""
+    mode = settings.operation_mode or "strict"
+    result = validate_feature_plan(plan, mode, language)
     logs: list[str] = []
-    base_ready, missing_base = _base_feature_ready(plan)
-    if not base_ready:
-        logs.append(_loc(language, f"CAD Worker 未启动：主基体不完整，缺少 {', '.join(missing_base)}。", f"CAD Worker did not start: main body is incomplete; missing {', '.join(missing_base)}."))
-
-    if plan.design_review.blocking:
-        logs.extend(_loc(language, f"阻塞问题：{item}", f"Blocking issue: {item}") for item in plan.design_review.blocking)
-
+    if result["blocking"]:
+        logs.extend(_loc(language, f"自检阻塞：{item}", f"Validation blocked: {item}") for item in result["blocking"])
     unresolved = [q for q in questions if q.required and not q.answer]
-    if settings.operation_mode == "strict" and unresolved:
+    if mode == "strict" and unresolved:
         logs.append(_loc(language, f"严格模式：存在 {len(unresolved)} 个必答问题，未确认数据不会写入模型。", f"Strict mode: {len(unresolved)} required questions pending; unconfirmed data will not be written to the model."))
-
-    assumption_dimensions = [
-        f"{feature.id}.{name}"
-        for feature in ([plan.base_feature] if plan.base_feature else []) + list(plan.features)
-        for name, dimension in feature.dimensions.items()
-        if dimension.source == "assumption" and not dimension.confirmed_by_user
-    ]
-    if settings.operation_mode == "strict" and assumption_dimensions:
-        logs.append(_loc(language, "严格模式：检测到未确认推断尺寸：" + ", ".join(assumption_dimensions), "Strict mode: detected unconfirmed inferred dimensions: " + ", ".join(assumption_dimensions)))
-
-    if logs and settings.operation_mode == "strict":
+    if mode == "strict":
+        if logs:
+            return False, logs
+        return True, logs or [_loc(language, "FeaturePlan 已通过 CAD 执行前检查。", "FeaturePlan passed the pre-CAD execution checks.")]
+    if not result["base_ready"]:
+        logs.append(_loc(language, "智能策略未能补全主基体，仍无法执行 CAD。", "The smart policy could not complete the main body; CAD was not executed."))
         return False, logs
-    if not base_ready:
-        if settings.operation_mode == "smart" and settings.smart_fill_policy in {"limited_fill", "aggressive_fill", "full_autonomous"}:
-            logs.append(_loc(language, "智能策略未能补全主基体，仍未执行 CAD。", "The smart policy could not complete the main body; CAD was not executed."))
-        return False, logs
-    if plan.design_review.blocking:
+    if result["blocking"]:
         return False, logs
     return True, logs or [_loc(language, "FeaturePlan 已通过 CAD 执行前检查。", "FeaturePlan passed the pre-CAD execution checks.")]
-
-
 def _public_project(project):
     """Never send API credentials back to the browser or logs."""
     safe = deepcopy(project)

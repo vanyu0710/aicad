@@ -1,3 +1,22 @@
+## v0.4.2 - Reliability, Validation, and Feature Tree
+
+- Restored `gpt-5.5` planner, cleaned `.env` to `MECHCAD_*`, and added per-role timeout/retry settings.
+- API retries recover from transient ReadTimeout/connection/5xx failures and report the final attempt count in the process timeline.
+- CAD Worker writes `feature_statuses` back into the FeaturePlan; API and feature tree no longer show stale `unresolved` statuses.
+- Flange center holes now use the independent `hole_diameter` dimension instead of misreading the outer diameter.
+- Added deterministic engineering self-checks (`validate_feature_plan`) and staged dependency ordering (base -> remove -> add -> pattern -> modify).
+- Strict mode blocks missing dimensions, unconfirmed assumptions, and blocking checks; smart mode keeps auditable assumptions while still blocking geometry contradictions and invalid dependencies.
+- Missing X/Y placement is rejected in strict mode and skipped by the CAD Worker instead of silently defaulting to the origin.
+- CAD Worker reorders features before execution; chat, property edits, generation, and undo/redo all refresh validation consistently.
+- Frontend feature tree is now a read-only grouped view with status badges, missing/assumption markers, dependency indentation, and summary counts.
+- Validation messages are bilingual (Chinese/English) and exported into `self_checks` and design review.
+
+## v0.4.1 - Stability and Config Fixes
+
+- Switched the planner back to `gpt-5.5`; `.env` now exposes only authoritative `MECHCAD_*` variables.
+- Added per-role API timeouts and retries with real error propagation into process steps before local fallback.
+- Fixed CAD execution status write-back for cylinder/hollow-cylinder bases.
+
 # MechCAD IDE Changelog
 
 ## v0.4.0 - Process-First Timeline + Feature-Level Editing

@@ -54,6 +54,7 @@ def run_freecad_worker(
             "process_steps": _read_process_steps(run_dir),
         }
         (run_dir / "execution_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        _apply_feature_statuses(plan, report)
         _remove_failed_model_artifacts(run_dir)
         return _artifacts(run_id, run_dir), logs + [report["error"]], False
 
@@ -70,6 +71,7 @@ def run_freecad_worker(
     if completed.stderr:
         logs.append(completed.stderr.strip())
     report = _read_execution_report(run_dir, language)
+    _apply_feature_statuses(plan, report)
     ok = completed.returncode == 0 and bool(report.get("ok"))
     if report:
         if report.get("error"):
@@ -168,6 +170,18 @@ def _read_execution_report(run_dir: Path, language: str = "zh") -> dict:
         return value
     msg = "CAD execution report is not a JSON object" if language == "en" else "CAD 执行报告不是 JSON 对象"
     return {"ok": False, "error": msg}
+
+
+def _apply_feature_statuses(plan: FeaturePlanV3, report: dict) -> None:
+    """Write worker execution statuses back into the in-memory FeaturePlan."""
+    statuses = report.get("feature_statuses") or {}
+    ok = bool(report.get("ok"))
+    for feature in ([plan.base_feature] if plan.base_feature else []) + list(plan.features):
+        status = statuses.get(feature.id)
+        if status:
+            feature.execution_status = status
+        elif not ok and feature.execution_status == "unresolved":
+            feature.execution_status = "failed"
 
 
 def _remove_failed_model_artifacts(run_dir: Path) -> None:

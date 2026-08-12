@@ -7,6 +7,8 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 
+from requests.exceptions import ReadTimeout
+
 from backend.mechcad_ai.client import (
     ApiCallError,
     chat_completion,
@@ -70,6 +72,23 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+class _FakeResponse:
+    def __init__(self, payload, status=200, content_type="application/json"):
+        self.payload = payload
+        self.status_code = status
+        self.headers = {"content-type": content_type}
+        self.text = payload if isinstance(payload, str) else json.dumps(payload)
+
+    @property
+    def ok(self):
+        return 200 <= self.status_code < 400
+
+    def json(self):
+        if isinstance(self.payload, str):
+            return json.loads(self.payload)
+        return self.payload
+
+
 class _MockServer:
     def __init__(self):
         self.server = HTTPServer(("127.0.0.1", 0), _Handler)
@@ -130,6 +149,35 @@ class AIClientTests(unittest.TestCase):
         with patch.dict(os.environ, {key: "" for key in env_keys}):
             self.assertFalse(has_configured_model(ModelConfig(), "vision"))
             self.assertFalse(has_configured_model(ModelConfig(), "planner"))
+
+    def test_retries_read_timeout_then_succeeds(self):
+        settings = ModelConfig(
+            vision_api_key="k",
+            vision_base_url="https://example.test/v1",
+            vision_model="m",
+            vision_protocol="openai",
+        )
+        with patch("backend.mechcad_ai.client.requests.post", side_effect=[
+            ReadTimeout("slow"),
+            _FakeResponse({"choices": [{"message": {"content": '{"ok": true}'}}]}),
+        ]):
+            content = chat_completion(settings, "vision", [{"role": "user", "content": "hi"}], max_tokens=8, response_json=True)
+        self.assertEqual(content, '{"ok": true}')
+
+    def test_retries_exhausted_raise_with_attempt_count(self):
+        settings = ModelConfig(
+            vision_api_key="k",
+            vision_base_url="https://example.test/v1",
+            vision_model="m",
+            vision_protocol="openai",
+        )
+        with patch("backend.mechcad_ai.client.requests.post", side_effect=[
+            ReadTimeout("slow"),
+            ReadTimeout("slow again"),
+        ]):
+            with self.assertRaises(ApiCallError) as raised:
+                chat_completion(settings, "vision", [{"role": "user", "content": "hi"}], max_tokens=8, max_retries=1)
+        self.assertIn("after 2 attempts", str(raised.exception))
 
     def test_v1_retry_url_resolution(self):
         settings = ModelConfig(
@@ -215,6 +263,15 @@ class StubQualityTests(unittest.TestCase):
         self.assertEqual(plan.features[0].dimensions["axial_width"].value, 10.0)
         self.assertEqual(plan.features[0].dimensions["z_start"].value, 290.0)
         self.assertTrue(any(question.feature_id == "top_groove" for question in questions))
+
+    def test_flange_center_hole_uses_hole_diameter_not_outer_diameter(self):
+        plan, questions = build_initial_feature_plan(
+            "Flange outer diameter 100mm thickness 12mm with a 20mm center through hole",
+            GenerateRequest(description="Flange outer diameter 100mm thickness 12mm with a 20mm center through hole"),
+        )
+        self.assertEqual(plan.base_feature.dimensions["outer_diameter"].value, 100.0)
+        center = next(feature for feature in plan.features if feature.id == "center_hole")
+        self.assertEqual(center.dimensions["diameter"].value, 20.0)
 
     def test_smart_mode_autonomously_completes_a_tube_concept(self):
         settings = ModelConfig(operation_mode="smart", smart_fill_policy="limited_fill")

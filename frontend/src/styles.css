@@ -1495,6 +1495,158 @@ a.disabled {
   padding-left: 8px;
   border-left: 1px solid rgba(47, 58, 63, 0.16);
 }
+.feature-tree-group {
+  display: grid;
+  gap: 6px;
+}
+
+.feature-tree-group-header {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(238, 244, 241, 0.48);
+  text-align: left;
+  cursor: pointer;
+}
+
+.feature-tree-group-toggle {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.feature-tree-group-name {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.feature-tree-group-count {
+  min-width: 22px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  text-align: center;
+  background: rgba(47, 58, 63, 0.07);
+}
+
+.feature-tree-group-body {
+  display: grid;
+  gap: 6px;
+  padding-left: 8px;
+  border-left: 1px solid rgba(47, 58, 63, 0.14);
+}
+
+.feature-node {
+  grid-template-columns: 42px minmax(0, 1fr) auto auto;
+  min-height: 46px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.feature-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.feature-node-badges {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.badge-warn {
+  color: #8a4b0f;
+  background: rgba(240, 186, 89, 0.24);
+}
+
+.badge-assumption {
+  color: var(--seal);
+  background: rgba(163, 52, 40, 0.12);
+}
+
+.feature-state.modeled {
+  color: #276749;
+}
+
+.feature-state.skipped {
+  color: #8a6d1d;
+}
+
+.feature-state.failed {
+  color: #b23a2e;
+}
+
+.feature-state.unresolved {
+  color: var(--ink-soft);
+}
+
+.feature-tree-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.summary-chip {
+  min-width: 0;
+  padding: 6px 5px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink-soft);
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: rgba(255, 255, 252, 0.82);
+}
+
+.summary-modeled {
+  color: #276749;
+}
+
+.summary-skipped {
+  color: #8a6d1d;
+}
+
+.summary-failed {
+  color: #b23a2e;
+}
+
+.summary-unresolved,
+.summary-assumptions {
+  color: var(--seal);
+}
+
+@media (max-width: 980px) {
+  .feature-tree-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+
 
 .feature-node {
   grid-template-columns: 48px minmax(0, 1fr) auto auto;
@@ -1601,4 +1753,71 @@ a.disabled {
   .project-meta {
     grid-template-columns: 1fr;
   }
+}
+
+/* Feature tree overrides must stay after older flat-tree rules. */
+.feature-node {
+  grid-template-columns: 42px minmax(0, 1fr) auto auto;
+  min-height: 46px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.feature-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+
+.self-check-box {
+  border-color: rgba(88, 123, 114, 0.32);
+  background: rgba(238, 244, 241, 0.34);
+}
+
+.self-check-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.self-check-item {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.self-check-status {
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.self-check-item.pass .self-check-status {
+  color: #276749;
+  background: rgba(39, 103, 73, 0.12);
+}
+
+.self-check-item.warning .self-check-status {
+  color: #8a6d1d;
+  background: rgba(240, 186, 89, 0.22);
+}
+
+.self-check-item.block .self-check-status {
+  color: #b23a2e;
+  background: rgba(178, 58, 46, 0.12);
+}
+
+.self-check-order {
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-all;
 }

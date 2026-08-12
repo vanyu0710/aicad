@@ -15,8 +15,12 @@ if str(ROOT) not in sys.path:
 from build123d import Align, BuildPart, Cylinder, Box, Locations, Mode, PolarLocations, export_step, export_stl
 
 from backend.schemas import FeaturePlanV3
+from backend.validation import order_feature_plan
 
 _LANG = "zh"
+
+_NEEDS_XY_TYPES = {"through_hole", "blind_hole", "counterbore_hole", "rectangular_slot", "rectangular_pocket", "boss_cylinder", "rectangular_pad", "rib_box", "linear_pattern", "circular_pattern"}
+_CENTERED_PLACEMENTS = {"main_axis", "origin", "center", "flange_center", "model_center", "bottom_center", "bottom_end_center", "base_center", "top_center"}
 
 
 def _msg(zh: str, en: str) -> str:
@@ -80,6 +84,7 @@ def main() -> int:
         "process_steps": [],
     }
 
+    plan = None
     try:
         plan = FeaturePlanV3.model_validate(plan_raw)
         part = _build_part(plan, report, out_dir)
@@ -101,6 +106,12 @@ def main() -> int:
         report["error"] = str(exc)
         report["warnings"].append(str(exc))
     finally:
+        if plan is not None:
+            statuses = {}
+            for feature in [plan.base_feature, *plan.features]:
+                if feature is not None:
+                    statuses[feature.id] = feature.execution_status
+            report["feature_statuses"] = statuses
         (out_dir / "execution_report.json").write_text(
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -129,6 +140,7 @@ def _build_part(plan: FeaturePlanV3, report: dict[str, Any], out_dir: Path) -> B
         except Exception as exc:
             _emit_cad_step(report, out_dir, "failed", _msg("主基体", "Main body"), feature_id=base.id, operation="base", summary=_msg("主基体建模失败", "Main body modeling failed"), error=str(exc))
             raise
+        order_feature_plan(plan)
         for feature in plan.features:
             _emit_cad_step(report, out_dir, "running", feature.type, feature_id=feature.id, operation=feature.operation, summary=_msg(f"开始执行 {feature.id}", f"Start executing {feature.id}"))
             modeled = _apply_feature(feature, plan, report)
@@ -163,6 +175,7 @@ def _apply_base(feature, report: dict[str, Any]) -> None:
         if not _positive(diameter, length):
             raise RuntimeError("cylinder base missing outer_diameter/length")
         Cylinder(radius=diameter / 2.0, height=length, align=(Align.CENTER, Align.CENTER, Align.MIN))
+        feature.execution_status = "modeled"
         if kind == "hollow_cylinder":
             inner = _value(dims, "inner_diameter")
             if _positive(inner) and inner < diameter:
@@ -185,6 +198,10 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
     if axis != "Z":
         _skip(report, feature, _msg("当前受控执行器仅支持 Z 轴特征", "The controlled executor currently supports Z-axis features only"))
         return False
+    if kind in _NEEDS_XY_TYPES and not _placement_ready(feature):
+        _skip(report, feature, _msg("缺少特征定位，X/Y 未确认", "Missing feature placement; X/Y position is not confirmed"))
+        return False
+
 
     if kind in {"through_hole", "blind_hole", "counterbore_hole"}:
         diameter = _value(dims, "diameter", "hole_diameter")
@@ -306,6 +323,15 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
 def _skip(report: dict[str, Any], feature, reason: str) -> None:
     feature.execution_status = "skipped"
     report["skipped_features"].append({"feature": feature.id, "reason": reason})
+
+
+def _placement_ready(feature) -> bool:
+    placement = feature.placement
+    if placement.reference == "needs_position":
+        return False
+    if placement.x is not None and placement.y is not None:
+        return True
+    return placement.reference in _CENTERED_PLACEMENTS
 
 
 def _placement(feature) -> tuple[float, float, float]:

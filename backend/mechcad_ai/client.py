@@ -12,11 +12,13 @@ end with it, because several Chinese providers expose both forms.
 
 import json
 import os
+import time
 from typing import Any
 
 import requests
 
 DEFAULT_TIMEOUT = 90
+DEFAULT_MAX_RETRIES = 1
 
 # Role-specific env vars, all optional. They mirror backend.schemas.ModelConfig.
 ENV_ROLE_MAP = {
@@ -25,18 +27,41 @@ ENV_ROLE_MAP = {
         "base_url": "MECHCAD_VISION_BASE_URL",
         "model": "MECHCAD_VISION_MODEL",
         "protocol": "MECHCAD_VISION_PROTOCOL",
+        "timeout": "MECHCAD_VISION_TIMEOUT",
+        "max_retries": "MECHCAD_VISION_MAX_RETRIES",
     },
     "planner": {
         "api_key": "MECHCAD_PLANNER_API_KEY",
         "base_url": "MECHCAD_PLANNER_BASE_URL",
         "model": "MECHCAD_PLANNER_MODEL",
         "protocol": "MECHCAD_PLANNER_PROTOCOL",
+        "timeout": "MECHCAD_PLANNER_TIMEOUT",
+        "max_retries": "MECHCAD_PLANNER_MAX_RETRIES",
     },
 }
 
 
 class ApiCallError(RuntimeError):
     """Raised when the external model call fails at the HTTP/parse level."""
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _role_timeout(role: str) -> int:
+    return _env_int(ENV_ROLE_MAP[role]["timeout"], DEFAULT_TIMEOUT)
+
+
+def _role_max_retries(role: str) -> int:
+    return _env_int(ENV_ROLE_MAP[role]["max_retries"], DEFAULT_MAX_RETRIES)
 
 
 def resolve_role_config(settings, role: str) -> dict[str, str]:
@@ -171,7 +196,8 @@ def chat_completion(
     *,
     max_tokens: int = 4096,
     temperature: float = 0.1,
-    timeout: int = DEFAULT_TIMEOUT,
+    timeout: int | None = None,
+    max_retries: int | None = None,
     response_json: bool = False,
     image_base64: str | None = None,
     image_media_type: str = "image/png",
@@ -184,9 +210,22 @@ def chat_completion(
     config = resolve_role_config(settings, role)
     if not config["api_key"]:
         raise ApiCallError(f"{role} API key is not configured")
-    if config["protocol"] == "anthropic":
-        return _anthropic_messages(config, messages, max_tokens, temperature, timeout, image_base64, image_media_type)
-    return _openai_chat(config, messages, max_tokens, temperature, timeout, response_json, image_base64, image_media_type)
+    timeout = _role_timeout(role) if timeout is None else timeout
+    max_retries = _role_max_retries(role) if max_retries is None else max_retries
+    last_error: ApiCallError | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            if config["protocol"] == "anthropic":
+                return _anthropic_messages(config, messages, max_tokens, temperature, timeout, image_base64, image_media_type)
+            return _openai_chat(config, messages, max_tokens, temperature, timeout, response_json, image_base64, image_media_type)
+        except ApiCallError as exc:
+            last_error = exc
+            if not exc.retryable:
+                raise
+            if attempt >= max_retries:
+                raise ApiCallError(f"{role} model call failed after {max_retries + 1} attempts: {last_error}", retryable=False) from exc
+            time.sleep(0.5 * (attempt + 1))
+    raise ApiCallError(f"{role} model call failed after {max_retries + 1} attempts: {last_error}", retryable=False)
 
 
 def _openai_chat(
@@ -220,19 +259,24 @@ def _openai_chat(
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=timeout)
         except requests.RequestException as exc:
-            last_error = exc
+            last_error = ApiCallError(f"model call failed: {exc}", retryable=True)
             continue
         content_type = response.headers.get("content-type", "").lower()
         if response.ok and "json" in content_type:
-            data = response.json()
+            try:
+                data = response.json()
+            except ValueError as exc:
+                last_error = ApiCallError(f"service returned invalid JSON: {response.text[:300]}", retryable=True)
+                continue
             return _extract_openai_text(data)
         if response.ok and "text/html" in content_type:
             last_error = ApiCallError(f"provider returned HTML (base url may be missing /v1): {url}")
             continue
-        raise ApiCallError(f"HTTP {response.status_code} from {url}: {response.text[:500]}")
+        retryable = response.status_code in {429, 500, 502, 503, 504}
+        raise ApiCallError(f"HTTP {response.status_code} from {url}: {response.text[:500]}", retryable=retryable)
     if last_error:
-        raise ApiCallError(f"model call failed: {last_error}")
-    raise ApiCallError("model call failed: no response")
+        raise last_error
+    raise ApiCallError("model call failed: no response", retryable=True)
 
 
 def _anthropic_messages(
@@ -278,10 +322,15 @@ def _anthropic_messages(
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=timeout)
     except requests.RequestException as exc:
-        raise ApiCallError(f"model call failed: {exc}") from exc
+        raise ApiCallError(f"model call failed: {exc}", retryable=True) from exc
     if not response.ok:
-        raise ApiCallError(f"HTTP {response.status_code} from {url}: {response.text[:500]}")
-    return _extract_anthropic_text(response.json())
+        retryable = response.status_code in {429, 500, 502, 503, 504}
+        raise ApiCallError(f"HTTP {response.status_code} from {url}: {response.text[:500]}", retryable=retryable)
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise ApiCallError(f"service returned invalid JSON: {response.text[:300]}", retryable=True) from exc
+    return _extract_anthropic_text(data)
 
 
 def _attach_openai_image(messages: list[dict[str, Any]], image_base64: str, media_type: str) -> None:

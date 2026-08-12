@@ -1,5 +1,6 @@
 import { useState } from "react";
 import FeatureForm from "../FeatureForm";
+import FeatureTree from "../FeatureTree";
 import { useAppStore, type ManagerTab } from "../store";
 import { useT } from "../i18n";
 
@@ -134,34 +135,12 @@ export default function LeftManager({
                 <h3>{t("manager.feature_title")}</h3>
                 <span>{t("manager.feature_count", { count: features.length })}</span>
               </div>
-              <div className="feature-tree">
-                {features.map((feature, index) => {
-                  const unresolved = feature?.unresolved?.length || 0;
-                  const isSelected = feature.id === selectedFeatureId;
-                  return (
-                    <button
-                      type="button"
-                      key={feature.id}
-                      className={isSelected ? "feature-node selected" : "feature-node"}
-                      onClick={() => onSelectFeature(feature.id)}
-                    >
-                      <span className="feature-index">{index === 0 ? t("manager.base") : `F${index}`}</span>
-                      <span className="feature-name">{feature.id}</span>
-                      <span className="feature-type">{feature.type}</span>
-                      <span className={unresolved ? "feature-state warn" : feature.confirmed_by_user ? "feature-state ok" : "feature-state"}>
-                        {unresolved ? t("manager.pending") : feature.confirmed_by_user ? t("manager.confirmed") : t("manager.draft")}
-                      </span>
-                    </button>
-                  );
-                })}
-                {!features.length && (
-                  <div className="empty-tree">
-                    <strong>{t("manager.empty_tree")}</strong>
-                    <p>{t("manager.empty_tree.hint")}</p>
-                  </div>
-                )}
-              </div>
-              <div className="project-meta">
+              <FeatureTree
+                features={features}
+                selectedFeatureId={selectedFeatureId}
+                onSelectFeature={onSelectFeature}
+              />
+                            <div className="project-meta">
                 <span>{t("manager.part_family", { value: partFamily || t("manager.unrecognized") })}</span>
                 <span>{t("manager.unresolved", { count: unresolvedCount })}</span>
                 <span>{t("manager.mode", { value: modeLabel })}</span>

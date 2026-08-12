@@ -10,6 +10,7 @@ from PIL import Image
 from backend.mechcad_ai import planner as ai_planner
 from backend.mechcad_ai import vision as ai_vision
 from backend.process import ProcessRecorder
+from backend.validation import order_feature_plan
 from backend.schemas import (
     ClarificationQuestion,
     DesignAssumption,
@@ -36,10 +37,12 @@ _DIM_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(rf"(?:槽长|槽的长度|slot\s*length){_SEP}{_NUM}", re.IGNORECASE), "slot_length"),
     (re.compile(rf"(?:槽深|槽的深度|slot\s*depth){_SEP}{_NUM}", re.IGNORECASE), "slot_depth"),
     (re.compile(rf"(?:槽底外径|槽径|groove\s*diameter){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "groove_diameter"),
-    (re.compile(rf"(?:外径|外圆直径|澶栧緞|outer\s*diameter|od){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "outer_diameter"),
-    (re.compile(rf"(?:内径|孔内径|鍐呭緞|inner\s*diameter|id|bore){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "inner_diameter"),
-    (re.compile(rf"(?:中心孔径|中心孔|孔径|孔直径|直径|鐩村緞|diameter){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "diameter"),
-    (re.compile(rf"(?:长|长度|总长|闀|闀垮害|overall\s*length|length|L){_SEP}{_NUM}", re.IGNORECASE), "length"),
+    (re.compile(rf"(?:外径|外圆直径|outer\s*diameter|od){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "outer_diameter"),
+    (re.compile(rf"(?:内径|孔内径|inner\s*diameter|id|bore){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "inner_diameter"),
+    (re.compile(rf"(?:中心孔径|中心孔直径|中心孔|孔径|孔直径|hole\s*diameter|center\s*(?:through\s*)?(?:hole|bore)){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "hole_diameter"),
+    (re.compile(rf"{_NUM}\s*(?:中心孔|center\s*(?:through\s*)?(?:hole|bore))\s*[。.]?$", re.IGNORECASE), "hole_diameter"),
+    (re.compile(rf"(?:直径|(?<!outer\s)(?<!inner\s)diameter){_SEP}{_DIAMETER_PREFIX}{_NUM}", re.IGNORECASE), "diameter"),
+    (re.compile(rf"(?:长|长度|总长|overall\s*length|length|L){_SEP}{_NUM}", re.IGNORECASE), "length"),
     (re.compile(rf"(?:宽|宽度|width|W){_SEP}{_NUM}", re.IGNORECASE), "width"),
     (re.compile(rf"(?:厚|厚度|高度|height|thickness|T){_SEP}{_NUM}", re.IGNORECASE), "height"),
     (re.compile(rf"(?:深度|depth){_SEP}{_NUM}", re.IGNORECASE), "depth"),
@@ -118,6 +121,7 @@ def build_initial_feature_plan(
         if plan is not None:
             if settings.operation_mode == "smart":
                 plan = _apply_smart_autonomy(plan, description, settings.smart_fill_policy or "limited_fill", language)
+            order_feature_plan(plan)
             return plan, questions_from_plan(plan, language)
     if recorder is not None and image is None and settings is not None:
         pass
@@ -125,6 +129,7 @@ def build_initial_feature_plan(
     if settings is not None and settings.operation_mode == "smart":
         plan = _apply_smart_autonomy(plan, description, settings.smart_fill_policy or "limited_fill", language)
         questions = questions_from_plan(plan, language)
+    order_feature_plan(plan)
     return plan, questions
 
 
@@ -271,6 +276,7 @@ def apply_feature_operations(
 
     _sync_assumption_details(updated)
     _refresh_smart_resolution(updated)
+    order_feature_plan(updated)
     combined = list(questions)
     existing = {q.id for q in combined}
     for q in questions_from_plan(updated, language):
@@ -650,6 +656,7 @@ def _matching_dimensions(feature: FeatureV3, parsed: dict[str, float], language:
         "outer_diameter": ("outer_diameter", "diameter"),
         "inner_diameter": ("inner_diameter",),
         "diameter": ("diameter", "hole_diameter"),
+        "hole_diameter": ("diameter",),
         "slot_width": ("axial_width", "width", "slot_width"),
         "slot_length": ("length", "slot_length"),
         "slot_depth": ("depth", "height"),
@@ -711,7 +718,7 @@ def _move_feature_operation(feature: FeatureV3 | None, text: str, language: str)
 
 def _local_add_operations(plan: FeaturePlanV3, text: str, parsed: dict[str, float], language: str) -> list[FeatureEditOperation]:
     lowered = text.lower()
-    diameter = parsed.get("diameter") or parsed.get("metric_thread")
+    diameter = parsed.get("hole_diameter") or parsed.get("diameter") or parsed.get("metric_thread")
     count = _extract_count(text)
     if "m6" in lowered:
         diameter = 6.0
@@ -774,6 +781,7 @@ def patch_feature(plan: FeaturePlanV3, feature_id: str, patch: dict[str, Any]) -
         if patch.get("confirmed_by_user") is not None:
             feature.confirmed_by_user = bool(patch["confirmed_by_user"])
         break
+    order_feature_plan(updated)
     return updated
 
 
@@ -935,8 +943,11 @@ def _add_stub_feature_candidates(plan: FeaturePlanV3, text: str, parsed: dict[st
         plan.features.append(feature)
 
     if plan.part_family in {"plate", "flange"} and wants_hole:
-        diameter = parsed.get("diameter")
-        if plan.part_family == "flange" and "中心" in text:
+        is_center_hole = plan.part_family == "flange" and ("中心" in text or "center" in text.lower())
+        diameter = parsed.get("hole_diameter") or parsed.get("metric_thread")
+        if not is_center_hole and diameter is None:
+            diameter = parsed.get("diameter")
+        if is_center_hole:
             feature_id = "center_hole"
             placement = PlacementV3(reference="flange_center", x=0, y=0, z=0, axis="Z")
         else:
@@ -1174,7 +1185,7 @@ def _complete_smart_feature(
         return
 
     if kind in {"through_hole", "blind_hole", "counterbore_hole"}:
-        diameter = _feature_value(dims, "diameter", "hole_diameter") or parsed.get("diameter") or 6.0
+        diameter = _feature_value(dims, "diameter", "hole_diameter") or parsed.get("hole_diameter") or parsed.get("diameter") or 6.0
         _assume_dimension(feature, "diameter", diameter, _loc(language, "孔径缺失，采用常见 6mm 概念孔径", "Hole diameter missing; using a common 6mm concept hole"), language)
         if kind != "through_hole" and not _feature_value(dims, "depth"):
             _assume_dimension(feature, "depth", max(1.0, base_length * 0.5), _loc(language, "盲孔深度缺失，采用基体厚度/长度约 50%", "Blind hole depth missing; using about 50% of the base thickness/length"), language)
@@ -1284,7 +1295,7 @@ def _detect_family(text: str) -> str:
         return "plate"
     if any(token in text for token in ["flange", "法兰"]):
         return "flange"
-    if any(token in text for token in ["tube", "pipe", "管", "管件", "轴", "轴套", "套筒", "bushing", "杞", "濂"]):
+    if any(token in text for token in ["tube", "pipe", "管", "管件", "轴", "轴套", "套筒", "bushing"]):
         return "tube"
     return "unknown"
 
@@ -1311,6 +1322,9 @@ def _extract_dimension_clues(text: str) -> dict[str, float]:
     bare_diameter = re.search(r"(?:φ|Φ|Ø)\s*(\d+(?:\.\d+)?)\s*(?:mm|毫米)?", text)
     if bare_diameter:
         results.setdefault("diameter", float(bare_diameter.group(1)))
+    if "hole_diameter" not in results and "diameter" in results and re.search(r"(?:中心孔|中心|center)", text, re.IGNORECASE):
+        results["hole_diameter"] = results["diameter"]
+        results.pop("diameter", None)
     return results
 
 

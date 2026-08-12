@@ -77,6 +77,18 @@ export type ProjectState = {
       base_feature: any;
       features: any[];
       unresolved: { feature: string; reason: string }[];
+      self_checks?: {
+        engine?: string;
+        mode?: string;
+        order?: string[];
+        checks?: {
+          id: string;
+          feature_id?: string | null;
+          status: "pass" | "warning" | "block";
+          message: string;
+        }[];
+        summary?: { pass: number; warning: number; block: number };
+      };
       design_review: {
         warnings: string[];
         suggestions: string[];

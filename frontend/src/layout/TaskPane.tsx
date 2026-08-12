@@ -142,6 +142,22 @@ export default function TaskPane({
                 </ul>
               </div>
             )}
+            {featurePlan?.self_checks?.checks?.length > 0 && (
+              <div className="unresolved-box self-check-box">
+                <strong>{t("task.review.self_checks")}</strong>
+                <ul className="self-check-list">
+                  {featurePlan.self_checks.checks.map((check: any, index: number) => (
+                    <li key={index} className={`self-check-item ${check.status}`}>
+                      <span className="self-check-status">{t(`task.review.check.${check.status}`)}</span>
+                      <span>{check.message}</span>
+                    </li>
+                  ))}
+                </ul>
+                {featurePlan.self_checks.order?.length > 0 && (
+                  <small className="self-check-order">{t("task.review.self_order", { items: featurePlan.self_checks.order.join(" → ") })}</small>
+                )}
+              </div>
+            )}
             {review && (
               <div className="review-grid">
                 <ReviewColumn title={t("task.review.blocking")} items={review.blocking || []} />

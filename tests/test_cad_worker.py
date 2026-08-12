@@ -89,6 +89,48 @@ class CADWorkerTests(unittest.TestCase):
         self.assertTrue(skipped)
 
 
+    def test_real_worker_skips_hole_without_position(self) -> None:
+        artifacts, logs, ok = run_freecad_worker(_plate_plan_with_unpositioned_hole(), on_step=lambda payload: None)
+        self.assertTrue(ok, logs)
+        report = json.loads(Path(artifacts.execution_report).read_text(encoding="utf-8"))
+        self.assertEqual(report["feature_statuses"]["hole_unpositioned"], "skipped")
+        skipped = [
+            step
+            for step in report.get("process_steps", [])
+            if step.get("feature_id") == "hole_unpositioned" and step["status"] == "skipped"
+        ]
+        self.assertTrue(skipped)
+
+
+def _plate_plan_with_unpositioned_hole() -> FeaturePlanV3:
+    return FeaturePlanV3.model_validate(
+        {
+            "part_family": "plate",
+            "base_feature": {
+                "id": "base_plate",
+                "type": "box_base",
+                "operation": "base",
+                "dimensions": {
+                    "length": {"value": 60, "unit": "mm", "confirmed_by_user": True},
+                    "width": {"value": 30, "unit": "mm", "confirmed_by_user": True},
+                    "height": {"value": 4, "unit": "mm", "confirmed_by_user": True},
+                },
+                "placement": {"reference": "origin", "axis": "Z"},
+            },
+            "features": [
+                {
+                    "id": "hole_unpositioned",
+                    "type": "through_hole",
+                    "operation": "remove",
+                    "dimensions": {"diameter": {"value": 6, "unit": "mm", "confirmed_by_user": True}},
+                    "placement": {"reference": "needs_position", "axis": "Z"},
+                    "depends_on": ["base_plate"],
+                }
+            ],
+        }
+    )
+
+
 def _tube_plan_with_missing_groove() -> FeaturePlanV3:
     return FeaturePlanV3.model_validate(
         {

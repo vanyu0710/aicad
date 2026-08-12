@@ -49,7 +49,7 @@ def analyze_sketch(
             image_base64=image_base64,
         )
     except ApiCallError:
-        return None
+        raise
 
     parsed = parse_json_object(content)
     parsed.setdefault("source", "api")

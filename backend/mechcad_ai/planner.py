@@ -65,7 +65,7 @@ def generate_feature_plan(
             response_json=True,
         )
     except ApiCallError:
-        return None
+        raise
 
     try:
         parsed = parse_json_object(content)
