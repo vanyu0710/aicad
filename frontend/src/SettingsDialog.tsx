@@ -76,6 +76,40 @@ export default function SettingsDialog({
                 <option value="off">{t("startup.mode.off")}</option>
               </select>
             </label>
+            <label className="settings-mode-field">
+              <span>{t("settings.operation_mode")}</span>
+              <select
+                value={settings.operation_mode}
+                onChange={(event) =>
+                  onChange({
+                    ...settings,
+                    operation_mode: event.target.value as "strict" | "smart",
+                  })
+                }
+              >
+                <option value="strict">{t("settings.mode.strict")}</option>
+                <option value="smart">{t("settings.mode.smart")}</option>
+              </select>
+            </label>
+            {settings.operation_mode === "smart" && (
+              <label className="settings-mode-field">
+                <span>{t("settings.smart_policy")}</span>
+                <select
+                  value={settings.smart_fill_policy}
+                  onChange={(event) =>
+                    onChange({
+                      ...settings,
+                      smart_fill_policy: event.target.value as ModelConfig["smart_fill_policy"],
+                    })
+                  }
+                >
+                  <option value="limited_fill">{t("settings.policy.limited_fill")}</option>
+                  <option value="aggressive_fill">{t("settings.policy.aggressive_fill")}</option>
+                  <option value="full_autonomous">{t("settings.policy.full_autonomous")}</option>
+                </select>
+              </label>
+            )}
+
           </section>
 
           <section className="settings-section settings-model-section">

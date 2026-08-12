@@ -2,7 +2,7 @@
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LeftManager from "./layout/LeftManager";
-import { useAppStore } from "./store";
+import { DEFAULT_SETTINGS, useAppStore } from "./store";
 
 const feature = {
   id: "base_plate",
@@ -125,5 +125,39 @@ describe("LeftManager", () => {
     expect(screen.getByText("ConfigurationManager")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "打开设置中心" }));
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("changes work mode from the configuration page", async () => {
+    const user = userEvent.setup();
+    const onSettingsChange = vi.fn();
+    const onApplySettings = vi.fn();
+    render(
+      <LeftManager
+        busy={false}
+        description="????"
+        features={[feature]}
+        imageFile={null}
+        modeLabel="????"
+        partFamily="plate"
+        projectName="????"
+        selectedFeature={feature}
+        selectedFeatureId="base_plate"
+        statusLabel="????"
+        unresolvedCount={0}
+        settings={{ ...DEFAULT_SETTINGS, operation_mode: "smart", smart_fill_policy: "aggressive_fill" }}
+        onSettingsChange={onSettingsChange}
+        onApplySettings={onApplySettings}
+        onDescriptionChange={vi.fn()}
+        onImageChange={vi.fn()}
+        onSelectFeature={vi.fn()}
+        onSaveFeature={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "配置" }));
+    const selects = screen.getAllByRole("combobox");
+    await user.selectOptions(selects[0], "strict");
+    expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({ operation_mode: "strict" }));
+    expect(onApplySettings).toHaveBeenCalledWith(expect.objectContaining({ operation_mode: "strict" }));
   });
 });

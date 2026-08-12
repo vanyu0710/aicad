@@ -72,6 +72,16 @@ export const translations: Record<Lang, Record<string, string>> = {
     "startup.mode.first": "仅首次显示",
     "startup.mode.off": "关闭，直接进入工作台",
     "startup.footnote": "浅色水墨主题 · API 配置在工作台的设置中心",
+    "settings.operation_mode": "工作模式",
+    "settings.operation_mode.hint": "严格模式只使用已确认数据；智能模式允许受控假设与自主设计。",
+    "settings.mode.strict": "严格模式",
+    "settings.mode.smart": "智能模式",
+    "settings.smart_policy": "智能策略",
+    "settings.smart_policy.hint": "智能模式下选择自主补全与设计等级。",
+    "settings.policy.limited_fill": "工程保守设计",
+    "settings.policy.aggressive_fill": "概念快速生成",
+    "settings.policy.full_autonomous": "全自主方案设计",
+
 
     "settings.title": "设置中心",
     "settings.close.title": "关闭设置",
@@ -452,6 +462,16 @@ export const translations: Record<Lang, Record<string, string>> = {
     "startup.mode.first": "Show only once",
     "startup.mode.off": "Off, go straight to workspace",
     "startup.footnote": "Ink-wash light theme · API configuration in Settings",
+    "settings.operation_mode": "Work mode",
+    "settings.operation_mode.hint": "Strict mode uses confirmed data only; Smart mode allows auditable assumptions and autonomous design.",
+    "settings.mode.strict": "Strict mode",
+    "settings.mode.smart": "Smart mode",
+    "settings.smart_policy": "Smart policy",
+    "settings.smart_policy.hint": "Choose the autonomy level for Smart mode.",
+    "settings.policy.limited_fill": "Conservative engineering",
+    "settings.policy.aggressive_fill": "Rapid concept generation",
+    "settings.policy.full_autonomous": "Full autonomous design",
+
 
     "settings.title": "Settings",
     "settings.close.title": "Close settings",

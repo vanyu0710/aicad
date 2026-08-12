@@ -92,4 +92,49 @@ describe("SettingsDialog", () => {
     await user.selectOptions(selects[1], "first");
     expect(onStartupModeChange).toHaveBeenCalledWith("first");
   });
+
+  it("changes operation mode", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <SettingsDialog
+        open
+        settings={DEFAULT_SETTINGS}
+        dirty={false}
+        saving={false}
+        notice=""
+        startupMode="always"
+        onClose={vi.fn()}
+        onChange={onChange}
+        onApply={vi.fn()}
+        onStartupModeChange={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("????")).not.toBeInTheDocument();
+    const selects = screen.getAllByRole("combobox");
+    await user.selectOptions(selects[2], "smart");
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ operation_mode: "smart" }));
+  });
+
+  it("changes smart policy when smart mode is active", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <SettingsDialog
+        open
+        settings={{ ...DEFAULT_SETTINGS, operation_mode: "smart", smart_fill_policy: "limited_fill" }}
+        dirty={false}
+        saving={false}
+        notice=""
+        startupMode="always"
+        onClose={vi.fn()}
+        onChange={onChange}
+        onApply={vi.fn()}
+        onStartupModeChange={vi.fn()}
+      />,
+    );
+    const selects = screen.getAllByRole("combobox");
+    await user.selectOptions(selects[3], "aggressive_fill");
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ smart_fill_policy: "aggressive_fill" }));
+  });
 });

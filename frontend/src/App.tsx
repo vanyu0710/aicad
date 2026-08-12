@@ -665,6 +665,9 @@ export default function App() {
               evidenceCount={evidence.length}
               intentSummary={designIntent?.summary}
               completenessScore={typeof plan?.completeness?.score === "number" ? plan.completeness.score : undefined}
+              settings={settings}
+              onSettingsChange={onSettingsChange}
+              onApplySettings={(next) => void onApplySettings(next)}
               onDescriptionChange={setDescription}
               onImageChange={setImageFile}
               onSelectFeature={setSelectedFeatureId}

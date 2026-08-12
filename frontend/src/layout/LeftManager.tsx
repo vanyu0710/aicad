@@ -1,7 +1,8 @@
 import { useState } from "react";
 import FeatureForm from "../FeatureForm";
 import FeatureTree from "../FeatureTree";
-import { useAppStore, type ManagerTab } from "../store";
+import type { ModelConfig } from "../api";
+import { DEFAULT_SETTINGS, useAppStore, type ManagerTab } from "../store";
 import { useT } from "../i18n";
 
 type Props = {
@@ -19,6 +20,9 @@ type Props = {
   evidenceCount?: number;
   intentSummary?: string;
   completenessScore?: number;
+  settings?: ModelConfig;
+  onSettingsChange?: (value: ModelConfig) => void;
+  onApplySettings?: (value: ModelConfig) => void;
   onDescriptionChange: (value: string) => void;
   onImageChange: (file: File | null) => void;
   onSelectFeature: (featureId: string) => void;
@@ -48,6 +52,9 @@ export default function LeftManager({
   evidenceCount,
   intentSummary,
   completenessScore,
+  settings = DEFAULT_SETTINGS,
+  onSettingsChange,
+  onApplySettings,
   onDescriptionChange,
   onImageChange,
   onSelectFeature,
@@ -183,10 +190,6 @@ export default function LeftManager({
             </div>
             <div className="config-summary">
               <div className="config-summary-item">
-                <span>{t("manager.work_mode")}</span>
-                <strong>{modeLabel}</strong>
-              </div>
-              <div className="config-summary-item">
                 <span>{t("manager.part_family_label")}</span>
                 <strong>{partFamily || t("manager.unrecognized")}</strong>
               </div>
@@ -194,6 +197,55 @@ export default function LeftManager({
                 <span>{t("manager.cad_engine")}</span>
                 <strong>Build123d Worker</strong>
               </div>
+              <div className="config-summary-item">
+                <span>{t("manager.work_mode")}</span>
+                <strong>{modeLabel}</strong>
+              </div>
+            </div>
+            <div className="config-editor">
+              <label className="field compact">
+                <span className="field-label">
+                  {t("settings.operation_mode")}
+                  <small>{t("settings.operation_mode.hint")}</small>
+                </span>
+                <select
+                  value={settings.operation_mode}
+                  onChange={(event) => {
+                    const next = {
+                      ...settings,
+                      operation_mode: event.target.value as "strict" | "smart",
+                    };
+                    onSettingsChange?.(next);
+                    onApplySettings?.(next);
+                  }}
+                >
+                  <option value="strict">{t("settings.mode.strict")}</option>
+                  <option value="smart">{t("settings.mode.smart")}</option>
+                </select>
+              </label>
+              {settings.operation_mode === "smart" && (
+                <label className="field compact">
+                  <span className="field-label">
+                    {t("settings.smart_policy")}
+                    <small>{t("settings.smart_policy.hint")}</small>
+                  </span>
+                  <select
+                    value={settings.smart_fill_policy}
+                    onChange={(event) => {
+                      const next = {
+                        ...settings,
+                        smart_fill_policy: event.target.value as ModelConfig["smart_fill_policy"],
+                      };
+                      onSettingsChange?.(next);
+                      onApplySettings?.(next);
+                    }}
+                  >
+                    <option value="limited_fill">{t("settings.policy.limited_fill")}</option>
+                    <option value="aggressive_fill">{t("settings.policy.aggressive_fill")}</option>
+                    <option value="full_autonomous">{t("settings.policy.full_autonomous")}</option>
+                  </select>
+                </label>
+              )}
             </div>
             <div className="configuration-actions">
               <p>{t("manager.config.hint")}</p>
