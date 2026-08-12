@@ -1,3 +1,14 @@
+## v0.4.3 - Complex Part Validation and UTF-8 Regression Guard
+
+- Added realistic complex part validation through the controlled Build123d Worker:
+  - motor mounting plate with a pilot boss, central bore, and four mounting holes;
+  - shaft with a center bore and two seal grooves;
+  - flanged end cap with a center bore, face O-ring groove, and eight-hole bolt circle;
+  - support bracket with a reinforcing rib and two bossed mounting bores.
+- Every case passed deterministic self-checks and exported STEP/STL/OBJ with per-feature execution reports.
+- Verified the Chinese description path end to end: Chinese tube/pipe and bracket descriptions were recognized and modeled without source-level encoding changes.
+- Added an encoding regression test that guards key Chinese source strings and rejects `U+FFFD` replacement characters.
+
 ## v0.4.2 - Reliability, Validation, and Feature Tree
 
 - Restored `gpt-5.5` planner, cleaned `.env` to `MECHCAD_*`, and added per-role timeout/retry settings.
