@@ -18,6 +18,14 @@ from backend.capabilities import (
     validate_feature_patch,
 )
 from backend.validation import order_feature_plan
+from backend.generic_engine import (
+    build_evidence_set,
+    build_template_plan,
+    detect_family as generic_detect_family,
+    extract_clues as generic_extract_clues,
+    fill_smart_defaults as generic_fill_smart_defaults,
+    infer_design_intent,
+)
 from backend.schemas import (
     ClarificationQuestion,
     DesignAssumption,
@@ -126,6 +134,11 @@ def build_initial_feature_plan(
             else:
                 recorder.skipped(plan_step, reason=_loc(language, "未配置模型或模型返回无效，使用本地确定性规划", "Model not configured or returned invalid output; using local deterministic planning"))
         if plan is not None:
+            plan.evidence = build_evidence_set(description, vision_json, image is not None, language)
+            plan.design_intent_details = plan.design_intent_details or infer_design_intent(
+                description, plan.part_family, [], [], language
+            )
+            plan.self_checks["planning_source"] = "planner_model"
             if settings.operation_mode == "smart":
                 plan = _apply_smart_autonomy(plan, description, settings.smart_fill_policy or "limited_fill", language)
             order_feature_plan(plan)
@@ -133,6 +146,11 @@ def build_initial_feature_plan(
     if recorder is not None and image is None and settings is not None:
         pass
     plan, questions = _build_stub_feature_plan(description, request, language)
+    plan.self_checks["planning_source"] = "local_fallback"
+    plan.evidence = build_evidence_set(description, None, image is not None, language)
+    plan.design_intent_details = plan.design_intent_details or infer_design_intent(
+        description, plan.part_family, [], [], language
+    )
     if settings is not None and settings.operation_mode == "smart":
         plan = _apply_smart_autonomy(plan, description, settings.smart_fill_policy or "limited_fill", language)
         questions = questions_from_plan(plan, language)
@@ -146,6 +164,15 @@ def _build_stub_feature_plan(description: str, request: GenerateRequest, languag
     plan = FeaturePlanV3(part_family=part_family)
     parsed = _extract_dimension_clues(description)
     mode = request.operation_mode
+    template_plan = build_template_plan(
+        description,
+        parsed,
+        language,
+        mode=mode or "strict",
+        smart_fill_policy=request.smart_fill_policy or "limited_fill",
+    )
+    if template_plan is not None:
+        return template_plan, questions_from_plan(template_plan, language)
 
     if part_family == "plate":
         plan.base_feature = FeatureV3(
@@ -1021,6 +1048,11 @@ def _apply_smart_autonomy(plan: FeaturePlanV3, description: str, policy: str, la
         policy = "limited_fill"
     updated.autonomy_policy = policy
     updated.design_intent = updated.design_intent or _smart_design_intent(description, updated.part_family, language)
+    updated.design_intent_details = updated.design_intent_details or infer_design_intent(
+        description, updated.part_family, [], [], language
+    )
+    if not updated.evidence.items:
+        updated.evidence = build_evidence_set(description, None, False, language)
     if policy == "suggest_only":
         updated.assumptions.append(_loc(language, "智能模式当前策略为只给建议，未将推断尺寸写入可执行模型。", "Smart mode is currently set to suggestions only; inferred dimensions were not written into the executable model."))
         updated.design_review.suggestions.append(_loc(language, "切换为“工程自主设计，保守补全”后，系统才会自动生成概念模型。", "Switch to conservative autonomous design to automatically generate a concept model."))
@@ -1036,6 +1068,7 @@ def _apply_smart_autonomy(plan: FeaturePlanV3, description: str, policy: str, la
         updated.assumptions.append(_loc(language, "智能模式根据零件功能和文字线索选择了一个可修改的主基体。", "Smart mode selected an editable main body from the part function and text clues."))
 
     _complete_base_dimensions(base, parsed, updated, language)
+    generic_fill_smart_defaults(updated, parsed, language)
     marker = "智能模式工程假设" if language == "zh" else "Smart mode engineering assumption"
     if not any(marker in item for item in updated.assumptions):
         updated.assumptions.append(_loc(language, "智能模式工程假设：概念尺寸按机械常识补全，未经用户确认。", "Smart mode engineering assumption: concept dimensions were filled with mechanical common sense and are not user-confirmed."))
@@ -1063,6 +1096,15 @@ def _apply_smart_autonomy(plan: FeaturePlanV3, description: str, policy: str, la
         "remaining_unresolved": len(updated.unresolved),
     }
     _sync_assumption_details(updated)
+    updated.completeness = {
+        "total_features": len(_all_features(updated)),
+        "modeled": sum(1 for f in _all_features(updated) if f.execution_status == "modeled"),
+        "skipped": sum(1 for f in _all_features(updated) if f.execution_status == "skipped"),
+        "failed": sum(1 for f in _all_features(updated) if f.execution_status == "failed"),
+        "unresolved": len(updated.unresolved),
+        "score": round(sum(1 for f in _all_features(updated) if f.execution_status == "modeled") / max(1, len(_all_features(updated))) * 100.0, 1),
+        "production_ready": False,
+    }
     return updated
 
 
@@ -1300,6 +1342,9 @@ def _refresh_smart_resolution(plan: FeaturePlanV3) -> None:
         "rectangular_slot": ("length", "width", "depth"),
         "rectangular_pocket": ("length", "width", "depth"),
         "annular_groove": ("reduced_outer_diameter", "axial_width", "z_start"),
+        "internal_annular_groove": ("axial_width", "groove_depth", "z_start"),
+        "link_plate": ("length", "width", "height", "end_diameter_1", "end_diameter_2"),
+        "circular_pattern": ("count", "pitch_radius", "diameter"),
         "boss_cylinder": ("diameter", "height"),
         "rectangular_pad": ("length", "width", "height"),
         "rib_box": ("length", "width", "height"),
@@ -1315,10 +1360,11 @@ def _refresh_smart_resolution(plan: FeaturePlanV3) -> None:
 
 
 def _detect_family(text: str) -> str:
+    generic = generic_detect_family(text)
+    if generic != "unknown":
+        return generic
     if any(token in text for token in ["plate", "板", "板件", "平板", "连接板", "flat", "bracket"]):
         return "plate"
-    if any(token in text for token in ["flange", "法兰"]):
-        return "flange"
     if any(token in text for token in ["tube", "pipe", "管", "管件", "轴", "轴套", "套筒", "bushing"]):
         return "tube"
     return "unknown"
@@ -1349,6 +1395,8 @@ def _extract_dimension_clues(text: str) -> dict[str, float]:
     if "hole_diameter" not in results and "diameter" in results and re.search(r"(?:中心孔|中心|center)", text, re.IGNORECASE):
         results["hole_diameter"] = results["diameter"]
         results.pop("diameter", None)
+    for key, value in generic_extract_clues(text).items():
+        results.setdefault(key, value)
     return results
 
 

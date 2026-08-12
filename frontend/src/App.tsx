@@ -307,8 +307,11 @@ export default function App() {
     }
   }, [questions, setUi]);
 
-  const runId = project?.current.artifacts.run_id;
-  const hasModel = Boolean(project?.current.artifacts.stl || project?.current.artifacts.obj);
+  const executionReport = project?.current.execution_report;
+  const evidence = plan?.evidence?.items || [];
+  const evidenceConflicts = plan?.evidence?.conflicts || [];
+  const designIntent = plan?.design_intent_details;
+  const runId = project?.current.artifacts.run_id;  const hasModel = Boolean(project?.current.artifacts.stl || project?.current.artifacts.obj);
   const canUndo = Boolean(project?.history?.length);
   const canRedo = Boolean(project?.redo_stack?.length);
   const hasRequiredQuestions = questions.some((question) => question.required !== false && !question.answer);
@@ -659,6 +662,9 @@ export default function App() {
               selectedFeatureId={selectedFeatureId}
               statusLabel={t(statusLabelKeys[status])}
               unresolvedCount={unresolved.length}
+              evidenceCount={evidence.length}
+              intentSummary={designIntent?.summary}
+              completenessScore={typeof plan?.completeness?.score === "number" ? plan.completeness.score : undefined}
               onDescriptionChange={setDescription}
               onImageChange={setImageFile}
               onSelectFeature={setSelectedFeatureId}
@@ -680,8 +686,11 @@ export default function App() {
               featurePlan={project.current.feature_plan}
               questions={questions}
               reportMarkdown={project.current.report_markdown}
-              review={review}
-              unresolved={unresolved}
+              executionReport={executionReport}
+              evidence={evidence}
+              evidenceConflicts={evidenceConflicts}
+              designIntent={designIntent}
+              review={review}              unresolved={unresolved}
               runId={runId}
               engineLabel={engineLabel}
               onChatMessageChange={setChatMessage}

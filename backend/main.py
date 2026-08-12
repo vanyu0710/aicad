@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from copy import deepcopy
 import io
+import json
 import os
 from pathlib import Path
 
@@ -20,7 +21,8 @@ from backend.ai import (
     questions_from_plan,
 )
 from backend.cad import run_freecad_worker
-from backend.capabilities import CapabilityValidationError
+from backend.capabilities import CAPABILITIES, CapabilityValidationError
+from backend.generic_engine import build_execution_report, feature_semantics
 from backend.events import EventBus
 from backend.process import ProcessRecorder
 from backend.schemas import (
@@ -28,6 +30,7 @@ from backend.schemas import (
     CreateProjectRequest,
     CreateProjectResponse,
     DesignSnapshot,
+    ExecutionReport,
     FeaturePatchRequest,
     GenerateRequest,
     ModelTestRequest,
@@ -47,7 +50,7 @@ from backend.static_assets import mount_frontend
 
 load_dotenv()
 
-app = FastAPI(title="MechCAD IDE API", version="0.5.0")
+app = FastAPI(title="MechCAD IDE API", version="0.6.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8001", "http://127.0.0.1:8001"],
@@ -69,6 +72,14 @@ events = EventBus()
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "mechcad-ide-api"}
+
+
+@app.get("/api/capabilities")
+def capabilities():
+    return {
+        "features": [capability.model_dump() for capability in CAPABILITIES.all()],
+        "semantics": [semantics.model_dump() for semantics in feature_semantics()],
+    }
 
 
 @app.post("/api/model/test", response_model=ModelTestResponse)
@@ -233,6 +244,13 @@ async def generate(project_id: str, request: GenerateRequest):
         artifacts=artifacts,
         questions=questions,
         design_review=plan.design_review,
+        execution_report=_current_execution_report(
+            plan,
+            artifacts,
+            ok,
+            settings.operation_mode or "strict",
+            plan.self_checks.get("planning_source") == "local_fallback",
+        ),
         report_markdown=_build_report(project.project_id, ok, questions, logs, language),
         logs=logs,
         process=recorder.steps,
@@ -294,6 +312,13 @@ async def chat_edit(project_id: str, request: ChatEditRequest):
         artifacts=artifacts,
         questions=questions,
         design_review=plan.design_review,
+        execution_report=_current_execution_report(
+            plan,
+            artifacts,
+            ok,
+            project.settings.operation_mode or "strict",
+            plan.self_checks.get("planning_source") == "local_fallback",
+        ),
         report_markdown=_build_report(project_id, ok, questions, logs, language),
         logs=project.current.logs + logs,
         process=recorder.steps,
@@ -387,6 +412,13 @@ async def patch_project_feature(project_id: str, feature_id: str, request: Featu
         artifacts=artifacts,
         questions=questions,
         design_review=plan.design_review,
+        execution_report=_current_execution_report(
+            plan,
+            artifacts,
+            ok,
+            project.settings.operation_mode or "strict",
+            plan.self_checks.get("planning_source") == "local_fallback",
+        ),
         report_markdown=_build_report(project_id, ok, questions, logs, language),
         logs=project.current.logs + logs,
         process=recorder.steps,
@@ -499,6 +531,27 @@ async def _publish_process_step(project_id: str, event_type: str, step: ProcessS
     if step.detail:
         payload["logs"] = [step.detail]
     await _emit(project_id, event_type, step.stage, step.label, payload)
+
+
+def _worker_report(artifacts) -> dict:
+    path = getattr(artifacts, "execution_report", None)
+    if path and Path(path).exists():
+        try:
+            value = json.loads(Path(path).read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _current_execution_report(plan, artifacts, ok, mode, fallback_used) -> ExecutionReport:
+    return build_execution_report(
+        plan,
+        _worker_report(artifacts),
+        execution_ok=ok,
+        fallback_used=fallback_used,
+        mode=mode,
+    )
 
 
 def _build_report(project_id: str, cad_ok: bool, questions, logs: list[str], language: str = "zh") -> str:

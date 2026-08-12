@@ -271,10 +271,11 @@ class StubQualityTests(unittest.TestCase):
         self.assertEqual(plan.base_feature.dimensions["outer_diameter"].value, 50.0)
         self.assertEqual(plan.base_feature.dimensions["inner_diameter"].value, 38.0)
         self.assertEqual(plan.base_feature.dimensions["length"].value, 300.0)
-        self.assertEqual(plan.features[0].type, "annular_groove")
+        self.assertEqual(plan.features[0].type, "internal_annular_groove")
         self.assertEqual(plan.features[0].dimensions["axial_width"].value, 10.0)
-        self.assertEqual(plan.features[0].dimensions["z_start"].value, 290.0)
-        self.assertTrue(any(question.feature_id == "top_groove" for question in questions))
+        self.assertIsNone(plan.features[0].dimensions["groove_depth"].value)
+        self.assertIsNone(plan.features[0].dimensions["z_start"].value)
+        self.assertTrue(any(question.feature_id == "internal_groove" for question in questions))
 
     def test_flange_center_hole_uses_hole_diameter_not_outer_diameter(self):
         plan, questions = build_initial_feature_plan(
@@ -297,7 +298,7 @@ class StubQualityTests(unittest.TestCase):
         self.assertIsNotNone(plan.base_feature.dimensions["outer_diameter"].value)
         self.assertIsNotNone(plan.base_feature.dimensions["inner_diameter"].value)
         self.assertIsNotNone(plan.base_feature.dimensions["length"].value)
-        self.assertEqual(plan.features[0].type, "annular_groove")
+        self.assertEqual(plan.features[0].type, "internal_annular_groove")
         self.assertTrue(all(d.value is not None for d in plan.features[0].dimensions.values()))
         self.assertTrue(plan.self_checks["smart_autonomy"]["executed"])
         self.assertTrue(any("智能模式工程假设" in item for item in plan.assumptions + plan.features[0].assumptions))

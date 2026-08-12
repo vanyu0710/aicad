@@ -63,3 +63,21 @@ describe("FeatureTree", () => {
     expect(onSelect).toHaveBeenCalledWith("hole_left");
   });
 });
+
+describe("FeatureTree pipeline metadata", () => {
+  it("renders evidence, intent, and acceptance summary", () => {
+    render(
+      <FeatureTree
+        features={features}
+        selectedFeatureId=""
+        onSelectFeature={vi.fn()}
+        evidenceCount={3}
+        intentSummary="plate with mounting holes"
+        completenessScore={75}
+      />,
+    );
+    expect(screen.getByText("证据 3")).toBeInTheDocument();
+    expect(screen.getByText(/意图：plate with mounting holes/)).toBeInTheDocument();
+    expect(screen.getByText("验收 75%")).toBeInTheDocument();
+  });
+});

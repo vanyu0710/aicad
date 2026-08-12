@@ -133,6 +133,108 @@ class ClarificationQuestion(BaseModel):
     answer: str | None = None
 
 
+class EvidenceItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    key: str
+    value: float | str | None = None
+    unit: str = "mm"
+    source: Literal["drawing", "user", "assumption", "derived", "unknown"] = "unknown"
+    feature_id: str | None = None
+    dimension: str | None = None
+    confirmed_by_user: bool = False
+    confidence: float | None = None
+    conflict_with: list[str] = Field(default_factory=list)
+
+
+class EvidenceSet(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    input_kind: Literal["text_only", "image_only", "mixed"] = "text_only"
+    items: list[EvidenceItem] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+
+    def add(self, key: str, value: float | str | None, source: str = "unknown", **extra: Any) -> None:
+        self.items.append(EvidenceItem(key=key, value=value, source=source, **extra))
+
+    def get(self, key: str) -> EvidenceItem | None:
+        for item in reversed(self.items):
+            if item.key == key:
+                return item
+        return None
+
+
+class DesignIntent(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    part_family: str = "unknown"
+    confidence: float | None = None
+    function: str = ""
+    main_datum: str = "XY"
+    main_axis: str = "Z"
+    manufacturing_intent: str = ""
+    required_capabilities: list[str] = Field(default_factory=list)
+    unsupported_requirements: list[str] = Field(default_factory=list)
+    summary: str = ""
+
+
+class FeatureSemantics(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    feature_type: str
+    operation: FeatureOperation = "remove"
+    geometry_effect: Literal["base", "add", "remove", "modify", "pattern"] = "remove"
+    required_dimensions: list[str] = Field(default_factory=list)
+    optional_dimensions: list[str] = Field(default_factory=list)
+    parent_required: bool = True
+    centered_placements: list[str] = Field(default_factory=list)
+    implementation_status: str = "supported"
+
+
+class TemplateFeatureSpec(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    type: str
+    operation: FeatureOperation = "remove"
+    depends_on: list[str] = Field(default_factory=list)
+    dimension_map: dict[str, str] = Field(default_factory=dict)
+    defaults: dict[str, float] = Field(default_factory=dict)
+    placement_rule: str = "center"
+    placement: PlacementV3 | None = None
+    extent: str | None = None
+    required: bool = True
+    evidence: str = ""
+
+
+class FamilyTemplate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    family: str
+    base_type: str
+    base_dimension_map: dict[str, str] = Field(default_factory=dict)
+    feature_specs: list[TemplateFeatureSpec] = Field(default_factory=list)
+    design_intent: str = ""
+    required_capabilities: list[str] = Field(default_factory=list)
+    unsupported_requirements: list[str] = Field(default_factory=list)
+
+
+class ExecutionReport(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    execution_ok: bool = False
+    plan_complete: bool = False
+    geometry_valid: bool = False
+    production_ready: bool = False
+    fallback_used: bool = False
+    skipped_features: list[str] = Field(default_factory=list)
+    failed_features: list[str] = Field(default_factory=list)
+    assumption_count: int = 0
+    completeness_score: float = 0.0
+    engine: str = "build123d"
+    details: list[str] = Field(default_factory=list)
+
+
 class FeaturePlanV3(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -144,6 +246,9 @@ class FeaturePlanV3(BaseModel):
     part_family: str = "unknown"
     autonomy_policy: SmartFillPolicy | None = None
     design_intent: str = ""
+    design_intent_details: DesignIntent | None = None
+    evidence: EvidenceSet = Field(default_factory=EvidenceSet)
+    completeness: dict[str, Any] = Field(default_factory=dict)
     base_feature: FeatureV3 | None = None
     features: list[FeatureV3] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
@@ -279,6 +384,7 @@ class DesignSnapshot(BaseModel):
     artifacts: ArtifactSet = Field(default_factory=ArtifactSet)
     questions: list[ClarificationQuestion] = Field(default_factory=list)
     design_review: DesignReview = Field(default_factory=DesignReview)
+    execution_report: ExecutionReport = Field(default_factory=ExecutionReport)
     report_markdown: str = ""
     logs: list[str] = Field(default_factory=list)
     process: list[ProcessStep] = Field(default_factory=list)

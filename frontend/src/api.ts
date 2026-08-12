@@ -38,6 +38,50 @@ export type ProcessStep = {
   warnings: string[];
 };
 
+export type EvidenceItem = {
+  key: string;
+  value?: number | string | null;
+  unit?: string;
+  source?: string;
+  feature_id?: string | null;
+  dimension?: string | null;
+  confirmed_by_user?: boolean;
+  confidence?: number | null;
+  conflict_with?: string[];
+};
+
+export type EvidenceSet = {
+  input_kind?: "text_only" | "image_only" | "mixed";
+  items?: EvidenceItem[];
+  conflicts?: string[];
+};
+
+export type DesignIntentDetails = {
+  part_family?: string;
+  confidence?: number | null;
+  function?: string;
+  main_datum?: string;
+  main_axis?: string;
+  manufacturing_intent?: string;
+  required_capabilities?: string[];
+  unsupported_requirements?: string[];
+  summary?: string;
+};
+
+export type ExecutionReport = {
+  execution_ok: boolean;
+  plan_complete: boolean;
+  geometry_valid: boolean;
+  production_ready: boolean;
+  fallback_used: boolean;
+  skipped_features: string[];
+  failed_features: string[];
+  assumption_count: number;
+  completeness_score: number;
+  engine: string;
+  details: string[];
+};
+
 export type ModelTestResult = {
   ok: boolean;
   role: ModelRole;
@@ -89,8 +133,10 @@ export type ProjectState = {
         }[];
         summary?: { pass: number; warning: number; block: number };
       };
-      design_review: {
-        warnings: string[];
+      design_intent_details?: DesignIntentDetails;
+      evidence?: EvidenceSet;
+      completeness?: Record<string, number | boolean | string>;
+      design_review: {        warnings: string[];
         suggestions: string[];
         manufacturability: string[];
         standards: string[];
@@ -119,8 +165,8 @@ export type ProjectState = {
       unit?: string;
       answer?: string;
     }[];
-    report_markdown: string;
-    logs: string[];
+    execution_report?: ExecutionReport;
+    report_markdown: string;    logs: string[];
     process: ProcessStep[];
   };
   history: unknown[];

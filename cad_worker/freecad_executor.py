@@ -79,6 +79,7 @@ def main() -> int:
         "worker": "controlled-cad-worker",
         "modeled_features": [],
         "skipped_features": [],
+        "failed_features": [],
         "warnings": [],
         "artifacts": {},
         "process_steps": [],
@@ -143,7 +144,14 @@ def _build_part(plan: FeaturePlanV3, report: dict[str, Any], out_dir: Path) -> B
         order_feature_plan(plan)
         for feature in plan.features:
             _emit_cad_step(report, out_dir, "running", feature.type, feature_id=feature.id, operation=feature.operation, summary=_msg(f"开始执行 {feature.id}", f"Start executing {feature.id}"))
+            before_volume = _safe_volume(part)
             modeled = _apply_feature(feature, plan, report)
+            after_volume = _safe_volume(part)
+            if modeled and before_volume is not None and after_volume is not None and abs(after_volume - before_volume) < 1e-6:
+                feature.execution_status = "failed"
+                report["failed_features"].append(feature.id)
+                report["warnings"].append(f"Feature {feature.id} reported modeled but geometry did not change (volume {before_volume:.6f} -> {after_volume:.6f})")
+                modeled = False
             if modeled:
                 _emit_cad_step(report, out_dir, "completed", feature.type, feature_id=feature.id, operation=feature.operation, summary=_msg(f"特征 {feature.id} 已建模", f"Feature {feature.id} modeled"))
             elif feature.execution_status == "skipped":
@@ -167,6 +175,23 @@ def _apply_base(feature, report: dict[str, Any]) -> None:
         feature.execution_status = "modeled"
         report["modeled_features"].append(feature.id)
         feature.execution_status = "modeled"
+        return
+
+    if kind == "link_plate":
+        length = _value(dims, "length")
+        width = _value(dims, "width")
+        height = _value(dims, "height")
+        end_d1 = _value(dims, "end_diameter_1") or width
+        end_d2 = _value(dims, "end_diameter_2") or width
+        if not _positive(length, width, height, end_d1, end_d2):
+            raise RuntimeError("link_plate missing length/width/height/end diameters")
+        Box(length, width, height, align=(Align.CENTER, Align.CENTER, Align.MIN))
+        with Locations((-length / 2.0, 0.0, 0.0)):
+            Cylinder(radius=end_d1 / 2.0, height=height, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.ADD)
+        with Locations((length / 2.0, 0.0, 0.0)):
+            Cylinder(radius=end_d2 / 2.0, height=height, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.ADD)
+        feature.execution_status = "modeled"
+        report["modeled_features"].append(feature.id)
         return
 
     if kind in {"cylinder_base", "hollow_cylinder"}:
@@ -253,6 +278,31 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
         feature.execution_status = "modeled"
         return True
 
+    if kind == "internal_annular_groove":
+        base = plan.base_feature
+        inner = _value(base.dimensions, "inner_diameter") if base is not None else None
+        outer = _value(base.dimensions, "outer_diameter") if base is not None else None
+        width = _value(dims, "axial_width", "width")
+        depth = _value(dims, "groove_depth", "depth")
+        z_start = _value(dims, "z_start")
+        if not _positive(inner, outer, width, depth) or z_start is None:
+            _skip(report, feature, _msg("\u5185\u58c1\u69fd\u7f3a\u5c11\u5185\u5f84\u3001\u5916\u5f84\u3001\u69fd\u5bbd\u3001\u69fd\u6df1\u6216\u8d77\u59cb\u4f4d\u7f6e", "Internal groove is missing inner/outer diameter, width, depth, or start position"))
+            return False
+        reduced_inner = inner + 2.0 * depth
+        if reduced_inner >= outer:
+            _skip(report, feature, _msg("\u5185\u58c1\u69fd\u69fd\u5e95\u76f4\u5f84\u8d85\u8fc7\u5916\u5f84", "Internal groove root diameter exceeds the outer diameter"))
+            return False
+        length = _value(base.dimensions, "length") if base is not None else None
+        if length is None or z_start < 0 or z_start + width > length + 1e-6:
+            _skip(report, feature, _msg("\u5185\u58c1\u69fd\u4f4d\u7f6e\u8d85\u51fa\u57fa\u4f53\u957f\u5ea6", "Internal groove position exceeds the base length"))
+            return False
+        with Locations((0.0, 0.0, z_start)):
+            Cylinder(radius=reduced_inner / 2.0, height=width, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.SUBTRACT)
+            Cylinder(radius=inner / 2.0, height=width, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.ADD)
+        report["modeled_features"].append(feature.id)
+        feature.execution_status = "modeled"
+        return True
+
     if kind in {"boss_cylinder"}:
         diameter = _value(dims, "diameter", "outer_diameter")
         height = _value(dims, "height", "length")
@@ -318,6 +368,17 @@ def _apply_feature(feature, plan: FeaturePlanV3, report: dict[str, Any]) -> bool
 
     _skip(report, feature, _msg(f"不支持的特征类型：{kind}", f"Unsupported feature type: {kind}"))
     return False
+
+
+def _safe_volume(part: BuildPart) -> float | None:
+    try:
+        target = getattr(part, "part", part)
+        value = getattr(target, "volume", None)
+        if callable(value):
+            value = value()
+        return float(value) if value is not None else None
+    except Exception:
+        return None
 
 
 def _skip(report: dict[str, Any], feature, reason: str) -> None:

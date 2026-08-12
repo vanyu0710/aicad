@@ -1,3 +1,16 @@
+## v0.6.0 - Generic Modeling Core and UI Acceptance Layer
+
+- Added a generic input/evidence layer: `InputRouter` distinguishes text-only, image-only, and mixed inputs; pure text generation no longer needs a vision model.
+- Added `EvidenceSet`, `DesignIntent`, `FeatureSemantics`, and `FamilyTemplate` models with deterministic clue extraction for Chinese/English dimensions.
+- Added a data-driven `FamilyTemplateRegistry` covering flange, tube with internal groove, link/rocker plate, phone stand, and spur-gear blank templates.
+- Spur gear teeth are explicitly unsupported; the template and capability registry mark `spur_gear_teeth` as unsupported instead of producing a fake gear.
+- The planning fallback now builds template plans with evidence, intent, assumptions, and completeness; Smart mode fills auditable defaults and Strict mode keeps missing values unresolved.
+- CAD Worker reports per-feature `modeled`, `skipped`, and `failed` statuses, including a real geometry acceptance check based on solid volume change.
+- Non-intersecting cuts are now marked `failed` with a "geometry did not change" warning instead of being reported as modeled.
+- Added `ExecutionReport` with four independent statuses: `execution_ok`, `plan_complete`, `geometry_valid`, and `production_ready`, plus fallback, assumptions, completeness score, skipped/failed features, and worker details.
+- Added `GET /api/capabilities` exposing registered capabilities and feature semantics for UI and audit reuse.
+- Frontend adds execution acceptance report, dimension evidence strip, design intent summary, and a feature-tree pipeline header (evidence -> intent -> features -> acceptance).
+- Worker messages and validation messages were cleaned to UTF-8 Chinese/English pairs.
 ## v0.5.0 Phase 1 - Capability & Generic Edit Runtime Foundation
 
 - Added static capability metadata (`ParameterSpec`, `FeatureCapability`, `CapabilityIssue`) to `backend/schemas.py`.

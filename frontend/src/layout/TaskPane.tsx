@@ -1,5 +1,5 @@
 import ClarificationPanel from "../ClarificationPanel";
-import { artifactUrl, type ProcessStep } from "../api";
+import { artifactUrl, type DesignIntentDetails, type EvidenceItem, type ExecutionReport, type ProcessStep } from "../api";
 import { useAppStore, type TaskTab } from "../store";
 import { useT } from "../i18n";
 
@@ -11,6 +11,10 @@ type Props = {
   featurePlan: any;
   questions: any[];
   reportMarkdown?: string;
+  executionReport?: ExecutionReport;
+  evidence?: EvidenceItem[];
+  evidenceConflicts?: string[];
+  designIntent?: DesignIntentDetails;
   review?: {
     warnings?: string[];
     suggestions?: string[];
@@ -46,6 +50,10 @@ export default function TaskPane({
   featurePlan,
   questions,
   reportMarkdown,
+  executionReport,
+  evidence,
+  evidenceConflicts,
+  designIntent,
   review,
   unresolved,
   runId,
@@ -123,7 +131,43 @@ export default function TaskPane({
 
         {rightTab === "review" && (
           <div className="task-pane-section review-pane">
-            {!review && !unresolved.length && <p className="empty-note">{t("task.review.empty")}</p>}
+            {executionReport && (
+              <div className="execution-report-box">
+                <strong>{t("task.review.execution")}</strong>
+                <div className="execution-grid">
+                  <ReportChip ok={executionReport.execution_ok} label={t("task.review.execution_ok")} />
+                  <ReportChip ok={executionReport.plan_complete} label={t("task.review.plan_complete")} />
+                  <ReportChip ok={executionReport.geometry_valid} label={t("task.review.geometry_valid")} />
+                  <ReportChip ok={executionReport.production_ready} label={t("task.review.production_ready")} />
+                </div>
+                <p className="execution-score">{t("task.review.score", { score: executionReport.completeness_score })}</p>
+                <p className="execution-meta">
+                  {t("task.review.engine", { engine: executionReport.engine })}
+                  {executionReport.fallback_used ? ` · ${t("task.review.fallback_used")}` : ""}
+                  {` · ${t("task.review.assumption_count", { count: executionReport.assumption_count })}`}
+                </p>
+                {(executionReport.skipped_features?.length > 0 || executionReport.failed_features?.length > 0) && (
+                  <ul className="execution-issues">
+                    {executionReport.skipped_features.map((id) => <li key={`skipped-${id}`}>{t("task.review.skipped", { id })}</li>)}
+                    {executionReport.failed_features.map((id) => <li key={`failed-${id}`}>{t("task.review.failed", { id })}</li>)}
+                  </ul>
+                )}
+                {executionReport.details?.map((detail, index) => <p className="execution-detail" key={index}>{detail}</p>)}
+              </div>
+            )}
+            {designIntent && (
+              <div className="intent-box">
+                <strong>{t("task.review.intent")}</strong>
+                <p>{designIntent.summary || designIntent.part_family || ""}</p>
+                {designIntent.function && <span>{t("task.review.intent_function", { value: designIntent.function })}</span>}
+                {designIntent.manufacturing_intent && <span>{t("task.review.intent_manufacturing", { value: designIntent.manufacturing_intent })}</span>}
+                {(designIntent.unsupported_requirements?.length || 0) > 0 && (
+                  <ul className="intent-unsupported">
+                    {designIntent.unsupported_requirements?.map((item, index) => <li key={index}>{t("task.review.unsupported", { value: item })}</li>)}
+                  </ul>
+                )}
+              </div>
+            )}            {!review && !unresolved.length && <p className="empty-note">{t("task.review.empty")}</p>}
             {unresolved.length > 0 && (
               <div className="unresolved-box">
                 <strong>{t("task.review.blockers")}</strong>
@@ -247,6 +291,15 @@ export default function TaskPane({
         )}
       </div>
     </aside>
+  );
+}
+
+function ReportChip({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span className={`report-chip ${ok ? "ok" : "not-ok"}`}>
+      <i className="report-dot" />
+      {label}
+    </span>
   );
 }
 

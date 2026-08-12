@@ -19,7 +19,7 @@ def _msg(language: str, zh: str, en: str) -> str:
 
 
 _GROUP_ORDER = {"base": 0, "remove": 1, "add": 2, "pattern": 3, "modify": 4}
-_REMOVE_TYPES = {"through_hole", "blind_hole", "counterbore_hole", "rectangular_slot", "rectangular_pocket", "annular_groove"}
+_REMOVE_TYPES = {"through_hole", "blind_hole", "counterbore_hole", "rectangular_slot", "rectangular_pocket", "annular_groove", "internal_annular_groove"}
 _ADD_TYPES = {"boss_cylinder", "rectangular_pad", "rib_box"}
 _PATTERN_TYPES = {"linear_pattern", "circular_pattern"}
 _MODIFY_TYPES = {"fillet", "chamfer"}
@@ -37,6 +37,8 @@ _REQUIRED_DIMS = {
     "rectangular_slot": ("length", "width", "depth"),
     "rectangular_pocket": ("length", "width", "depth"),
     "annular_groove": ("reduced_outer_diameter", "axial_width", "z_start"),
+    "internal_annular_groove": ("axial_width", "groove_depth", "z_start"),
+    "link_plate": ("length", "width", "height", "end_diameter_1", "end_diameter_2"),
     "boss_cylinder": ("diameter", "height"),
     "rectangular_pad": ("length", "width", "height"),
     "rib_box": ("length", "width", "height"),
@@ -197,6 +199,19 @@ def validate_feature_plan(plan: FeaturePlanV3, mode: str = "strict", language: s
             length = _value(base, "length") if base else None
             if z_start is not None and axial_width is not None and length is not None and z_start + axial_width > length + 0.5:
                 add_check("groove_outside_base", feature.id, "block", _msg(language, "环槽位置超出基体长度", "Groove position exceeds the body length"))
+
+        if feature.type == "internal_annular_groove":
+            inner = _value(base, "inner_diameter") if base else None
+            outer = _value(base, "outer_diameter") if base else None
+            depth = _value(feature, "groove_depth", "depth")
+            reduced_inner = inner + 2 * depth if inner is not None and depth is not None else None
+            if reduced_inner is not None and outer is not None and reduced_inner >= outer:
+                add_check("internal_groove_root_too_large", feature.id, "block", _msg(language, f"\u5185\u58c1\u69fd\u69fd\u5e95\u76f4\u5f84 {reduced_inner}mm \u5fc5\u987b\u5c0f\u4e8e\u5916\u5f84 {outer}mm", f"Internal groove root diameter {reduced_inner}mm must be smaller than outer diameter {outer}mm"))
+            z_start = _value(feature, "z_start")
+            axial_width = _value(feature, "axial_width")
+            length = _value(base, "length") if base else None
+            if z_start is not None and axial_width is not None and length is not None and z_start + axial_width > length + 0.5:
+                add_check("internal_groove_outside_base", feature.id, "block", _msg(language, "\u5185\u58c1\u69fd\u4f4d\u7f6e\u8d85\u51fa\u57fa\u4f53\u957f\u5ea6", "Internal groove position exceeds the body length"))
 
         if feature.type in {"linear_pattern", "circular_pattern"}:
             count = _value(feature, "count")

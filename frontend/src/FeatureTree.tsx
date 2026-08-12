@@ -5,17 +5,20 @@ type FeatureTreeProps = {
   features: any[];
   selectedFeatureId: string;
   onSelectFeature: (featureId: string) => void;
+  evidenceCount?: number;
+  intentSummary?: string;
+  completenessScore?: number;
 };
 
 type GroupId = "base" | "remove" | "add" | "pattern" | "modify" | "other";
 
-const REMOVE_TYPES = new Set(["through_hole", "blind_hole", "counterbore_hole", "rectangular_slot", "rectangular_pocket", "annular_groove"]);
+const REMOVE_TYPES = new Set(["through_hole", "blind_hole", "counterbore_hole", "rectangular_slot", "rectangular_pocket", "annular_groove", "internal_annular_groove"]);
 const ADD_TYPES = new Set(["boss_cylinder", "rectangular_pad", "rib_box"]);
 const PATTERN_TYPES = new Set(["linear_pattern", "circular_pattern"]);
 const MODIFY_TYPES = new Set(["fillet", "chamfer"]);
 
 function groupFor(feature: any): GroupId {
-  if (feature?.operation === "base" || feature?.type === "box_base" || feature?.type === "cylinder_base" || feature?.type === "hollow_cylinder") {
+  if (feature?.operation === "base" || feature?.type === "box_base" || feature?.type === "cylinder_base" || feature?.type === "hollow_cylinder" || feature?.type === "link_plate") {
     return "base";
   }
   if (feature?.operation === "remove" || REMOVE_TYPES.has(feature?.type)) return "remove";
@@ -47,7 +50,7 @@ function hasAssumption(feature: any): boolean {
 
 const GROUP_IDS: GroupId[] = ["base", "remove", "add", "pattern", "modify", "other"];
 
-export default function FeatureTree({ features, selectedFeatureId, onSelectFeature }: FeatureTreeProps) {
+export default function FeatureTree({ features, selectedFeatureId, onSelectFeature, evidenceCount, intentSummary, completenessScore }: FeatureTreeProps) {
   const t = useT();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
@@ -84,6 +87,13 @@ export default function FeatureTree({ features, selectedFeatureId, onSelectFeatu
 
   return (
     <div className="feature-tree">
+      {(evidenceCount != null || intentSummary || completenessScore != null) && (
+        <div className="tree-pipeline-strip">
+          {evidenceCount != null && <span>{t("tree.pipeline.evidence", { count: evidenceCount })}</span>}
+          {intentSummary && <span className="tree-pipeline-intent">{t("tree.pipeline.intent", { value: intentSummary })}</span>}
+          {completenessScore != null && <span>{t("tree.pipeline.acceptance", { score: completenessScore })}</span>}
+        </div>
+      )}
       {GROUP_IDS.map((groupId) => {
         const items = grouped[groupId];
         if (!items.length) return null;

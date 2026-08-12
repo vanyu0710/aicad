@@ -1821,3 +1821,156 @@ a.disabled {
   line-height: 1.5;
   word-break: break-all;
 }
+
+/* v0.6 generic acceptance report */
+.evidence-strip,
+.execution-report-box,
+.intent-box {
+  background: #fbfcfb;
+  border: 1px solid #d8e2de;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.evidence-strip > strong,
+.execution-report-box > strong,
+.intent-box > strong {
+  display: block;
+  color: #2e383c;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.evidence-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.evidence-item,
+.evidence-conflict {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #eef4f1;
+  color: #435057;
+}
+
+.evidence-item b {
+  margin-right: 4px;
+  color: #2e383c;
+}
+
+.evidence-item.assumption {
+  border: 1px dashed #c9a45a;
+  background: #fbf6e9;
+}
+
+.evidence-conflict {
+  background: #f8e9e6;
+  color: #9b3b32;
+  width: 100%;
+}
+
+.execution-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.report-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  border: 1px solid #d8e2de;
+  color: #435057;
+}
+
+.report-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b7c4bf;
+}
+
+.report-chip.ok .report-dot {
+  background: #3f7d62;
+}
+
+.report-chip.not-ok .report-dot {
+  background: #b9564b;
+}
+
+.execution-score {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2e383c;
+}
+
+.execution-meta {
+  margin: 4px 0;
+  font-size: 12px;
+  color: #5a666b;
+}
+
+.execution-issues {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #9b3b32;
+}
+
+.execution-detail {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: #7a8588;
+}
+
+.intent-box p {
+  margin: 0 0 6px;
+  color: #2e383c;
+  font-size: 12px;
+}
+
+.intent-box span {
+  display: block;
+  font-size: 11px;
+  color: #5a666b;
+  margin-top: 3px;
+}
+
+.intent-unsupported {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  background: #f8e9e6;
+  border-radius: 4px;
+  color: #9b3b32;
+  font-size: 12px;
+}
+.tree-pipeline-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  background: #f4f8f6;
+  border: 1px solid #d8e2de;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #435057;
+}
+
+.tree-pipeline-intent {
+  flex-basis: 100%;
+  color: #2e383c;
+}

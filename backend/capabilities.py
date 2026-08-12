@@ -489,6 +489,22 @@ def _build_default_capabilities() -> list[FeatureCapability]:
             ["add", "update", "delete"],
         ),
         _capability(
+            "internal_annular_groove",
+            [_param("axial_width"), _param("groove_depth"), _param("z_start"), _id_param()],
+            ["add", "update", "delete"],
+        ),
+        _capability(
+            "link_plate",
+            [_param("length"), _param("width"), _param("height"), _param("end_diameter_1"), _param("end_diameter_2"), _id_param()],
+            ["update"],
+        ),
+        FeatureCapability(
+            feature_type="spur_gear",
+            editable_parameters=[],
+            allowed_operations=[],
+            implementation_status="unsupported",
+        ),
+        _capability(
             "boss_cylinder",
             [_param("diameter"), _param("height"), _placement_param(), _id_param()],
             ["add", "update", "delete"],

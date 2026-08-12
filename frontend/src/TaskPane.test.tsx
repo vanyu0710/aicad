@@ -135,3 +135,50 @@ describe("TaskPane", () => {
     expect(screen.getByText("STL")).toBeInTheDocument();
   });
 });
+
+describe("TaskPane v0.6 report", () => {
+  it("shows four-dimensional execution report and evidence", async () => {
+    const user = userEvent.setup();
+    useAppStore.setState({ ui: { ...useAppStore.getState().ui, rightTab: "review" } });
+    render(
+      <TaskPane
+        busy={false}
+        chatMessage=""
+        events={[]}
+        processSteps={[]}
+        featurePlan={null}
+        questions={[]}
+        reportMarkdown=""
+        executionReport={{
+          execution_ok: true,
+          plan_complete: true,
+          geometry_valid: true,
+          production_ready: false,
+          fallback_used: false,
+          skipped_features: ["hole_2"],
+          failed_features: [],
+          assumption_count: 3,
+          completeness_score: 85,
+          engine: "build123d",
+          details: ["hole_2 skipped"],
+        }}
+        evidence={[{ key: "outer_diameter", value: 50, unit: "mm", source: "user", confirmed_by_user: true }]}
+        evidenceConflicts={[]}
+        designIntent={{ summary: "tube with internal annular groove", function: "sealing", manufacturing_intent: "machined" }}
+        review={undefined}
+        unresolved={[]}
+        runId=""
+        engineLabel="Build123d Worker（受控执行）"
+        onChatMessageChange={vi.fn()}
+        onClarificationContinue={vi.fn()}
+        onSendChat={vi.fn()}
+        onSelectProcessStep={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("执行验收报告")).toBeInTheDocument();
+    expect(screen.getByText("可生产")).toBeInTheDocument();
+    expect(screen.getByText("完整度评分：85%")).toBeInTheDocument();
+    expect(screen.getByText(/跳过：hole_2/)).toBeInTheDocument();
+    expect(screen.getByText("设计意图")).toBeInTheDocument();
+  });
+});

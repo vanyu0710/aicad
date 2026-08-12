@@ -16,6 +16,9 @@ type Props = {
   selectedFeatureId: string;
   statusLabel: string;
   unresolvedCount: number;
+  evidenceCount?: number;
+  intentSummary?: string;
+  completenessScore?: number;
   onDescriptionChange: (value: string) => void;
   onImageChange: (file: File | null) => void;
   onSelectFeature: (featureId: string) => void;
@@ -42,6 +45,9 @@ export default function LeftManager({
   selectedFeatureId,
   statusLabel,
   unresolvedCount,
+  evidenceCount,
+  intentSummary,
+  completenessScore,
   onDescriptionChange,
   onImageChange,
   onSelectFeature,
@@ -139,6 +145,9 @@ export default function LeftManager({
                 features={features}
                 selectedFeatureId={selectedFeatureId}
                 onSelectFeature={onSelectFeature}
+                evidenceCount={evidenceCount}
+                intentSummary={intentSummary}
+                completenessScore={completenessScore}
               />
                             <div className="project-meta">
                 <span>{t("manager.part_family", { value: partFamily || t("manager.unrecognized") })}</span>
