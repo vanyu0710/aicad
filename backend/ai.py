@@ -10,6 +10,7 @@ from PIL import Image
 
 from backend.mechcad_ai import planner as ai_planner
 from backend.mechcad_ai import vision as ai_vision
+from backend.normalization import normalize_feature_plan
 from backend.process import ProcessRecorder
 from backend.capabilities import (
     CapabilityValidationError,
@@ -142,6 +143,7 @@ def build_initial_feature_plan(
             if settings.operation_mode == "smart":
                 plan = _apply_smart_autonomy(plan, description, settings.smart_fill_policy or "limited_fill", language)
             order_feature_plan(plan)
+            normalize_feature_plan(plan)
             return plan, questions_from_plan(plan, language)
     if recorder is not None and image is None and settings is not None:
         pass
@@ -155,6 +157,7 @@ def build_initial_feature_plan(
         plan = _apply_smart_autonomy(plan, description, settings.smart_fill_policy or "limited_fill", language)
         questions = questions_from_plan(plan, language)
     order_feature_plan(plan)
+    normalize_feature_plan(plan)
     return plan, questions
 
 
@@ -322,6 +325,7 @@ def apply_feature_operations(
     _sync_assumption_details(updated)
     _refresh_smart_resolution(updated)
     order_feature_plan(updated)
+    normalize_feature_plan(updated)
     combined = list(questions)
     existing = {q.id for q in combined}
     for q in questions_from_plan(updated, language):
@@ -836,6 +840,7 @@ def patch_feature(plan: FeaturePlanV3, feature_id: str, patch: dict[str, Any]) -
             feature.confirmed_by_user = bool(patch["confirmed_by_user"])
         break
     order_feature_plan(updated)
+    normalize_feature_plan(updated)
     return updated
 
 
@@ -903,7 +908,7 @@ def apply_clarification_answers(
     """Apply plain-language answers as user-confirmed values before CAD execution."""
     updated = deepcopy(plan)
     if not answers_text.strip():
-        return updated
+        return normalize_feature_plan(updated)
     parsed = _extract_dimension_clues(answers_text)
     lowered = answers_text.lower()
     for feature in _all_features(updated):
@@ -926,7 +931,7 @@ def apply_clarification_answers(
             feature.unresolved = [item for item in feature.unresolved if "through" not in item.lower() and "贯穿" not in item]
         if "跳过" in answers_text or "不建" in answers_text:
             feature.unresolved.append(_loc(language, "用户选择暂不执行该特征", "User chose not to execute this feature"))
-    return updated
+    return normalize_feature_plan(updated)
 
 
 def _missing_dimension_refs(reason: str, language: str = "zh") -> list[str]:

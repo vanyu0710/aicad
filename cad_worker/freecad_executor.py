@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from build123d import Align, BuildPart, Cylinder, Box, Locations, Mode, PolarLocations, export_step, export_stl
 
+from backend.normalization import normalize_feature_plan
 from backend.schemas import FeaturePlanV3
 from backend.validation import order_feature_plan
 
@@ -88,6 +89,7 @@ def main() -> int:
     plan = None
     try:
         plan = FeaturePlanV3.model_validate(plan_raw)
+        normalize_feature_plan(plan)
         part = _build_part(plan, report, out_dir)
         step_path = out_dir / "model.step"
         stl_path = out_dir / "model.stl"

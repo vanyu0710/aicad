@@ -1,3 +1,13 @@
+## v0.7.0 Phase 1B - Pure Validation
+
+- Added explicit `backend/normalization.py` with idempotent `normalize_feature_plan()`; auto IDs, duplicate/missing dependency bookkeeping, non-positive dimensions, assumption aggregation, and `requires_confirmation` are no longer hidden inside Pydantic model validation.
+- Removed `FeaturePlanV3.validate_engineering_contract` and `model_validator`; model construction now only performs shape validation.
+- `validate_feature_plan()` is now a pure function: it no longer writes `self_checks`, rewrites `design_review`, or reorders features.
+- Added `compute_feature_order()` (read-only ordering) and explicit `order_feature_plan()`; validation uses the read-only form.
+- Added `apply_validation_result()` so orchestration layers explicitly write validation checks into `self_checks` and `[validation]`-prefixed design review entries.
+- All plan-producing paths now call `normalize_feature_plan()` before validation/execution: initial AI planning, local fallback, chat edits, property patches, clarification answers, template plans, restored snapshots, and CAD Worker loading.
+- Existing API return keys (`checks / blocking / warnings / order / base_ready`) and strict/smart semantics are unchanged.
+
 ## v0.7.0 Phase 1A - Canonical Feature Semantics
 
 - Added `FeatureDefinition`, `ConstraintSpec`, and `VerificationContractSpec` to the schema layer as stateless feature metadata.

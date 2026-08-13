@@ -19,6 +19,7 @@ from backend.schemas import (
     TemplateFeatureSpec,
 )
 from backend.feature_definitions import FEATURE_DEFINITIONS, to_semantics
+from backend.normalization import normalize_feature_plan
 
 
 def detect_input_kind(image_present: bool, description: str) -> str:
@@ -383,7 +384,7 @@ def build_template_plan(
     plan.evidence = build_evidence_set(description, None, False, language)
     if mode == "smart":
         _fill_smart_defaults(plan, clues, language)
-        plan = FeaturePlanV3.model_validate(plan.model_dump())
+    normalize_feature_plan(plan)
     if template.unsupported_requirements:
         plan.unresolved.append({"feature": family, "reason": "unsupported capability: " + ", ".join(template.unsupported_requirements)})
     plan.completeness = _completeness(plan)

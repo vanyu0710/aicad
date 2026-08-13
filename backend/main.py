@@ -42,9 +42,10 @@ from backend.schemas import (
     StageEvent,
 )
 from backend.mechcad_ai.client import resolve_role_config, test_model_connection
+from backend.normalization import normalize_feature_plan
 from backend.session import SessionStore
 from backend.storage import artifact_path
-from backend.validation import validate_feature_plan
+from backend.validation import apply_validation_result, validate_feature_plan
 from backend.static_assets import mount_frontend
 
 
@@ -478,7 +479,9 @@ def _refresh_restored_validation(project):
     """Re-run deterministic checks on a restored snapshot without rebuilding CAD."""
     if project.current.feature_plan is not None:
         mode = project.settings.operation_mode or "strict"
-        validate_feature_plan(project.current.feature_plan, mode, "zh")
+        normalize_feature_plan(project.current.feature_plan)
+        result = validate_feature_plan(project.current.feature_plan, mode, "zh")
+        apply_validation_result(project.current.feature_plan, result, mode)
         store.save_project(project.project_id)
     return project
 
@@ -486,7 +489,9 @@ def _refresh_restored_validation(project):
 def _execution_gate(plan, settings, questions, language: str = "zh") -> tuple[bool, list[str]]:
     """Centralize deterministic validation and policy before starting CAD."""
     mode = settings.operation_mode or "strict"
+    normalize_feature_plan(plan)
     result = validate_feature_plan(plan, mode, language)
+    apply_validation_result(plan, result, mode)
     logs: list[str] = []
     if result["blocking"]:
         logs.extend(_loc(language, f"自检阻塞：{item}", f"Validation blocked: {item}") for item in result["blocking"])

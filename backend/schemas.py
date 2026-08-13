@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 OperationMode = Literal["strict", "smart"]
@@ -256,46 +256,6 @@ class FeaturePlanV3(BaseModel):
     unresolved: list[dict[str, Any]] = Field(default_factory=list)
     design_review: DesignReview = Field(default_factory=DesignReview)
     self_checks: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def validate_engineering_contract(self) -> "FeaturePlanV3":
-        seen_ids: set[str] = set()
-        ordered_features = [self.base_feature] if self.base_feature else []
-        ordered_features.extend(self.features)
-
-        for index, feature in enumerate(ordered_features):
-            if feature is None:
-                continue
-            if not feature.id:
-                feature.id = "base" if index == 0 else f"feature_{index}"
-            if feature.id in seen_ids:
-                self.unresolved.append({"feature": feature.id, "reason": "Duplicate feature id"})
-            seen_ids.add(feature.id)
-
-        for feature in ordered_features:
-            if feature is None:
-                continue
-            for dep in feature.depends_on:
-                if dep and dep not in seen_ids:
-                    self.unresolved.append({"feature": feature.id, "reason": f"Missing dependency: {dep}"})
-            for name, dim in feature.dimensions.items():
-                if dim.value is not None and dim.value <= 0 and name not in {"x", "y", "z"}:
-                    feature.unresolved.append(f"Invalid non-positive dimension: {name}")
-                if dim.source == "assumption" and not dim.confirmed_by_user:
-                    self.design_review.requires_confirmation = True
-                    self.assumptions.append(dim.evidence or f"{feature.id}.{name}")
-                    if not any(item.feature_id == feature.id and item.dimension == name for item in self.assumption_details):
-                        self.assumption_details.append(
-                            DesignAssumption(
-                                feature_id=feature.id,
-                                dimension=name,
-                                value=dim.value,
-                                reason=dim.evidence or "AI inferred dimension",
-                                confidence=dim.confidence,
-                            )
-                        )
-        return self
-
 
 class FeatureEditOperation(BaseModel):
     model_config = ConfigDict(extra="allow")

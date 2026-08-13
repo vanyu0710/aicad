@@ -77,11 +77,8 @@ def _has(feature: FeatureV3 | None, name: str) -> bool:
     return _value(feature, name) is not None
 
 
-def order_feature_plan(plan: FeaturePlanV3) -> tuple[list[str], list[str]]:
-    """Reorder features by dependency and manufacturing stage.
-
-    Returns (ordered_feature_ids_including_base, cyclic_feature_ids).
-    """
+def compute_feature_order(plan: FeaturePlanV3) -> tuple[list[str], list[str]]:
+    """Return dependency/stage order without mutating the plan."""
     if plan.base_feature is None:
         return [], [feature.id for feature in plan.features]
     all_ids = {plan.base_feature.id, *(feature.id for feature in plan.features)}
@@ -104,13 +101,19 @@ def order_feature_plan(plan: FeaturePlanV3) -> tuple[list[str], list[str]]:
         ordered.append(feature.id)
         done.add(feature.id)
 
-    if ordered != [feature.id for feature in plan.features]:
-        plan.features = [feature for feature in plan.features if feature.id in ordered] + [feature for feature in plan.features if feature.id in cycles]
     return [plan.base_feature.id, *ordered], cycles
 
 
+def order_feature_plan(plan: FeaturePlanV3) -> tuple[list[str], list[str]]:
+    """Explicitly reorder features by dependency and manufacturing stage."""
+    ordered, cycles = compute_feature_order(plan)
+    if plan.base_feature is not None and ordered != [plan.base_feature.id, *[feature.id for feature in plan.features]]:
+        plan.features = [feature for feature in plan.features if feature.id in ordered] + [feature for feature in plan.features if feature.id in cycles]
+    return ordered, cycles
+
+
 def validate_feature_plan(plan: FeaturePlanV3, mode: str = "strict", language: str = "zh") -> dict[str, Any]:
-    """Run deterministic checks and write structured self_checks into the plan."""
+    """Run deterministic checks without mutating the plan."""
     checks: list[dict[str, Any]] = []
     blocking: list[str] = []
     warnings: list[str] = []
@@ -120,7 +123,7 @@ def validate_feature_plan(plan: FeaturePlanV3, mode: str = "strict", language: s
         target = blocking if status == "block" else warnings
         target.append(message)
 
-    order, cycles = order_feature_plan(plan)
+    order, cycles = compute_feature_order(plan)
     if cycles:
         add_check("dependency_cycle", None, "block", _msg(language, "依赖环: " + ", ".join(cycles), "Dependency cycle: " + ", ".join(cycles)))
 
@@ -231,24 +234,36 @@ def validate_feature_plan(plan: FeaturePlanV3, mode: str = "strict", language: s
             status = "block" if mode == "strict" else "warning"
             add_check("unconfirmed_assumption", feature.id, status, _msg(language, f"特征 {feature.id} 含未确认假设尺寸: {', '.join(unconfirmed)}", f"Feature {feature.id} has unconfirmed assumed dimensions: {', '.join(unconfirmed)}"))
 
+    return {"checks": checks, "blocking": blocking, "warnings": warnings, "order": order, "base_ready": base is not None}
+
+
+def apply_validation_result(
+    plan: FeaturePlanV3,
+    result: dict[str, Any],
+    mode: str = "strict",
+) -> FeaturePlanV3:
+    """Explicitly write a validation result back into plan bookkeeping."""
+    checks = result.get("checks") or []
+    blocking = result.get("blocking") or []
+    warnings = result.get("warnings") or []
     plan.self_checks = {
         "engine": "build123d",
         "mode": mode,
-        "order": order,
+        "order": result.get("order") or [],
         "checks": checks,
         "summary": {
-            "pass": sum(1 for item in checks if item["status"] == "pass"),
-            "warning": sum(1 for item in checks if item["status"] == "warning"),
-            "block": sum(1 for item in checks if item["status"] == "block"),
+            "pass": sum(1 for item in checks if item.get("status") == "pass"),
+            "warning": sum(1 for item in checks if item.get("status") == "warning"),
+            "block": sum(1 for item in checks if item.get("status") == "block"),
         },
     }
 
-    def sync_review(plan: FeaturePlanV3, key: str, items: list[str]) -> None:
+    def sync_review(key: str, items: list[str]) -> None:
         review = plan.design_review
         current = getattr(review, key)
         filtered = [item for item in current if not item.startswith("[validation]")]
         setattr(review, key, filtered + [f"[validation] {item}" for item in items])
 
-    sync_review(plan, "blocking", blocking)
-    sync_review(plan, "warnings", warnings)
-    return {"checks": checks, "blocking": blocking, "warnings": warnings, "order": order, "base_ready": base is not None}
+    sync_review("blocking", blocking)
+    sync_review("warnings", warnings)
+    return plan

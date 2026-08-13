@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import unittest
 
+from backend.normalization import normalize_feature_plan
 from backend.schemas import FeaturePlanV3
-from backend.validation import order_feature_plan, validate_feature_plan
+from backend.validation import (
+    apply_validation_result,
+    compute_feature_order,
+    order_feature_plan,
+    validate_feature_plan,
+)
 
 
 def _base(part_family="plate", base_type="box_base", dimensions=None):
@@ -204,10 +210,80 @@ class ValidationTests(unittest.TestCase):
 
     def test_self_checks_are_written_into_plan(self):
         plan = FeaturePlanV3.model_validate({"base_feature": _base(), "features": []})
-        validate_feature_plan(plan)
+        result = validate_feature_plan(plan)
+        self.assertNotIn("checks", plan.self_checks)
+        apply_validation_result(plan, result)
         self.assertIn("checks", plan.self_checks)
         self.assertIn("order", plan.self_checks)
         self.assertEqual(plan.self_checks["summary"]["block"], 0)
+
+    def test_validate_feature_plan_is_pure_and_repeatable(self):
+        plan = FeaturePlanV3.model_validate(
+            {
+                "base_feature": _base(),
+                "features": [
+                    _feature("boss1", "boss_cylinder", "add", {"diameter": {"value": 10}, "height": {"value": 5}}),
+                    _feature("hole1", "through_hole", "remove", {"diameter": {"value": 6}}, placement={"reference": "center", "x": 0, "y": 0, "axis": "Z"}),
+                ],
+            }
+        )
+        before = plan.model_dump()
+        first = validate_feature_plan(plan, mode="strict")
+        second = validate_feature_plan(plan, mode="strict")
+        self.assertEqual(plan.model_dump(), before)
+        self.assertEqual(first, second)
+
+    def test_compute_feature_order_does_not_mutate_plan(self):
+        plan = FeaturePlanV3.model_validate(
+            {
+                "base_feature": _base(),
+                "features": [
+                    _feature("boss1", "boss_cylinder", "add", {"diameter": {"value": 10}, "height": {"value": 5}}),
+                    _feature("hole1", "through_hole", "remove", {"diameter": {"value": 6}}, placement={"reference": "center", "x": 0, "y": 0, "axis": "Z"}),
+                ],
+            }
+        )
+        before = [feature.id for feature in plan.features]
+        ordered, cycles = compute_feature_order(plan)
+        self.assertEqual([feature.id for feature in plan.features], before)
+        self.assertEqual(ordered, ["base_plate", "hole1", "boss1"])
+        self.assertEqual(cycles, [])
+
+    def test_normalize_feature_plan_is_idempotent(self):
+        plan = FeaturePlanV3.model_validate(
+            {
+                "base_feature": _base(),
+                "features": [
+                    _feature(
+                        "hole1",
+                        "through_hole",
+                        "remove",
+                        {"diameter": {"value": 6, "unit": "mm", "source": "assumption", "confirmed_by_user": False}},
+                        placement={"reference": "center", "x": 0, "y": 0, "axis": "Z"},
+                        depends_on=["ghost"],
+                    )
+                ],
+            }
+        )
+        normalize_feature_plan(plan)
+        first = plan.model_dump()
+        normalize_feature_plan(plan)
+        self.assertEqual(plan.model_dump(), first)
+        self.assertTrue(any(item["feature"] == "hole1" and "Missing dependency" in item["reason"] for item in plan.unresolved))
+        self.assertTrue(any(item.feature_id == "hole1" and item.dimension == "diameter" for item in plan.assumption_details))
+
+    def test_apply_validation_result_writes_self_checks_and_review(self):
+        plan = FeaturePlanV3.model_validate(
+            {
+                "base_feature": _base(),
+                "features": [_feature("hole1", "through_hole", "remove", {})],
+            }
+        )
+        result = validate_feature_plan(plan, mode="strict")
+        apply_validation_result(plan, result, mode="strict")
+        self.assertEqual(plan.self_checks["mode"], "strict")
+        self.assertTrue(any(item.startswith("[validation]") for item in plan.design_review.blocking))
+        self.assertTrue(all(item.startswith("[validation]") for item in plan.design_review.blocking))
 
 
 if __name__ == "__main__":
