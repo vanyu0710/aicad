@@ -11,6 +11,7 @@ and the CAD worker expect, without inventing values. Anything missing stays in
 
 from typing import Any
 
+# TODO(v0.7): migrate aliases to backend.feature_definitions canonical parameter metadata.
 # Base feature type -> supported dimension key aliases.
 _BASE_KEY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
     "box_base": {
@@ -27,8 +28,16 @@ _BASE_KEY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
         "inner_diameter": ("inner_diameter", "bore_diameter", "id"),
         "length": ("length", "height", "thickness"),
     },
+    "link_plate": {
+        "length": ("length",),
+        "width": ("width",),
+        "height": ("height", "thickness"),
+        "end_diameter_1": ("end_diameter_1", "end_1_diameter"),
+        "end_diameter_2": ("end_diameter_2", "end_2_diameter"),
+    },
 }
 
+# TODO(v0.7): migrate aliases to backend.feature_definitions canonical parameter metadata.
 # Feature type -> supported dimension key aliases.
 _FEATURE_KEY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
     "through_hole": {"diameter": ("diameter", "hole_diameter", "actual_cut_diameter")},
@@ -42,6 +51,11 @@ _FEATURE_KEY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
     "annular_groove": {
         "reduced_outer_diameter": ("reduced_outer_diameter", "groove_diameter", "diameter"),
         "axial_width": ("axial_width", "width"),
+        "z_start": ("z_start", "axial_start_from_bottom"),
+    },
+    "internal_annular_groove": {
+        "axial_width": ("axial_width", "width"),
+        "groove_depth": ("groove_depth", "depth"),
         "z_start": ("z_start", "axial_start_from_bottom"),
     },
     "boss_cylinder": {"diameter": ("diameter", "outer_diameter"), "height": ("height", "length")},

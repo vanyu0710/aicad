@@ -18,6 +18,7 @@ from backend.schemas import (
     PlacementV3,
     TemplateFeatureSpec,
 )
+from backend.feature_definitions import FEATURE_DEFINITIONS, to_semantics
 
 
 def detect_input_kind(image_present: bool, description: str) -> str:
@@ -168,17 +169,19 @@ def infer_design_intent(
 
 
 def feature_semantics() -> list[FeatureSemantics]:
-    return [
-        FeatureSemantics(feature_type="box_base", operation="base", geometry_effect="base", required_dimensions=["length", "width", "height"], parent_required=False, centered_placements=["origin", "bottom_center"]),
-        FeatureSemantics(feature_type="cylinder_base", operation="base", geometry_effect="base", required_dimensions=["outer_diameter", "length"], parent_required=False, centered_placements=["origin", "center"]),
-        FeatureSemantics(feature_type="hollow_cylinder", operation="base", geometry_effect="base", required_dimensions=["outer_diameter", "inner_diameter", "length"], parent_required=False, centered_placements=["origin", "bottom_end_center"]),
-        FeatureSemantics(feature_type="link_plate", operation="base", geometry_effect="base", required_dimensions=["length", "width", "height", "end_diameter_1", "end_diameter_2"], parent_required=False, centered_placements=["origin"]),
-        FeatureSemantics(feature_type="through_hole", operation="remove", geometry_effect="remove", required_dimensions=["diameter"], optional_dimensions=["depth"], centered_placements=["model_center", "flange_center", "main_axis", "base_center"]),
-        FeatureSemantics(feature_type="internal_annular_groove", operation="remove", geometry_effect="remove", required_dimensions=["axial_width", "groove_depth", "z_start"], centered_placements=["main_axis", "model_center"]),
-        FeatureSemantics(feature_type="circular_pattern", operation="pattern", geometry_effect="pattern", required_dimensions=["count", "pitch_radius", "diameter"], centered_placements=["model_center", "flange_center", "main_axis"]),
-        FeatureSemantics(feature_type="rectangular_pad", operation="add", geometry_effect="add", required_dimensions=["length", "width", "height"], centered_placements=["base_center", "origin"]),
-        FeatureSemantics(feature_type="rib_box", operation="add", geometry_effect="add", required_dimensions=["length", "width", "height"], centered_placements=["base_center", "origin"]),
+    # Legacy endpoint shape is preserved; all feature types live in the registry.
+    legacy_order = [
+        "box_base",
+        "cylinder_base",
+        "hollow_cylinder",
+        "link_plate",
+        "through_hole",
+        "internal_annular_groove",
+        "circular_pattern",
+        "rectangular_pad",
+        "rib_box",
     ]
+    return [to_semantics(definition) for definition in (FEATURE_DEFINITIONS.get(name) for name in legacy_order) if definition is not None]
 
 
 def _dimension(value: float | None, evidence: str, source: str = "drawing", confirmed: bool = True) -> DimensionV3:

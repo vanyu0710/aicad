@@ -27,6 +27,7 @@ _UNSUPPORTED_TYPES = {"fillet", "chamfer", "helical_gear", "spur_gear", "thread"
 _NEEDS_XY_TYPES = {"through_hole", "blind_hole", "counterbore_hole", "rectangular_slot", "rectangular_pocket", "boss_cylinder", "rectangular_pad", "rib_box", "linear_pattern", "circular_pattern"}
 _CENTERED_PLACEMENTS = {"main_axis", "origin", "center", "flange_center", "model_center", "bottom_center", "bottom_end_center", "base_center", "top_center"}
 
+# TODO(v0.7): migrate required dimensions to backend.feature_definitions.get_feature_definition().
 _REQUIRED_DIMS = {
     "box_base": ("length", "width", "height"),
     "cylinder_base": ("outer_diameter", "length"),

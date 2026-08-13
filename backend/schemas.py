@@ -356,6 +356,41 @@ class FeatureCapability(BaseModel):
     implementation_status: str = "supported"
 
 
+class ConstraintSpec(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    message: str
+    severity: Literal["info", "warning", "blocking"] = "blocking"
+
+
+class VerificationContractSpec(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    properties: list[str] = Field(default_factory=list)
+    status: Literal["supported", "partial", "unsupported"] = "unsupported"
+    notes: str = ""
+
+
+class FeatureDefinition(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    feature_type: str
+    operation: FeatureOperation = "remove"
+    geometry_effect: Literal["base", "add", "remove", "modify", "pattern"] = "remove"
+    parameters: list[ParameterSpec] = Field(default_factory=list)
+    required_dimensions: list[str] = Field(default_factory=list)
+    optional_dimensions: list[str] = Field(default_factory=list)
+    references: list[str] = Field(default_factory=list)
+    centered_placements: list[str] = Field(default_factory=list)
+    allowed_operations: list[FeatureEditOp] = Field(default_factory=list)
+    convert_to_types: list[str] = Field(default_factory=list)
+    constraints: list[ConstraintSpec] = Field(default_factory=list)
+    verification_contract: VerificationContractSpec = Field(default_factory=VerificationContractSpec)
+    parent_required: bool = True
+    implementation_status: str = "supported"
+
+
 class CapabilityIssue(BaseModel):
     model_config = ConfigDict(extra="allow")
 

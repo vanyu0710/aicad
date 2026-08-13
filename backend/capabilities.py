@@ -12,24 +12,13 @@ from backend.schemas import (
     ParameterSpec,
     PlacementV3,
 )
+from backend.feature_definitions import FEATURE_DEFINITIONS, to_capability
 
 CAPABILITY_UNKNOWN_FEATURE = "CAPABILITY_UNKNOWN_FEATURE"
 CAPABILITY_OPERATION_NOT_ALLOWED = "CAPABILITY_OPERATION_NOT_ALLOWED"
 CAPABILITY_PARAMETER_UNKNOWN = "CAPABILITY_PARAMETER_UNKNOWN"
 CAPABILITY_PARAMETER_NOT_EDITABLE = "CAPABILITY_PARAMETER_NOT_EDITABLE"
 CAPABILITY_PARAMETER_INVALID_VALUE = "CAPABILITY_PARAMETER_INVALID_VALUE"
-
-_CENTERED_REFERENCES = [
-    "main_axis",
-    "origin",
-    "center",
-    "flange_center",
-    "model_center",
-    "bottom_center",
-    "bottom_end_center",
-    "base_center",
-    "top_center",
-]
 
 
 def _issue(
@@ -53,58 +42,6 @@ def _issue(
     )
 
 
-def _param(
-    name: str,
-    *,
-    value_type: str = "float",
-    unit: str | None = "mm",
-    editable: bool = True,
-    required: bool = False,
-    minimum: float | None = 0.0,
-    maximum: float | None = None,
-    aliases: tuple[str, ...] = (),
-) -> ParameterSpec:
-    return ParameterSpec(
-        name=name,
-        value_type=value_type,
-        unit=unit,
-        editable=editable,
-        minimum=minimum,
-        maximum=maximum,
-        required=required,
-        aliases=list(aliases),
-    )
-
-
-def _id_param() -> ParameterSpec:
-    return _param("id", value_type="string", unit=None, editable=False, required=True, minimum=None)
-
-
-def _placement_param() -> ParameterSpec:
-    return _param("position", value_type="placement", unit=None, editable=True, required=False, minimum=None)
-
-
-def _extent_param() -> ParameterSpec:
-    return _param("extent", value_type="extent", unit=None, editable=True, required=False, minimum=None)
-
-
-def _capability(
-    feature_type: str,
-    params: list[ParameterSpec],
-    operations: list[str],
-    *,
-    convert_to_types: tuple[str, ...] = (),
-) -> FeatureCapability:
-    return FeatureCapability(
-        feature_type=feature_type,
-        editable_parameters=params,
-        allowed_operations=list(operations),
-        reference_types=list(_CENTERED_REFERENCES),
-        convert_to_types=list(convert_to_types),
-        implementation_status="supported",
-    )
-
-
 class CapabilityRegistry:
     """Static metadata registry for editable feature operations and parameters.
 
@@ -125,6 +62,9 @@ class CapabilityRegistry:
         if not feature_type:
             return None
         return self._capabilities.get(feature_type)
+
+    def all(self) -> list[FeatureCapability]:
+        return list(self._capabilities.values())
 
     def supports_operation(self, feature_type: str | None, operation: str) -> bool:
         capability = self.get(feature_type)
@@ -437,98 +377,11 @@ class CapabilityValidationError(Exception):
 
 
 def _build_default_capabilities() -> list[FeatureCapability]:
+    # Legacy capability table now derives from the canonical feature registry.
     return [
-        _capability(
-            "box_base",
-            [_param("length"), _param("width"), _param("height"), _id_param()],
-            ["update"],
-        ),
-        _capability(
-            "cylinder_base",
-            [_param("outer_diameter"), _param("length"), _id_param()],
-            ["update"],
-        ),
-        _capability(
-            "hollow_cylinder",
-            [_param("outer_diameter"), _param("inner_diameter"), _param("length"), _id_param()],
-            ["update"],
-        ),
-        _capability(
-            "through_hole",
-            [_param("diameter"), _placement_param(), _extent_param(), _id_param()],
-            ["add", "update", "delete", "change_type"],
-            convert_to_types=("blind_hole", "counterbore_hole"),
-        ),
-        _capability(
-            "blind_hole",
-            [_param("diameter"), _param("depth"), _placement_param(), _extent_param(), _id_param()],
-            ["add", "update", "delete", "change_type"],
-            convert_to_types=("through_hole", "counterbore_hole"),
-        ),
-        _capability(
-            "counterbore_hole",
-            [_param("diameter"), _param("depth"), _placement_param(), _extent_param(), _id_param()],
-            ["add", "update", "delete", "change_type"],
-            convert_to_types=("through_hole", "blind_hole"),
-        ),
-        _capability(
-            "rectangular_slot",
-            [_param("length"), _param("width"), _param("depth"), _placement_param(), _extent_param(), _id_param()],
-            ["add", "update", "delete", "change_type"],
-            convert_to_types=("rectangular_pocket",),
-        ),
-        _capability(
-            "rectangular_pocket",
-            [_param("length"), _param("width"), _param("depth"), _placement_param(), _extent_param(), _id_param()],
-            ["add", "update", "delete", "change_type"],
-            convert_to_types=("rectangular_slot",),
-        ),
-        _capability(
-            "annular_groove",
-            [_param("reduced_outer_diameter"), _param("axial_width"), _param("z_start"), _id_param()],
-            ["add", "update", "delete"],
-        ),
-        _capability(
-            "internal_annular_groove",
-            [_param("axial_width"), _param("groove_depth"), _param("z_start"), _id_param()],
-            ["add", "update", "delete"],
-        ),
-        _capability(
-            "link_plate",
-            [_param("length"), _param("width"), _param("height"), _param("end_diameter_1"), _param("end_diameter_2"), _id_param()],
-            ["update"],
-        ),
-        FeatureCapability(
-            feature_type="spur_gear",
-            editable_parameters=[],
-            allowed_operations=[],
-            implementation_status="unsupported",
-        ),
-        _capability(
-            "boss_cylinder",
-            [_param("diameter"), _param("height"), _placement_param(), _id_param()],
-            ["add", "update", "delete"],
-        ),
-        _capability(
-            "rectangular_pad",
-            [_param("length"), _param("width"), _param("height"), _placement_param(), _id_param()],
-            ["add", "update", "delete"],
-        ),
-        _capability(
-            "rib_box",
-            [_param("length"), _param("width"), _param("height"), _placement_param(), _id_param()],
-            ["add", "update", "delete"],
-        ),
-        _capability(
-            "linear_pattern",
-            [_param("count"), _param("spacing"), _param("diameter"), _placement_param(), _id_param()],
-            ["add", "update", "delete"],
-        ),
-        _capability(
-            "circular_pattern",
-            [_param("count"), _param("pitch_radius"), _param("diameter"), _placement_param(), _id_param()],
-            ["add", "update", "delete"],
-        ),
+        to_capability(definition)
+        for definition in FEATURE_DEFINITIONS.list()
+        if definition.implementation_status == "supported" or definition.feature_type == "spur_gear"
     ]
 
 

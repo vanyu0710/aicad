@@ -1,3 +1,13 @@
+## v0.7.0 Phase 1A - Canonical Feature Semantics
+
+- Added `FeatureDefinition`, `ConstraintSpec`, and `VerificationContractSpec` to the schema layer as stateless feature metadata.
+- Added `backend/feature_definitions.py` with `FeatureDefinitionRegistry`, `get_feature_definition()`, and canonical definitions for all 16 supported feature types plus 6 known unsupported types.
+- `CapabilityRegistry` now derives `CAPABILITIES` from the canonical registry; `feature_semantics()` preserves the legacy `/api/capabilities` shape while reading from the registry.
+- Legacy validation/AI/normalization dimension tables are marked with `TODO(v0.7)` migration notes and regression tests now assert they match the canonical registry.
+- Fixed drift where AI required-dimension tables were missing internal annular grooves, link plates, and linear patterns.
+- Fixed a latent missing `CapabilityRegistry.all()` method used by `GET /api/capabilities`.
+- Added 11 backend tests for registry coverage, invalid type rejection, duplicate registration, derived capability/semantic equivalence, and legacy-table consistency.
+
 ## v0.6.0 - Generic Modeling Core and UI Acceptance Layer
 
 - Added a generic input/evidence layer: `InputRouter` distinguishes text-only, image-only, and mixed inputs; pure text generation no longer needs a vision model.
