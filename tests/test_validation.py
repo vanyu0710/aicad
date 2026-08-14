@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from copy import deepcopy
 
 from backend.normalization import normalize_feature_plan
 from backend.schemas import FeaturePlanV3
@@ -232,6 +233,54 @@ class ValidationTests(unittest.TestCase):
         second = validate_feature_plan(plan, mode="strict")
         self.assertEqual(plan.model_dump(), before)
         self.assertEqual(first, second)
+
+    def test_validate_feature_plan_deepcopy_mutation_regression(self):
+        plan = FeaturePlanV3.model_validate(
+            {
+                "base_feature": _base(),
+                "features": [
+                    _feature(
+                        "hole1",
+                        "through_hole",
+                        "remove",
+                        {"diameter": {"value": 6, "source": "assumption", "confirmed_by_user": False}},
+                        placement={"reference": "center", "x": 0, "y": 0, "axis": "Z"},
+                    )
+                ],
+            }
+        )
+        normalize_feature_plan(plan)
+        apply_validation_result(plan, validate_feature_plan(plan, mode="smart"), mode="smart")
+        plan_before = deepcopy(plan)
+        result = validate_feature_plan(plan, mode="smart")
+        self.assertEqual(plan, plan_before)
+        self.assertEqual(plan.model_dump(), plan_before.model_dump())
+        self.assertIsInstance(result, dict)
+
+    def test_double_validation_is_stable_and_plan_unchanged(self):
+        plan = FeaturePlanV3.model_validate(
+            {
+                "base_feature": _base(),
+                "features": [
+                    _feature(
+                        "hole1",
+                        "through_hole",
+                        "remove",
+                        {"diameter": {"value": 6, "source": "assumption", "confirmed_by_user": False}},
+                        placement={"reference": "center", "x": 0, "y": 0, "axis": "Z"},
+                    )
+                ],
+            }
+        )
+        normalize_feature_plan(plan)
+        apply_validation_result(plan, validate_feature_plan(plan, mode="smart"), mode="smart")
+        plan_before = deepcopy(plan)
+        result1 = validate_feature_plan(plan, mode="smart")
+        result2 = validate_feature_plan(plan, mode="smart")
+        self.assertEqual(result1, result2)
+        self.assertEqual(plan, plan_before)
+        self.assertEqual(plan.model_dump(), plan_before.model_dump())
+
 
     def test_compute_feature_order_does_not_mutate_plan(self):
         plan = FeaturePlanV3.model_validate(

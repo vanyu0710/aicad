@@ -1,11 +1,14 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 from backend.schemas import DesignSnapshot, FeaturePlanV3, ModelConfig
 from backend.session import SessionStore
+from backend.normalization import normalize_feature_plan
+from backend.validation import apply_validation_result, validate_feature_plan
 
 
 class SessionStoreTests(unittest.TestCase):
@@ -103,8 +106,43 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(previous.feature_plan.part_family, "unknown")
 
 
-def _snapshot(family: str) -> DesignSnapshot:
-    return DesignSnapshot(feature_plan=FeaturePlanV3(part_family=family))
+    def test_snapshot_round_trip_preserves_normalized_validated_plan(self) -> None:
+        store = SessionStore()
+        project = store.create_project("Validation snapshot")
+        plan = FeaturePlanV3.model_validate(
+            {
+                "base_feature": {
+                    "id": "base_plate",
+                    "type": "box_base",
+                    "operation": "base",
+                    "dimensions": {
+                        "length": {"value": 60, "unit": "mm", "confirmed_by_user": True},
+                        "width": {"value": 30, "unit": "mm", "confirmed_by_user": True},
+                        "height": {"value": 4, "unit": "mm", "confirmed_by_user": True},
+                    },
+                },
+                "features": [],
+            }
+        )
+        normalize_feature_plan(plan)
+        result = validate_feature_plan(plan, mode="strict")
+        apply_validation_result(plan, result, mode="strict")
+        validated_dump = plan.model_dump()
+
+        store.commit_snapshot(project.project_id, DesignSnapshot(feature_plan=plan))
+        self.assertEqual(store.get_project(project.project_id).current.feature_plan.self_checks["mode"], "strict")
+
+        store.undo(project.project_id)
+        self.assertEqual(store.get_project(project.project_id).current.feature_plan.self_checks, {})
+
+        store.redo(project.project_id)
+        restored = store.get_project(project.project_id).current.feature_plan
+        self.assertEqual(restored.model_dump(), validated_dump)
+        normalize_feature_plan(restored)
+        self.assertEqual(restored.model_dump(), validated_dump)
+        self.assertEqual(validate_feature_plan(restored, mode="strict"), result)
+
+
 
 
 
@@ -137,15 +175,22 @@ def _snapshot(family: str) -> DesignSnapshot:
     def test_rename_project_updates_name_and_timestamp(self) -> None:
         store = SessionStore()
         project = store.create_project("Before")
+        before_updated = project.updated_at
+        time.sleep(0.002)
         renamed = store.rename_project(project.project_id, "After")
         self.assertEqual(renamed.name, "After")
         self.assertEqual(store.get_project(project.project_id).name, "After")
-        self.assertNotEqual(renamed.updated_at, project.updated_at)
+        self.assertNotEqual(renamed.updated_at, before_updated)
 
     def test_rename_missing_project_raises_key_error(self) -> None:
         store = SessionStore()
         with self.assertRaises(KeyError):
             store.rename_project("nope", "New")
+
+
+
+def _snapshot(family: str) -> DesignSnapshot:
+    return DesignSnapshot(feature_plan=FeaturePlanV3(part_family=family))
 
 if __name__ == "__main__":
     unittest.main()

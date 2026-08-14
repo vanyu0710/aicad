@@ -7,6 +7,7 @@
 - Added `apply_validation_result()` so orchestration layers explicitly write validation checks into `self_checks` and `[validation]`-prefixed design review entries.
 - All plan-producing paths now call `normalize_feature_plan()` before validation/execution: initial AI planning, local fallback, chat edits, property patches, clarification answers, template plans, restored snapshots, and CAD Worker loading.
 - Existing API return keys (`checks / blocking / warnings / order / base_ready`) and strict/smart semantics are unchanged.
+- Added explicit mutation-regression, double-validation stability, and normalized/validated snapshot undo/redo tests; repaired previously hidden SessionStore tests caused by a misplaced `_snapshot` helper.
 
 ## v0.7.0 Phase 1A - Canonical Feature Semantics
 
