@@ -19,6 +19,7 @@ from backend.capabilities import (
     validate_feature_patch,
 )
 from backend.validation import order_feature_plan
+from backend.evidence_gate import apply_evidence_resolutions, evaluate_evidence_gate
 from backend.generic_engine import (
     build_evidence_set,
     build_template_plan,
@@ -34,6 +35,7 @@ from backend.schemas import (
     DimensionV3,
     FeatureEditOperation,
     FeatureEditSet,
+    EvidenceResolution,
     FeaturePlanV3,
     FeatureV3,
     GenerateRequest,
@@ -844,6 +846,41 @@ def patch_feature(plan: FeaturePlanV3, feature_id: str, patch: dict[str, Any]) -
     return updated
 
 
+def _evidence_conflict_questions(plan: FeaturePlanV3, language: str = "zh") -> list[ClarificationQuestion]:
+    """Turn unresolved material evidence conflicts into answerable questions."""
+    gate = evaluate_evidence_gate(plan, "smart")
+    questions: list[ClarificationQuestion] = []
+    for conflict in gate.conflicts:
+        if conflict.status == "resolved" or conflict.severity != "blocking" or not conflict.affected_feature_ids:
+            continue
+        values = sorted({str(conflict.source_a.value), str(conflict.source_b.value)})
+        parameter = conflict.parameter or conflict.key
+        text = (
+            f"{conflict.feature_id or 'feature'} 的 {parameter} 存在证据冲突："
+            f"{conflict.source_a.detail} {conflict.source_a.value}mm vs {conflict.source_b.detail} {conflict.source_b.value}mm。"
+            "请选择实际值。"
+            if language == "zh"
+            else f"{conflict.feature_id or 'feature'} {parameter} has an evidence conflict: "
+            f"{conflict.source_a.detail} {conflict.source_a.value}mm vs {conflict.source_b.detail} {conflict.source_b.value}mm. "
+            "Select the actual value."
+        )
+        questions.append(
+            ClarificationQuestion(
+                id=f"evidence_{conflict.id}",
+                text=text,
+                feature_id=conflict.feature_id,
+                dimension_refs=[parameter],
+                required=True,
+                options=values,
+                reason=conflict.reason,
+                impact="未选择前该冲突会阻止 CAD 执行。" if language == "zh" else "CAD remains blocked until this conflict is resolved.",
+                answer_type="choice",
+                unit="mm",
+            )
+        )
+    return questions
+
+
 def questions_from_plan(plan: FeaturePlanV3) -> list[ClarificationQuestion]:
     questions: list[ClarificationQuestion] = []
     for item in plan.unresolved[:8]:
@@ -899,6 +936,7 @@ def questions_from_plan(plan: FeaturePlanV3) -> list[ClarificationQuestion]:
                 unit=unit,
             )
         )
+    questions.extend(_evidence_conflict_questions(plan, language))
     return questions
 
 
@@ -910,6 +948,11 @@ def apply_clarification_answers(
     if not answers_text.strip():
         return normalize_feature_plan(updated)
     parsed = _extract_dimension_clues(answers_text)
+    updated = apply_evidence_resolutions(
+        updated,
+        [EvidenceResolution(key=key, selected_value=value, unit="mm") for key, value in parsed.items()],
+        language=language,
+    )
     lowered = answers_text.lower()
     for feature in _all_features(updated):
         unresolved_text = " ".join(feature.unresolved)
@@ -1516,4 +1559,5 @@ def questions_from_plan(plan: FeaturePlanV3, language: str = "zh") -> list[Clari
                 unit="mm",
             )
         )
+    questions.extend(_evidence_conflict_questions(plan, language))
     return questions

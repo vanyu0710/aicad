@@ -8,6 +8,8 @@ from typing import Any
 from backend.schemas import (
     DesignIntent,
     DimensionV3,
+    EvidenceConflict,
+    EvidenceConflictSource,
     EvidenceItem,
     EvidenceSet,
     ExecutionReport,
@@ -105,10 +107,11 @@ def build_evidence_set(
     if vision_json:
         for item in _iter_vision_evidence(vision_json):
             evidence.items.append(item)
-        for left, right in _find_evidence_conflicts(evidence):
-            evidence.conflicts.append(
-                f"{left.key}: {left.value} conflicts with {right.key}: {right.value}"
-            )
+    for index, (left, right) in enumerate(_find_evidence_conflicts(evidence)):
+        evidence.conflicts.append(
+            f"{left.key}: {left.value} conflicts with {right.key}: {right.value}"
+        )
+        evidence.conflict_details.append(_evidence_conflict(left, right, index))
     return evidence
 
 
@@ -140,9 +143,52 @@ def _find_evidence_conflicts(evidence: EvidenceSet):
             continue
         first = items[0]
         for other in items[1:]:
-            if first.value is not None and other.value is not None and float(first.value) != float(other.value):
+            if _numeric(first.value) is None or _numeric(other.value) is None:
+                continue
+            if abs(float(first.value) - float(other.value)) > 0.01:
+                if other.key not in first.conflict_with:
+                    first.conflict_with.append(other.key)
+                if first.key not in other.conflict_with:
+                    other.conflict_with.append(first.key)
                 conflicts.append((first, other))
     return conflicts
+
+
+def _numeric(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _evidence_source(item: EvidenceItem) -> "EvidenceConflictSource":
+    label = {
+        "user": "text/user description",
+        "drawing": "drawing/vision",
+        "assumption": "assumed value",
+        "derived": "derived value",
+    }.get(item.source, item.source)
+    return EvidenceConflictSource(
+        source=item.source,
+        value=item.value,
+        unit=item.unit,
+        confirmed_by_user=item.confirmed_by_user,
+        detail=label,
+    )
+
+
+def _evidence_conflict(left: EvidenceItem, right: EvidenceItem, index: int) -> "EvidenceConflict":
+    return EvidenceConflict(
+        id=f"evidence_conflict_{index}",
+        key=left.key,
+        feature_id=left.feature_id or right.feature_id,
+        parameter=left.dimension or right.dimension,
+        source_a=_evidence_source(left),
+        source_b=_evidence_source(right),
+        reason=f"{left.key} numeric disagreement between {left.source} and {right.source}",
+    )
 
 
 def infer_design_intent(

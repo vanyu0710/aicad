@@ -50,10 +50,44 @@ export type EvidenceItem = {
   conflict_with?: string[];
 };
 
+export type EvidenceConflictSource = {
+  source?: string;
+  value?: number | string | null;
+  unit?: string;
+  confirmed_by_user?: boolean;
+  detail?: string;
+};
+
+export type EvidenceConflict = {
+  id: string;
+  key: string;
+  feature_id?: string | null;
+  parameter?: string | null;
+  source_a: EvidenceConflictSource;
+  source_b: EvidenceConflictSource;
+  severity?: "blocking" | "warning";
+  status?: "unresolved" | "resolved";
+  resolved_value?: number | string | null;
+  resolved_by?: "user" | "system" | null;
+  resolved_at?: string | null;
+  reason?: string;
+  ambiguous?: boolean;
+  affected_feature_ids?: string[];
+};
+
+export type EvidenceResolution = {
+  conflict_id?: string | null;
+  key?: string | null;
+  feature_id?: string | null;
+  selected_value: number | string;
+  unit?: string;
+};
+
 export type EvidenceSet = {
   input_kind?: "text_only" | "image_only" | "mixed";
   items?: EvidenceItem[];
   conflicts?: string[];
+  conflict_details?: EvidenceConflict[];
 };
 
 export type DesignIntentDetails = {

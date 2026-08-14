@@ -153,6 +153,7 @@ class EvidenceSet(BaseModel):
     input_kind: Literal["text_only", "image_only", "mixed"] = "text_only"
     items: list[EvidenceItem] = Field(default_factory=list)
     conflicts: list[str] = Field(default_factory=list)
+    conflict_details: list["EvidenceConflict"] = Field(default_factory=list)
 
     def add(self, key: str, value: float | str | None, source: str = "unknown", **extra: Any) -> None:
         self.items.append(EvidenceItem(key=key, value=value, source=source, **extra))
@@ -162,6 +163,50 @@ class EvidenceSet(BaseModel):
             if item.key == key:
                 return item
         return None
+
+
+class EvidenceConflictSource(BaseModel):
+    source: Literal["drawing", "user", "assumption", "derived", "unknown"] = "unknown"
+    value: float | str | None = None
+    unit: str = "mm"
+    confirmed_by_user: bool = False
+    detail: str = ""
+
+
+class EvidenceConflict(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex[:10])
+    key: str
+    feature_id: str | None = None
+    parameter: str | None = None
+    source_a: EvidenceConflictSource
+    source_b: EvidenceConflictSource
+    severity: Literal["blocking", "warning"] = "blocking"
+    status: Literal["unresolved", "resolved"] = "unresolved"
+    resolved_value: float | str | None = None
+    resolved_by: Literal["user", "system"] | None = None
+    resolved_at: str | None = None
+    reason: str = ""
+    ambiguous: bool = False
+    affected_feature_ids: list[str] = Field(default_factory=list)
+
+
+class EvidenceResolution(BaseModel):
+    conflict_id: str | None = None
+    key: str | None = None
+    feature_id: str | None = None
+    selected_value: float | str
+    unit: str = "mm"
+
+
+class EvidenceGateResult(BaseModel):
+    status: Literal["ALLOW", "BLOCK", "REQUIRE_RESOLUTION"] = "ALLOW"
+    blocking: bool = False
+    resolution_required: bool = False
+    conflicts: list[EvidenceConflict] = Field(default_factory=list)
+    affected_feature_ids: list[str] = Field(default_factory=list)
+    affected_parameters: list[str] = Field(default_factory=list)
+    reason: str = ""
+    warnings: list[str] = Field(default_factory=list)
 
 
 class DesignIntent(BaseModel):
@@ -465,6 +510,7 @@ class GenerateRequest(BaseModel):
     image_data_url: str | None = None
     image_name: str | None = None
     clarification_answers: str = ""
+    evidence_resolutions: list[EvidenceResolution] = Field(default_factory=list)
     language: Literal["zh", "en"] = "zh"
 
 

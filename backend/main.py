@@ -22,6 +22,7 @@ from backend.ai import (
 )
 from backend.cad import run_freecad_worker
 from backend.capabilities import CAPABILITIES, CapabilityValidationError
+from backend.evidence_gate import apply_evidence_gate_result, apply_evidence_resolutions, evaluate_evidence_gate
 from backend.generic_engine import build_execution_report, feature_semantics
 from backend.events import EventBus
 from backend.process import ProcessRecorder
@@ -174,6 +175,7 @@ async def generate(project_id: str, request: GenerateRequest):
 
     await _emit(project_id, "stage_started", "planning", _loc(language, "正在生成 FeaturePlanV3", "Generating FeaturePlanV3"))
     plan, questions = build_initial_feature_plan(request.description, request, image, settings=settings, language=language, recorder=recorder)
+    plan = apply_evidence_resolutions(plan, request.evidence_resolutions, language=language)
     plan = apply_clarification_answers(plan, request.clarification_answers, language=language)
     questions = questions_from_plan(plan, language)
     await _emit(project_id, "question_required", "planning", _loc(language, "已生成澄清问题", "Clarification questions generated"), {"questions": [q.model_dump() for q in questions]})
@@ -184,7 +186,7 @@ async def generate(project_id: str, request: GenerateRequest):
         summary=_loc(language, "检查尺寸、定位、依赖与模式约束", "Checking dimensions, placement, dependencies, and mode constraints"),
     )
     blocking_questions = [q for q in questions if q.required and not q.answer]
-    executable, gate_logs = _execution_gate(plan, settings, blocking_questions, language)
+    executable, gate_logs = _execution_gate(plan, settings, blocking_questions, language, recorder, validation_step)
     if not executable and blocking_questions and settings.operation_mode == "strict":
         logs = gate_logs
         artifacts = DesignSnapshot().artifacts
@@ -221,9 +223,11 @@ async def generate(project_id: str, request: GenerateRequest):
     if ok:
         recorder.completed(validation_step, summary=_loc(language, "FeaturePlan 已通过执行前检查", "FeaturePlan passed the pre-execution checks"))
     elif blocking_questions:
-        recorder.blocked(validation_step, reason=_loc(language, "等待用户确认必要尺寸或定位", "Waiting for user confirmation of required dimensions or placement"))
+        if validation_step.status != "blocked":
+            recorder.blocked(validation_step, reason=_loc(language, "等待用户确认必要尺寸或定位", "Waiting for user confirmation of required dimensions or placement"))
     else:
-        recorder.failed(validation_step, error="; ".join(logs) or _loc(language, "FeaturePlan 未通过执行前检查", "FeaturePlan did not pass the pre-execution checks"))
+        if validation_step.status != "blocked":
+            recorder.failed(validation_step, error="; ".join(logs) or _loc(language, "FeaturePlan 未通过执行前检查", "FeaturePlan did not pass the pre-execution checks"))
 
     if ok:
         await _emit(project_id, "artifact_ready", "cad", _loc(language, "已生成 STEP/STL/OBJ", "STEP/STL/OBJ generated"), artifacts.model_dump())
@@ -275,7 +279,7 @@ async def chat_edit(project_id: str, request: ChatEditRequest):
         _loc(language, "执行前校验", "Pre-execution validation"),
         summary=_loc(language, "检查修改后的尺寸、定位与依赖", "Checking updated dimensions, placement, and dependencies"),
     )
-    executable, gate_logs = _execution_gate(plan, project.settings, questions, language)
+    executable, gate_logs = _execution_gate(plan, project.settings, questions, language, recorder, validation_step)
     if executable:
         recorder.completed(validation_step, summary=_loc(language, "修改后的 FeaturePlan 已通过校验", "Updated FeaturePlan passed validation"))
         cad_step = recorder.started(
@@ -296,7 +300,8 @@ async def chat_edit(project_id: str, request: ChatEditRequest):
         else:
             recorder.failed(cad_step, error="; ".join(logs) or _loc(language, "CAD Worker 执行失败", "CAD Worker execution failed"))
     else:
-        recorder.blocked(validation_step, reason=_loc(language, "修改结果缺少可执行数据或存在阻塞问题", "The edit is missing executable data or has blocking issues"))
+        if validation_step.status != "blocked":
+            recorder.blocked(validation_step, reason=_loc(language, "修改结果缺少可执行数据或存在阻塞问题", "The edit is missing executable data or has blocking issues"))
         artifacts, logs, ok = DesignSnapshot().artifacts, gate_logs, False
     export_step = recorder.started(
         "export",
@@ -375,7 +380,7 @@ async def patch_project_feature(project_id: str, feature_id: str, request: Featu
         _loc(language, "执行前校验", "Pre-execution validation"),
         summary=_loc(language, "检查属性修改后的尺寸与定位", "Checking the property edit"),
     )
-    executable, gate_logs = _execution_gate(plan, project.settings, questions, language)
+    executable, gate_logs = _execution_gate(plan, project.settings, questions, language, recorder, validation_step)
     if executable:
         recorder.completed(validation_step, summary=_loc(language, "属性修改已通过校验", "Property edit passed validation"))
         cad_step = recorder.started(
@@ -396,7 +401,8 @@ async def patch_project_feature(project_id: str, feature_id: str, request: Featu
         else:
             recorder.failed(cad_step, error="; ".join(logs) or _loc(language, "CAD Worker 执行失败", "CAD Worker execution failed"))
     else:
-        recorder.blocked(validation_step, reason=_loc(language, "属性修改缺少可执行数据或存在阻塞问题", "The property edit is missing executable data or has blocking issues"))
+        if validation_step.status != "blocked":
+            recorder.blocked(validation_step, reason=_loc(language, "属性修改缺少可执行数据或存在阻塞问题", "The property edit is missing executable data or has blocking issues"))
         artifacts, logs, ok = DesignSnapshot().artifacts, gate_logs, False
     export_step = recorder.started(
         "export",
@@ -482,17 +488,43 @@ def _refresh_restored_validation(project):
         normalize_feature_plan(project.current.feature_plan)
         result = validate_feature_plan(project.current.feature_plan, mode, "zh")
         apply_validation_result(project.current.feature_plan, result, mode)
+        evidence_result = evaluate_evidence_gate(project.current.feature_plan, mode)
+        apply_evidence_gate_result(project.current.feature_plan, evidence_result, mode)
         store.save_project(project.project_id)
     return project
 
 
-def _execution_gate(plan, settings, questions, language: str = "zh") -> tuple[bool, list[str]]:
-    """Centralize deterministic validation and policy before starting CAD."""
+def _execution_gate(
+    plan,
+    settings,
+    questions,
+    language: str = "zh",
+    recorder=None,
+    validation_step=None,
+) -> tuple[bool, list[str]]:
+    """Centralize deterministic validation and evidence policy before CAD."""
     mode = settings.operation_mode or "strict"
     normalize_feature_plan(plan)
     result = validate_feature_plan(plan, mode, language)
     apply_validation_result(plan, result, mode)
+    evidence_result = evaluate_evidence_gate(plan, mode)
+    apply_evidence_gate_result(plan, evidence_result, mode)
     logs: list[str] = []
+    if evidence_result.blocking:
+        logs.append(
+            _loc(
+                language,
+                f"证据冲突阻止执行：{evidence_result.reason}",
+                f"Evidence conflict blocks execution: {evidence_result.reason}",
+            )
+        )
+        if recorder is not None and validation_step is not None:
+            recorder.blocked(
+                validation_step,
+                reason=evidence_result.reason,
+                detail=json.dumps(evidence_result.model_dump(), ensure_ascii=False),
+            )
+        return False, logs
     if result["blocking"]:
         logs.extend(_loc(language, f"自检阻塞：{item}", f"Validation blocked: {item}") for item in result["blocking"])
     unresolved = [q for q in questions if q.required and not q.answer]
@@ -508,6 +540,8 @@ def _execution_gate(plan, settings, questions, language: str = "zh") -> tuple[bo
     if result["blocking"]:
         return False, logs
     return True, logs or [_loc(language, "FeaturePlan 已通过 CAD 执行前检查。", "FeaturePlan passed the pre-CAD execution checks.")]
+
+
 def _public_project(project):
     """Never send API credentials back to the browser or logs."""
     safe = deepcopy(project)

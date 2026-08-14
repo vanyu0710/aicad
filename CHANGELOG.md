@@ -1,3 +1,16 @@
+## v0.7.0 Phase 1C - Evidence Conflict Gate
+
+- Added structured evidence conflict models (`EvidenceConflict`, `EvidenceConflictSource`, `EvidenceResolution`, `EvidenceGateResult`) to the schema layer.
+- `EvidenceSet` now persists `conflict_details` alongside the legacy `conflicts` strings, so existing consumers stay compatible.
+- `build_evidence_set()` records numeric conflicts with a deterministic `0.01mm` tolerance and fills `EvidenceItem.conflict_with`.
+- Added `backend/evidence_gate.py` with a pure `evaluate_evidence_gate()` that classifies material vs non-material conflicts against the current FeaturePlan.
+- Strict and Smart modes both block unresolved material evidence conflicts; Smart mode returns `REQUIRE_RESOLUTION` instead of silently guessing.
+- Added `apply_evidence_resolutions()` and `GenerateRequest.evidence_resolutions` for explicit, auditable user resolution without deleting original evidence.
+- `_execution_gate` now runs before every CAD entry (generate, chat, property patch, restored snapshots) and records a `blocked` validation step with the structured gate result.
+- Clarification questions now surface unresolved material conflicts; plain-language answers such as hole diameter selection still resolve them as a compatibility fallback.
+- Added 12 regression tests including the mandatory CAD Worker invocation count `== 0` negative test and gate idempotence checks.
+- Frontend API types now include the additive conflict and resolution shapes; no UI behavior changed.
+
 ## v0.7.0 Phase 1B - Pure Validation
 
 - Added explicit `backend/normalization.py` with idempotent `normalize_feature_plan()`; auto IDs, duplicate/missing dependency bookkeeping, non-positive dimensions, assumption aggregation, and `requires_confirmation` are no longer hidden inside Pydantic model validation.

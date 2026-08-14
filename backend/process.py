@@ -128,11 +128,12 @@ class ProcessRecorder:
         step: ProcessStep,
         *,
         reason: str,
+        detail: str | None = None,
     ) -> ProcessStep:
         step.status = "blocked"
         step.completed_at = now_iso()
         step.error = reason
-        step.detail = step.detail or reason
+        step.detail = detail or step.detail or reason
         self._emit("process_step_blocked", step)
         return step
 
