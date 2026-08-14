@@ -1,3 +1,12 @@
+## v0.7.0 Phase 1D-1 - Geometry Measurement Foundation
+
+- Added a deterministic, read-only Build123d/OpenCascade BRep measurement layer for final-shape bounding boxes, solid volume, and observable cylindrical surfaces.
+- Added explicit `MEASUREMENT_SUCCESS`, `MEASUREMENT_UNAVAILABLE`, and `MEASUREMENT_ERROR` states; unavailable measurements are reported instead of inferred.
+- Worker execution reports now include an additive `geometry_measurement` object captured from the final BRep before export, independently of STEP/STL/OBJ export success.
+- Cylindrical observations deliberately remain non-semantic: `measurement_index` is report-local ordering, not a feature reference or topology ID.
+- Added focused geometry tests for boxes, cylinders, cylindrical cuts, multiple cylinders, repeatability, and read-only behavior, plus Worker report integration coverage.
+- Added `docs/geometry_measurement.md` documenting the measurement/verification boundary and current API limitations. No semantic verification, tolerance policy, UI, or production-ready behavior changed.
+
 ## v0.7.0 Phase 1C - Evidence Conflict Gate
 
 - Added structured evidence conflict models (`EvidenceConflict`, `EvidenceConflictSource`, `EvidenceResolution`, `EvidenceGateResult`) to the schema layer.

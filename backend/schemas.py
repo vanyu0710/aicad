@@ -280,6 +280,68 @@ class ExecutionReport(BaseModel):
     details: list[str] = Field(default_factory=list)
 
 
+MeasurementStatus = Literal[
+    "MEASUREMENT_SUCCESS",
+    "MEASUREMENT_UNAVAILABLE",
+    "MEASUREMENT_ERROR",
+]
+
+
+class GeometryFact(BaseModel):
+    """An observed, non-semantic fact about the final BRep geometry."""
+
+    fact_type: str
+    source: str = "final_brep"
+    unit: str = "mm"
+    status: MeasurementStatus = "MEASUREMENT_SUCCESS"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+
+
+class BoundingBoxFact(GeometryFact):
+    fact_type: Literal["bounding_box"] = "bounding_box"
+    min_x: float | None = None
+    min_y: float | None = None
+    min_z: float | None = None
+    max_x: float | None = None
+    max_y: float | None = None
+    max_z: float | None = None
+    size_x: float | None = None
+    size_y: float | None = None
+    size_z: float | None = None
+
+
+class VolumeFact(GeometryFact):
+    fact_type: Literal["volume"] = "volume"
+    unit: str = "mm^3"
+    volume: float | None = None
+
+
+class CylinderFact(GeometryFact):
+    """A cylindrical surface observed in the BRep, without feature semantics."""
+
+    fact_type: Literal["cylindrical_surface"] = "cylindrical_surface"
+    measurement_index: int
+    radius: float | None = None
+    diameter: float | None = None
+    axis: list[float] | None = None
+    center: list[float] | None = None
+    height: float | None = None
+    unavailable: list[str] = Field(default_factory=list)
+
+
+class GeometryMeasurementReport(BaseModel):
+    """Read-only observations of the final Build123d/OpenCascade BRep."""
+
+    measurement_version: str = "1D-1"
+    source: str = "final_brep"
+    status: MeasurementStatus = "MEASUREMENT_SUCCESS"
+    bounding_box: BoundingBoxFact | None = None
+    volume: VolumeFact | None = None
+    cylinders: list[CylinderFact] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
 class FeaturePlanV3(BaseModel):
     model_config = ConfigDict(extra="allow")
 

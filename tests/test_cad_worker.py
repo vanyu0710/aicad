@@ -56,6 +56,11 @@ class CADWorkerTests(unittest.TestCase):
         self.assertEqual(Path(artifacts.step).suffix, ".step")
         self.assertEqual(Path(artifacts.stl).suffix, ".stl")
         self.assertEqual(Path(artifacts.obj).suffix, ".obj")
+        report = json.loads(Path(artifacts.execution_report).read_text(encoding="utf-8"))
+        measurement = report["geometry_measurement"]
+        self.assertEqual(measurement["status"], "MEASUREMENT_SUCCESS")
+        self.assertAlmostEqual(measurement["bounding_box"]["size_x"], 60.0)
+        self.assertAlmostEqual(measurement["volume"]["volume"], 7200.0)
 
     def test_real_worker_rejects_plan_without_base(self) -> None:
         plan = FeaturePlanV3(part_family="unknown")
