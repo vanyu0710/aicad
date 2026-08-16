@@ -1,3 +1,14 @@
+## v0.7.0 Phase 1D-2 - Geometry Semantic Verification Engine
+
+- Added a pure, extensible semantic verification framework over `FeaturePlanV3` intent and 1D-1 BRep measurement facts.
+- Added property-level `PASS` / `FAIL` / `UNKNOWN` / `UNSUPPORTED` / `SKIPPED` results, ephemeral candidate correspondence, centralized software verification tolerances, feature aggregation, and model aggregation.
+- Added a registry covering every canonical feature definition. Level-A implementations currently verify isolated box/cylinder/hollow-cylinder bases using BRep bounding dimensions, derived base volume, and unique cylindrical-surface diameter/axis evidence.
+- Added explicit global bounding-box and volume verification through `VerificationContext`; tolerances are software comparison tolerances, not manufacturing or GD&T tolerances.
+- Cylindrical correspondence is report-local and conservative: duplicate candidates are `UNKNOWN`, missing candidates are `FAIL` only when measurement succeeded, and unavailable measurement remains `UNKNOWN`.
+- Holes, bosses, grooves, patterns, fillets, chamfers, ribs, sketches, and feature relations remain registered but `UNSUPPORTED`; no semantic class is inferred from a cylindrical face.
+- Worker reports now contain additive `geometry_verification` evidence beside `geometry_measurement`, without changing CAD execution, Evidence Gate, `geometry_valid`, `production_ready`, UI, or export behavior.
+- Added focused deterministic, purity, adversarial, aggregation, and Worker integration coverage plus `docs/geometry_verification.md`.
+
 ## v0.7.0 Phase 1D-1 - Geometry Measurement Foundation
 
 - Added a deterministic, read-only Build123d/OpenCascade BRep measurement layer for final-shape bounding boxes, solid volume, and observable cylindrical surfaces.

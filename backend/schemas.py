@@ -342,6 +342,97 @@ class GeometryMeasurementReport(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+VerificationStatus = Literal["PASS", "FAIL", "UNKNOWN", "UNSUPPORTED", "SKIPPED"]
+ModelVerificationStatus = Literal[
+    "VERIFIED",
+    "PARTIALLY_VERIFIED",
+    "FAILED",
+    "UNKNOWN",
+    "UNSUPPORTED",
+]
+
+
+class VerificationTolerancePolicy(BaseModel):
+    """Software comparison tolerances, not manufacturing or GD&T tolerances."""
+
+    linear_absolute_mm: float = 0.05
+    linear_relative: float = 1e-6
+    volume_absolute_mm3: float = 0.001
+    volume_relative: float = 1e-6
+    angular_degrees: float = 0.1
+    axial_axis_equivalence: bool = True
+
+
+class BoundingBoxExpectation(BaseModel):
+    """Optional, explicit global BRep bounding-box expectations in mm."""
+
+    min_x: float | None = None
+    min_y: float | None = None
+    min_z: float | None = None
+    max_x: float | None = None
+    max_y: float | None = None
+    max_z: float | None = None
+    size_x: float | None = None
+    size_y: float | None = None
+    size_z: float | None = None
+
+
+class VerificationContext(BaseModel):
+    """Explicit optional expectations not represented by an individual feature."""
+
+    expected_bounding_box: BoundingBoxExpectation | None = None
+    expected_volume: float | None = None
+    tolerance_policy: VerificationTolerancePolicy = Field(default_factory=VerificationTolerancePolicy)
+
+
+class VerificationPropertyResult(BaseModel):
+    property_name: str
+    status: VerificationStatus
+    expected: Any | None = None
+    actual: Any | None = None
+    tolerance: dict[str, float | bool] = Field(default_factory=dict)
+    deviation: float | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+
+class GeometryCorrespondence(BaseModel):
+    """Ephemeral correspondence to facts in one measurement report only."""
+
+    status: Literal["UNIQUE", "AMBIGUOUS", "NONE", "UNAVAILABLE", "NOT_REQUESTED"]
+    candidate_indices: list[int] = Field(default_factory=list)
+    reason: str = ""
+
+
+class FeatureVerificationResult(BaseModel):
+    feature_id: str
+    feature_type: str
+    status: VerificationStatus
+    properties: list[VerificationPropertyResult] = Field(default_factory=list)
+    correspondence: GeometryCorrespondence | None = None
+    reasons: list[str] = Field(default_factory=list)
+
+
+class GeometryVerificationCapability(BaseModel):
+    feature_type: str
+    supported_properties: list[str] = Field(default_factory=list)
+    supported_relations: list[str] = Field(default_factory=list)
+    required_measurements: list[str] = Field(default_factory=list)
+    implementation_status: Literal["supported", "partial", "unsupported"] = "unsupported"
+    limitations: list[str] = Field(default_factory=list)
+
+
+class ModelVerificationReport(BaseModel):
+    """Pure semantic-verification result derived from a plan and BRep facts."""
+
+    verification_version: str = "1D-2"
+    status: ModelVerificationStatus = "UNKNOWN"
+    measurement_version: str | None = None
+    global_properties: list[VerificationPropertyResult] = Field(default_factory=list)
+    features: list[FeatureVerificationResult] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
 class FeaturePlanV3(BaseModel):
     model_config = ConfigDict(extra="allow")
 

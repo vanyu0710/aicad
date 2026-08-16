@@ -61,6 +61,9 @@ class CADWorkerTests(unittest.TestCase):
         self.assertEqual(measurement["status"], "MEASUREMENT_SUCCESS")
         self.assertAlmostEqual(measurement["bounding_box"]["size_x"], 60.0)
         self.assertAlmostEqual(measurement["volume"]["volume"], 7200.0)
+        verification = report["geometry_verification"]
+        self.assertEqual(verification["status"], "VERIFIED")
+        self.assertEqual(verification["features"][0]["feature_id"], "base_plate")
 
     def test_real_worker_rejects_plan_without_base(self) -> None:
         plan = FeaturePlanV3(part_family="unknown")

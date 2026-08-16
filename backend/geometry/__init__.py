@@ -10,10 +10,13 @@ from backend.geometry.measurement import (
     measure_shape,
     measure_volume,
 )
+from backend.geometry.verification import DEFAULT_VERIFICATION_REGISTRY, verify_feature_plan
 
 __all__ = [
     "measure_bounding_box",
     "measure_cylindrical_surfaces",
     "measure_shape",
     "measure_volume",
+    "DEFAULT_VERIFICATION_REGISTRY",
+    "verify_feature_plan",
 ]
