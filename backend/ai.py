@@ -20,6 +20,7 @@ from backend.capabilities import (
 )
 from backend.validation import order_feature_plan
 from backend.evidence_gate import apply_evidence_resolutions, evaluate_evidence_gate
+from backend.feature_definitions import get_feature_definition
 from backend.generic_engine import (
     build_evidence_set,
     build_template_plan,
@@ -551,26 +552,9 @@ def _record_missing(plan: FeaturePlanV3, feature: FeatureV3, language: str) -> N
     plan.unresolved.append({"feature": feature.id, "reason": reason})
 
 
-# TODO(v0.7): migrate required dimensions to backend.feature_definitions.get_feature_definition().
 def _required_dimensions(feature_type: str) -> list[str]:
-    return {
-        "box_base": ["length", "width", "height"],
-        "cylinder_base": ["outer_diameter", "length"],
-        "hollow_cylinder": ["outer_diameter", "inner_diameter", "length"],
-        "through_hole": ["diameter"],
-        "blind_hole": ["diameter", "depth"],
-        "counterbore_hole": ["diameter", "depth"],
-        "rectangular_slot": ["length", "width", "depth"],
-        "rectangular_pocket": ["length", "width", "depth"],
-        "annular_groove": ["reduced_outer_diameter", "axial_width", "z_start"],
-        "internal_annular_groove": ["axial_width", "groove_depth", "z_start"],
-        "link_plate": ["length", "width", "height", "end_diameter_1", "end_diameter_2"],
-        "boss_cylinder": ["diameter", "height"],
-        "rectangular_pad": ["length", "width", "height"],
-        "rib_box": ["length", "width", "height"],
-        "linear_pattern": ["count", "spacing", "diameter"],
-        "circular_pattern": ["count", "pitch_radius", "diameter"],
-    }.get(feature_type, [])
+    definition = get_feature_definition(feature_type)
+    return list(definition.required_dimensions) if definition is not None else []
 
 
 def _local_feature_edit(plan: FeaturePlanV3, message: str, language: str = "zh") -> FeatureEditSet:
@@ -1383,29 +1367,12 @@ def _feature_value(dimensions: dict[str, DimensionV3], *keys: str) -> float | No
 
 
 def _refresh_smart_resolution(plan: FeaturePlanV3) -> None:
-    # TODO(v0.7): migrate required dimensions to backend.feature_definitions.get_feature_definition().
-    required = {
-        "box_base": ("length", "width", "height"),
-        "cylinder_base": ("outer_diameter", "length"),
-        "hollow_cylinder": ("outer_diameter", "inner_diameter", "length"),
-        "through_hole": ("diameter",),
-        "blind_hole": ("diameter", "depth"),
-        "counterbore_hole": ("diameter", "depth"),
-        "rectangular_slot": ("length", "width", "depth"),
-        "rectangular_pocket": ("length", "width", "depth"),
-        "annular_groove": ("reduced_outer_diameter", "axial_width", "z_start"),
-        "internal_annular_groove": ("axial_width", "groove_depth", "z_start"),
-        "link_plate": ("length", "width", "height", "end_diameter_1", "end_diameter_2"),
-        "linear_pattern": ("count", "spacing", "diameter"),
-        "circular_pattern": ("count", "pitch_radius", "diameter"),
-        "boss_cylinder": ("diameter", "height"),
-        "rectangular_pad": ("length", "width", "height"),
-        "rib_box": ("length", "width", "height"),
-    }
+    required = _required_dimensions
     all_features = _all_features(plan)
+
     complete_ids: set[str] = set()
     for feature in all_features:
-        names = required.get(feature.type)
+        names = required(feature.type)
         if names and all(_feature_value(feature.dimensions, name) is not None for name in names):
             complete_ids.add(feature.id)
             feature.unresolved = [item for item in feature.unresolved if "missing" not in item.lower() and "缺少" not in item]

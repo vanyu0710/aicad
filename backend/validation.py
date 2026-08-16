@@ -11,6 +11,7 @@ warnings while still blocking true geometry contradictions.
 
 from typing import Any
 
+from backend.feature_definitions import FEATURE_DEFINITIONS
 from backend.schemas import FeaturePlanV3, FeatureV3
 
 
@@ -19,32 +20,17 @@ def _msg(language: str, zh: str, en: str) -> str:
 
 
 _GROUP_ORDER = {"base": 0, "remove": 1, "add": 2, "pattern": 3, "modify": 4}
-_REMOVE_TYPES = {"through_hole", "blind_hole", "counterbore_hole", "rectangular_slot", "rectangular_pocket", "annular_groove", "internal_annular_groove"}
-_ADD_TYPES = {"boss_cylinder", "rectangular_pad", "rib_box"}
-_PATTERN_TYPES = {"linear_pattern", "circular_pattern"}
-_MODIFY_TYPES = {"fillet", "chamfer"}
-_UNSUPPORTED_TYPES = {"fillet", "chamfer", "helical_gear", "spur_gear", "thread", "sheet_metal"}
+_REMOVE_TYPES = {definition.feature_type for definition in FEATURE_DEFINITIONS.list() if definition.geometry_effect == "remove"}
+_ADD_TYPES = {definition.feature_type for definition in FEATURE_DEFINITIONS.list() if definition.geometry_effect == "add"}
+_PATTERN_TYPES = {definition.feature_type for definition in FEATURE_DEFINITIONS.list() if definition.geometry_effect == "pattern"}
+_MODIFY_TYPES = {definition.feature_type for definition in FEATURE_DEFINITIONS.list() if definition.geometry_effect == "modify"}
+_UNSUPPORTED_TYPES = {definition.feature_type for definition in FEATURE_DEFINITIONS.list() if definition.implementation_status == "unsupported"}
 _NEEDS_XY_TYPES = {"through_hole", "blind_hole", "counterbore_hole", "rectangular_slot", "rectangular_pocket", "boss_cylinder", "rectangular_pad", "rib_box", "linear_pattern", "circular_pattern"}
-_CENTERED_PLACEMENTS = {"main_axis", "origin", "center", "flange_center", "model_center", "bottom_center", "bottom_end_center", "base_center", "top_center"}
-
-# TODO(v0.7): migrate required dimensions to backend.feature_definitions.get_feature_definition().
+_CENTERED_PLACEMENTS = {reference for definition in FEATURE_DEFINITIONS.list() for reference in definition.centered_placements}
 _REQUIRED_DIMS = {
-    "box_base": ("length", "width", "height"),
-    "cylinder_base": ("outer_diameter", "length"),
-    "hollow_cylinder": ("outer_diameter", "inner_diameter", "length"),
-    "through_hole": ("diameter",),
-    "blind_hole": ("diameter", "depth"),
-    "counterbore_hole": ("diameter", "depth"),
-    "rectangular_slot": ("length", "width", "depth"),
-    "rectangular_pocket": ("length", "width", "depth"),
-    "annular_groove": ("reduced_outer_diameter", "axial_width", "z_start"),
-    "internal_annular_groove": ("axial_width", "groove_depth", "z_start"),
-    "link_plate": ("length", "width", "height", "end_diameter_1", "end_diameter_2"),
-    "boss_cylinder": ("diameter", "height"),
-    "rectangular_pad": ("length", "width", "height"),
-    "rib_box": ("length", "width", "height"),
-    "linear_pattern": ("count", "spacing", "diameter"),
-    "circular_pattern": ("count", "pitch_radius", "diameter"),
+    definition.feature_type: tuple(definition.required_dimensions)
+    for definition in FEATURE_DEFINITIONS.list()
+    if definition.implementation_status == "supported"
 }
 
 

@@ -1,3 +1,12 @@
+## v0.7-R1 - Repository Stabilization
+
+- Audited the repository and established a KEEP / MIGRATE / DEPRECATE / DELETE baseline without deleting uncertain code.
+- Added `ARCHITECTURE.md`, `FEATURE_SUPPORT.md`, `DEVELOPMENT.md`, and `docs/v0.7-r1-repository-audit.md`.
+- Removed duplicated required-dimension and feature-group tables from `backend/validation.py` and `backend/ai.py`; both now derive from the canonical `FEATURE_DEFINITIONS` registry.
+- Preserved the root `mechcad/` compatibility shim and unused frontend layout components with explicit DEPRECATE status.
+- Updated README documentation links and corrected the virtualenv command path.
+- Validation baseline after R1: 199 backend tests, 48 frontend tests, and a successful production build.
+
 ## v0.7.0 Phase 1D-2 - Geometry Semantic Verification Engine
 
 - Added a pure, extensible semantic verification framework over `FeaturePlanV3` intent and 1D-1 BRep measurement facts.

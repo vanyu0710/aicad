@@ -6,6 +6,13 @@ MechCAD is being upgraded from a Gradio MVP into an AI CAD IDE.
 
 New users should start with [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
+## Documentation
+
+- [ARCHITECTURE.md](ARCHITECTURE.md): how the system works and where each truth lives.
+- [FEATURE_SUPPORT.md](FEATURE_SUPPORT.md): what is really implemented, partial, or unsupported.
+- [DEVELOPMENT.md](DEVELOPMENT.md): setup, tests, and how to add a feature safely.
+- [docs/v0.7-r1-repository-audit.md](docs/v0.7-r1-repository-audit.md): R1 audit and KEEP/MIGRATE/DEPRECATE/DELETE classification.
+
 The old Gradio implementation is preserved in `legacy/gradio/`. The new mainline is:
 
 - `frontend/`: React + TypeScript + Vite + Three.js.
