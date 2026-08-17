@@ -20,6 +20,7 @@ from backend.schemas import (
     FeaturePlanV3,
     FeatureV3,
     FeatureVerificationResult,
+    GeometryEvidenceReport,
     GeometryMeasurementReport,
     ModelVerificationReport,
     VerificationContext,
@@ -39,7 +40,9 @@ class BoxBaseVerifier:
         context: VerificationContext,
         *,
         plan_has_followup_features: bool,
+        evidence=None,
     ) -> FeatureVerificationResult:
+        _ = evidence
         if plan_has_followup_features:
             return _unknown_feature(
                 feature,
@@ -71,7 +74,9 @@ class CylinderBaseVerifier:
         context: VerificationContext,
         *,
         plan_has_followup_features: bool,
+        evidence=None,
     ) -> FeatureVerificationResult:
+        _ = evidence
         if plan_has_followup_features:
             return _unknown_feature(
                 feature,
@@ -107,11 +112,17 @@ def verify_feature_plan(
     context: VerificationContext | None = None,
     *,
     registry: GeometryVerificationRegistry | None = None,
+    evidence_report: GeometryEvidenceReport | None = None,
 ) -> ModelVerificationReport:
     """Return deterministic semantic evidence without changing plan or measurement."""
 
     context = context or VerificationContext()
     registry = registry or DEFAULT_VERIFICATION_REGISTRY
+    if evidence_report is None:
+        from backend.geometry.resolver import resolve_feature_geometry_evidence
+
+        evidence_report = resolve_feature_geometry_evidence(plan, measurement, policy=context.tolerance_policy)
+    evidence_by_id = {item.feature_id: item for item in evidence_report.features}
     global_properties = _global_properties(measurement, context)
     features: list[FeatureVerificationResult] = []
     errors: list[str] = []
@@ -139,6 +150,7 @@ def verify_feature_plan(
                     measurement,
                     context,
                     plan_has_followup_features=has_followup,
+                    evidence=evidence_by_id.get(feature.id),
                 )
             )
         except Exception as exc:  # A verification defect must not alter CAD execution.
@@ -466,4 +478,6 @@ def _aggregate_model_status(
     return "UNKNOWN"
 
 
-DEFAULT_VERIFICATION_REGISTRY = build_default_registry(BoxBaseVerifier(), CylinderBaseVerifier())
+from backend.geometry.hole_verification import HoleVerifier
+
+DEFAULT_VERIFICATION_REGISTRY = build_default_registry(BoxBaseVerifier(), CylinderBaseVerifier(), HoleVerifier())

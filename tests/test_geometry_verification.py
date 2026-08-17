@@ -84,7 +84,7 @@ class VerificationRegistryTests(unittest.TestCase):
         registered = {item.feature_type for item in DEFAULT_VERIFICATION_REGISTRY.capabilities()}
         expected = {item.feature_type for item in FEATURE_DEFINITIONS.list()}
         self.assertEqual(registered, expected)
-        self.assertEqual(DEFAULT_VERIFICATION_REGISTRY.get_capability("through_hole").implementation_status, "unsupported")
+        self.assertEqual(DEFAULT_VERIFICATION_REGISTRY.get_capability("through_hole").implementation_status, "partial")
         self.assertEqual(DEFAULT_VERIFICATION_REGISTRY.get_capability("box_base").implementation_status, "supported")
 
     def test_duplicate_registry_entry_is_rejected(self) -> None:
@@ -209,11 +209,9 @@ class CylindricalVerificationTests(unittest.TestCase):
 class MultiFeatureAndPurityTests(unittest.TestCase):
     def test_verified_base_and_unsupported_child_are_partially_verified(self) -> None:
         hole = FeatureV3(
-            id="hole_01",
-            type="through_hole",
-            operation="remove",
-            dimensions={"diameter": {"value": 6}},
-            placement=PlacementV3(reference="origin", axis="Z"),
+            id="fillet_01",
+            type="fillet",
+            operation="modify",
         )
         plan = _box_plan(children=[hole])
         report = verify_feature_plan(

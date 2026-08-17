@@ -225,7 +225,7 @@ def _build_default_definitions() -> list[FeatureDefinition]:
             operations=["add", "update", "delete", "change_type"],
             convert_to_types=("blind_hole", "counterbore_hole"),
             constraints=[positive],
-            verification=_verify(["diameter", "position", "axis", "depth"], "partial"),
+            verification=_verify(["existence", "diameter", "position", "axis", "depth", "through"], "partial"),
             centered_placements=["model_center", "flange_center", "main_axis", "base_center"],
         ),
         _definition(
@@ -237,7 +237,7 @@ def _build_default_definitions() -> list[FeatureDefinition]:
             operations=["add", "update", "delete", "change_type"],
             convert_to_types=("through_hole", "counterbore_hole"),
             constraints=[positive],
-            verification=_verify(["diameter", "position", "axis", "depth"], "partial"),
+            verification=_verify(["existence", "diameter", "position", "axis", "depth"], "partial"),
             centered_placements=["model_center", "base_center", "origin"],
         ),
         _definition(

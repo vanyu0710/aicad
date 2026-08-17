@@ -6,7 +6,8 @@
 - `FEATURE_SUPPORT.md`: what is really implemented, partial, or unsupported.
 - `DEVELOPMENT.md`: setup, tests, and how to add a feature safely.
 - `docs/v0.7-r1-repository-audit.md`: KEEP / MIGRATE / DEPRECATE / DELETE audit.
-- `docs/geometry_measurement.md` and `docs/geometry_verification.md`: measurement and semantic verification boundaries.
+- `docs/geometry_measurement.md`, `docs/geometry_verification.md`, and `docs/geometry_evidence.md`: measurement, evidence binding, and semantic verification boundaries.
+- `docs/rfc-1d-2.1-feature-geometry-evidence-resolver.md`: approved 1D-2.1 design.
 - `CHANGELOG.md`: what each version actually shipped.
 - `README.md`: user-facing startup and quick overview.
 
@@ -19,8 +20,8 @@ MechCAD is an AI CAD IDE under active development.
 - CAD execution: controlled Build123d worker subprocess behind a FreeCAD-ready worker boundary.
 - AI: vision model reads drawings, planner model emits `FeaturePlanV3`, deterministic fallback keeps the IDE usable without API keys.
 - Current branch: `codex/mechcad-pro-ui`
-- Last commit: `fa479a3 chore(v0.7): repository stabilization baseline (R1)`
-- Stable tag: `v0.7.0-stable-baseline`
+- Last commit: 1D-2.2 Complete Hole Verification on top of 1D-2.1
+- Stable tag: `v0.7.0-stable-baseline` remains the pre-1D-2.1 baseline
 - Remote: `https://github.com/vanyu0710/aicad.git`
 - Last verified baseline: 199 backend tests, 48 frontend tests, frontend production build passed.
 
@@ -35,7 +36,7 @@ MechCAD is an AI CAD IDE under active development.
   - `capabilities.py`: capability and edit validation derived from the canonical registry.
   - `generic_engine.py`: text routing, evidence extraction, design intent, family templates.
   - `ai.py`: AI orchestration and deterministic fallback.
-  - `geometry/`: BRep measurement and semantic verification.
+  - `geometry/`: BRep measurement, feature-geometry evidence resolver, and semantic verification.
   - `process.py`: `ProcessRecorder` audit timeline.
   - `session.py` / `storage.py`: snapshot history, undo/redo, artifacts.
 - `cad_worker/freecad_executor.py`: isolated subprocess worker. It runs Build123d; the file name preserves the future FreeCAD boundary.
@@ -146,16 +147,16 @@ Do not push without explicit user permission. If the proxy port changes, ask the
 - `HANDOFF.md` is a historical document with outdated branch/test information; this file supersedes it.
 - Counterbore, slot, rib, and pattern worker semantics are simplified and are not production-ready.
 - Semantic verification currently covers only isolated box/cylinder/hollow-cylinder bases.
+- Hole through-ness is V-span versus host thickness, not a topological both-ends-open proof.
+- Bosses, grooves, patterns, fillets, and chamfers still have no semantic verifier.
 - Frontend production bundle exceeds the default 500 kB chunk warning threshold; it is a warning, not a failure.
 
 ## 10. Recommended Next Work
 
-The planned continuation is v0.7 1D-2.1 and 1D-2.2:
+The planned continuation is v0.7 1D-2.3 Generic Feature Verification:
 
-- 1D-2.1: feature geometry and evidence resolver, still using the smallest reliable Build123d/OCCT measurement subset.
-- 1D-2.2: complete hole verification, only where measurement can prove diameter, position, axis, and depth reliably.
-- Before starting 1D-2.1, make a short read-only spike in `cad_worker/freecad_executor.py` to confirm which OCP/Build123d properties can be extracted stably.
-- Keep all new verification results additive in `execution_report.json`.
+- 1D-2.1 and 1D-2.2 are implemented. Worker writes `geometry_evidence` and hole verification consumes it.
+- 1D-2.3: extend the same Definition → Signature → Correspondence → Property Verifiers path to boss, groove, and only later fillet/chamfer. Do not add one-off templates.
 - Do not change `FeaturePlanV3`, Evidence Gate, worker execution policy, UI, or export behavior during 1D-2.x unless explicitly approved.
 
 If the user approves a different direction, update this handoff with the new agreed scope before implementation.
@@ -166,4 +167,4 @@ If the user approves a different direction, update this handoff with the new agr
 2. Read the five primary documents listed in section 1.
 3. Run the full test baseline before changing anything.
 4. Inspect `backend/feature_definitions.py`, `backend/geometry/*`, and `cad_worker/freecad_executor.py`.
-5. Produce a short plan and ask the user to approve scope before implementing 1D-2.1.
+5. Produce a short plan and ask the user to approve scope before implementing 1D-2.3 generic feature verification.

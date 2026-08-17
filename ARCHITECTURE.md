@@ -3,7 +3,7 @@
 ## Status
 
 - Current branch: `codex/mechcad-pro-ui`
-- Latest milestone: v0.7 semantic core stabilization (1B -> 1C -> 1D-1 -> 1D-2)
+- Latest milestone: v0.7.2 Complete Hole Verification (1D-2.2)
 - CAD engine: controlled Build123d worker behind a FreeCAD-ready subprocess boundary
 - UI: React + TypeScript + Three.js, SolidWorks-style three-panel IDE with full-screen viewport drawers
 
@@ -18,7 +18,7 @@
   - `capabilities.py`: capability/editing registry derived from `feature_definitions.py`.
   - `generic_engine.py`: text routing, evidence extraction, design intent, family templates.
   - `ai.py`: AI orchestration and deterministic fallback.
-  - `geometry/`: read-only BRep measurement (`measurement.py`) and semantic verification (`verification.py`, `verification_registry.py`, `correspondence.py`).
+  - `geometry/`: read-only BRep measurement (`measurement.py`), feature-geometry evidence (`signatures.py`, `references.py`, `candidates.py`, `resolver.py`), and semantic verification (`verification.py`, `verification_registry.py`, `correspondence.py`).
   - `process.py`: `ProcessRecorder` for auditable process steps.
   - `session.py` / `storage.py`: snapshot history, undo/redo, run artifacts.
   - `static_assets.py`: single-port production frontend mounting.
@@ -36,7 +36,8 @@
 - `ExecutionReport` is the source of truth for what the worker actually did.
 - `DesignSnapshot` is the immutable project state used by undo/redo.
 - `ProcessStep` is the audit trail for every pipeline stage.
-- Geometry measurement and verification are additive facts; they never become the only success signal.
+- Geometry measurement, feature-geometry evidence, and verification are additive facts; they never become the only success signal.
+- `AMBIGUOUS` geometry correspondence never auto-selects a candidate.
 
 ## Runtime Pipeline
 
@@ -46,7 +47,7 @@
 4. `normalize_feature_plan()` -> `validate_feature_plan()` -> `apply_validation_result()`.
 5. `evaluate_evidence_gate()` blocks unresolved material conflicts before CAD.
 6. Controlled CAD worker maps features to Build123d operations and emits per-feature process steps.
-7. Final BRep is measured (`measurement.py`), then semantically verified where a reliable verifier exists (`verification.py`).
+7. Final BRep is measured (`measurement.py`), bound to features by the 1D-2.1 evidence resolver, then semantically verified (`verification.py`, including 1D-2.2 hole checks). The Worker writes additive `geometry_measurement`, `geometry_evidence`, and `geometry_verification`.
 8. STEP/STL/OBJ plus `execution_report.json` are exported and the next snapshot is committed.
 
 ## API / WebSocket
@@ -65,7 +66,7 @@
 
 ## Known Limitations
 
-- Semantic verification currently covers isolated box/cylinder/hollow-cylinder bases only.
+- Feature geometry evidence can bind box/cylinder bases and hole/boss cylinders. Semantic verification covers isolated bases plus `through_hole` / `blind_hole`.
 - Holes, grooves, bosses, patterns, ribs, fillets, chamfers, and relations remain `UNSUPPORTED` in the verification registry.
 - Counterbores, slots, ribs, and patterns have partial worker semantics; they are not full production feature implementations.
 - Spur gear teeth, threads, sheet metal, fillets, and chamfers are intentionally unsupported and never faked.

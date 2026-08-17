@@ -64,6 +64,9 @@ class CADWorkerTests(unittest.TestCase):
         verification = report["geometry_verification"]
         self.assertEqual(verification["status"], "VERIFIED")
         self.assertEqual(verification["features"][0]["feature_id"], "base_plate")
+        evidence = report["geometry_evidence"]
+        self.assertEqual(evidence["evidence_version"], "1D-2.1")
+        self.assertEqual(evidence["features"][0]["feature_id"], "base_plate")
 
     def test_real_worker_rejects_plan_without_base(self) -> None:
         plan = FeaturePlanV3(part_family="unknown")

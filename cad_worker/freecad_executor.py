@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 from build123d import Align, BuildPart, Cylinder, Box, Locations, Mode, PolarLocations, export_step, export_stl
 
 from backend.geometry.measurement import measure_shape
+from backend.geometry.resolver import resolve_feature_geometry_evidence
 from backend.geometry.verification import verify_feature_plan
 from backend.normalization import normalize_feature_plan
 from backend.schemas import FeaturePlanV3
@@ -94,8 +95,10 @@ def main() -> int:
         normalize_feature_plan(plan)
         part = _build_part(plan, report, out_dir)
         measurement = measure_shape(part.part)
+        evidence = resolve_feature_geometry_evidence(plan, measurement)
         report["geometry_measurement"] = measurement.model_dump(mode="json")
-        report["geometry_verification"] = verify_feature_plan(plan, measurement).model_dump(mode="json")
+        report["geometry_evidence"] = evidence.model_dump(mode="json")
+        report["geometry_verification"] = verify_feature_plan(plan, measurement, evidence_report=evidence).model_dump(mode="json")
         step_path = out_dir / "model.step"
         stl_path = out_dir / "model.stl"
         obj_path = out_dir / "model.obj"

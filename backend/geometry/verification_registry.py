@@ -8,6 +8,7 @@ from backend.feature_definitions import FEATURE_DEFINITIONS
 from backend.schemas import (
     FeatureV3,
     FeatureVerificationResult,
+    GeometryEvidence,
     GeometryMeasurementReport,
     GeometryVerificationCapability,
     VerificationContext,
@@ -24,6 +25,7 @@ class FeatureVerifier(Protocol):
         context: VerificationContext,
         *,
         plan_has_followup_features: bool,
+        evidence: GeometryEvidence | None = None,
     ) -> FeatureVerificationResult:
         ...
 
@@ -53,8 +55,12 @@ class GeometryVerificationRegistry:
         return [self._capabilities[key] for key in sorted(self._capabilities)]
 
 
-def build_default_registry(box_verifier: FeatureVerifier, cylinder_verifier: FeatureVerifier) -> GeometryVerificationRegistry:
-    """Register every canonical feature type; only Level-A primitives get code."""
+def build_default_registry(
+    box_verifier: FeatureVerifier,
+    cylinder_verifier: FeatureVerifier,
+    hole_verifier: FeatureVerifier | None = None,
+) -> GeometryVerificationRegistry:
+    """Register every canonical feature type; only implemented verifiers get code."""
 
     registry = GeometryVerificationRegistry()
     primitive_verifiers = {
@@ -62,10 +68,26 @@ def build_default_registry(box_verifier: FeatureVerifier, cylinder_verifier: Fea
         "cylinder_base": cylinder_verifier,
         "hollow_cylinder": cylinder_verifier,
     }
+    if hole_verifier is not None:
+        primitive_verifiers["through_hole"] = hole_verifier
+        primitive_verifiers["blind_hole"] = hole_verifier
+    hole_properties = ["existence", "diameter", "position", "axis", "depth", "through"]
     for definition in FEATURE_DEFINITIONS.list():
         verifier = primitive_verifiers.get(definition.feature_type)
-        status = "supported" if verifier is not None else "unsupported"
-        properties = list(definition.verification_contract.properties)
+        if definition.feature_type in {"through_hole", "blind_hole"} and verifier is not None:
+            status = "partial"
+            properties = list(hole_properties)
+            limitations = [
+                "Hole depth and through-ness use cylindrical V-span versus host thickness, not a topological end-cap proof.",
+            ]
+        elif verifier is not None:
+            status = "supported"
+            properties = list(definition.verification_contract.properties)
+            limitations = []
+        else:
+            status = "unsupported"
+            properties = list(definition.verification_contract.properties)
+            limitations = ["No deterministic semantic verifier is implemented for this feature type in 1D-2."]
         if definition.feature_type == "box_base":
             properties = ["size_x", "size_y", "size_z", "volume"]
         elif definition.feature_type in {"cylinder_base", "hollow_cylinder"}:
@@ -74,13 +96,9 @@ def build_default_registry(box_verifier: FeatureVerifier, cylinder_verifier: Fea
             GeometryVerificationCapability(
                 feature_type=definition.feature_type,
                 supported_properties=properties,
-                required_measurements=["bounding_box", "volume"] + (["cylinders"] if verifier is cylinder_verifier else []),
+                required_measurements=["bounding_box", "volume"] + (["cylinders"] if verifier is not None else []),
                 implementation_status=status,
-                limitations=(
-                    []
-                    if verifier is not None
-                    else ["No deterministic semantic verifier is implemented for this feature type in 1D-2."]
-                ),
+                limitations=limitations,
             ),
             verifier=verifier,
         )

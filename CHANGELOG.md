@@ -1,3 +1,21 @@
+## v0.7.2 Phase 1D-2.2 - Complete Hole Verification
+
+- Hole verification now consumes `GeometryEvidence`. `through_hole` and `blind_hole` report existence, diameter, position, axis, depth, and through-span.
+- A property may be `PASS` only against a `MATCHED` evidence row. `AMBIGUOUS` never auto-selects and never becomes `PASS`.
+- Depth and through-ness compare cylindrical V-span with host AABB size or specified blind depth. This is software span evidence, not a topological both-ends-open proof.
+- Unique leftover cylinders keep identity when position/axis disagree, so those properties can `FAIL` instead of pretending the hole was not found.
+- Worker writes additive `geometry_evidence` beside measurement/verification. CAD execution, Evidence Gate, FeaturePlan, UI, and export are unchanged.
+- Isolated box/cylinder base verification verdicts are unchanged. Boss remains evidence-only.
+
+## v0.7.1 Phase 1D-2.1 - Feature Geometry Evidence Resolver
+
+- Added a pure Feature-to-BRep evidence layer: `FeatureGeometrySignature`, `ReferenceContext`, `GeometryCandidate`, `CorrespondenceResult`, and `GeometryEvidence`.
+- Correspondence uses `MATCHED` / `AMBIGUOUS` / `NOT_FOUND` / `UNAVAILABLE`. `AMBIGUOUS` never auto-selects a candidate.
+- First bindable types: `box_base`, `cylinder_base`, `hollow_cylinder`, `through_hole`, `blind_hole`, and `boss_cylinder`.
+- Position evidence is axis ∩ host AABB plane, never raw `CylinderFact.center` as feature XY.
+- Verification verdicts, Worker CAD execution, FeaturePlan, Evidence Gate, UI, and export are unchanged. Worker persistence of `geometry_evidence` is deferred.
+- Added `docs/rfc-1d-2.1-feature-geometry-evidence-resolver.md` and `docs/geometry_evidence.md`.
+
 ## v0.7-R1 - Repository Stabilization
 
 - Audited the repository and established a KEEP / MIGRATE / DEPRECATE / DELETE baseline without deleting uncertain code.
