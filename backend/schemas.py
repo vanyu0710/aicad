@@ -404,6 +404,118 @@ class GeometryCorrespondence(BaseModel):
     reason: str = ""
 
 
+GeometryKind = Literal["cylinder", "plane", "box", "edge", "bounding_region", "unsupported"]
+PrimitiveRole = Literal["bore", "outer", "inner", "host", "region", "edge", "face"]
+ConstraintKind = Literal["type", "dimension", "axis", "position", "region", "host", "relationship"]
+CorrespondenceStatus = Literal["MATCHED", "AMBIGUOUS", "NOT_FOUND", "UNAVAILABLE"]
+
+
+class ExpectedPrimitive(BaseModel):
+    """A non-semantic primitive role the feature is expected to produce."""
+
+    role: PrimitiveRole
+    kind: GeometryKind
+    expected: dict[str, Any] = Field(default_factory=dict)
+
+
+class SignatureConstraint(BaseModel):
+    """One geometric query derived from FeaturePlan intent, never from BRep."""
+
+    kind: ConstraintKind
+    required: bool = False
+    evaluable: bool = False
+    property_name: str = ""
+    expected: Any = None
+    reason: str = ""
+
+
+class FeatureGeometrySignature(BaseModel):
+    """Feature geometric query compiled from FeatureDefinition + FeatureV3."""
+
+    feature_id: str
+    feature_type: str
+    operation: FeatureOperation = "remove"
+    geometry_effect: str = "remove"
+    primary_kind: GeometryKind = "unsupported"
+    bindable: bool = False
+    primitives: list[ExpectedPrimitive] = Field(default_factory=list)
+    constraints: list[SignatureConstraint] = Field(default_factory=list)
+
+
+class ReferenceFrame(BaseModel):
+    """An ephemeral model-space frame used to evaluate placement."""
+
+    name: str
+    origin: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
+    axes: dict[str, list[float]] = Field(default_factory=dict)
+    normal: list[float] | None = None
+    source: str = ""
+
+
+class ReferenceContext(BaseModel):
+    """Resolved frames for one feature. Not the v0.8 Reference System."""
+
+    feature_id: str
+    status: CorrespondenceStatus = "UNAVAILABLE"
+    frames: list[ReferenceFrame] = Field(default_factory=list)
+    placement_frame: str | None = None
+    resolved_position: list[float] | None = None
+    reason: str = ""
+
+
+class GeometryCandidate(BaseModel):
+    """A report-local measured primitive. Not a topology ID."""
+
+    candidate_id: str
+    kind: GeometryKind
+    measurement_ref: str
+    properties: dict[str, Any] = Field(default_factory=dict)
+    status: MeasurementStatus = "MEASUREMENT_SUCCESS"
+
+
+class ConstraintResult(BaseModel):
+    constraint: ConstraintKind
+    status: CorrespondenceStatus
+    property_name: str = ""
+    expected: Any = None
+    observed: Any = None
+    candidate_ids: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+
+class CorrespondenceResult(BaseModel):
+    """Identity binding after evaluable filters. Never a PASS/FAIL verdict."""
+
+    feature_id: str
+    status: CorrespondenceStatus = "UNAVAILABLE"
+    selected_candidate_ids: list[str] = Field(default_factory=list)
+    candidate_ids: list[str] = Field(default_factory=list)
+    constraint_results: list[ConstraintResult] = Field(default_factory=list)
+    reason: str = ""
+
+
+class GeometryEvidence(BaseModel):
+    """Bound evidence that verification may consume later."""
+
+    feature_id: str
+    feature_type: str
+    signature: FeatureGeometrySignature
+    reference: ReferenceContext
+    correspondence: CorrespondenceResult
+    bound_candidates: list[GeometryCandidate] = Field(default_factory=list)
+    usable_for_verification: bool = False
+    notes: list[str] = Field(default_factory=list)
+
+
+class GeometryEvidenceReport(BaseModel):
+    """Additive Feature-to-BRep evidence for one measurement report."""
+
+    evidence_version: str = "1D-2.1"
+    measurement_version: str | None = None
+    features: list[GeometryEvidence] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
 class FeatureVerificationResult(BaseModel):
     feature_id: str
     feature_type: str

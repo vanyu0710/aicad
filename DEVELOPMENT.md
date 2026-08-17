@@ -64,8 +64,9 @@ git diff --check
 2. Add free-form aliases in `backend/mechcad_ai/normalize.py` only when LLM output needs them; alias keys should point to registry parameter names.
 3. Add validation constraints in `backend/validation.py`; keep validation pure.
 4. Add a worker branch in `cad_worker/freecad_executor.py` only when you have a controlled CAD operation and a real geometry change check.
-5. Add a semantic verifier only when BRep measurement can reliably prove the property. Otherwise keep the feature `UNSUPPORTED`; never fake `PASS`.
-6. Add focused backend and frontend tests, then update `FEATURE_SUPPORT.md`.
+5. Add a geometry signature / evidence binding in `backend/geometry/signatures.py` before claiming correspondence. `AMBIGUOUS` must not auto-select.
+6. Add a semantic verifier only when bound evidence can reliably prove the property. Otherwise keep the feature `UNSUPPORTED`; never fake `PASS`.
+7. Add focused backend and frontend tests, then update `FEATURE_SUPPORT.md`.
 
 ## Environment
 

@@ -12,6 +12,8 @@ New users should start with [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 - [FEATURE_SUPPORT.md](FEATURE_SUPPORT.md): what is really implemented, partial, or unsupported.
 - [DEVELOPMENT.md](DEVELOPMENT.md): setup, tests, and how to add a feature safely.
 - [docs/v0.7-r1-repository-audit.md](docs/v0.7-r1-repository-audit.md): R1 audit and KEEP/MIGRATE/DEPRECATE/DELETE classification.
+- [docs/rfc-1d-2.1-feature-geometry-evidence-resolver.md](docs/rfc-1d-2.1-feature-geometry-evidence-resolver.md): 1D-2.1 evidence resolver design.
+- [docs/geometry_evidence.md](docs/geometry_evidence.md): Feature-to-BRep correspondence boundary.
 
 The old Gradio implementation is preserved in `legacy/gradio/`. The new mainline is:
 
