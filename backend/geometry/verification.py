@@ -478,6 +478,13 @@ def _aggregate_model_status(
     return "UNKNOWN"
 
 
-from backend.geometry.hole_verification import HoleVerifier
+from backend.geometry.groove_verification import GrooveVerifier
+from backend.geometry.hole_verification import BossVerifier, HoleVerifier
 
-DEFAULT_VERIFICATION_REGISTRY = build_default_registry(BoxBaseVerifier(), CylinderBaseVerifier(), HoleVerifier())
+DEFAULT_VERIFICATION_REGISTRY = build_default_registry(
+    BoxBaseVerifier(),
+    CylinderBaseVerifier(),
+    HoleVerifier(),
+    boss_verifier=BossVerifier(),
+    groove_verifier=GrooveVerifier(),
+)

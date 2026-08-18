@@ -20,7 +20,7 @@ MechCAD is an AI CAD IDE under active development.
 - CAD execution: controlled Build123d worker subprocess behind a FreeCAD-ready worker boundary.
 - AI: vision model reads drawings, planner model emits `FeaturePlanV3`, deterministic fallback keeps the IDE usable without API keys.
 - Current branch: `codex/mechcad-pro-ui`
-- Last commit: 1D-2.2 Complete Hole Verification on top of 1D-2.1
+- Last commit: 0.7.3-A Generic Boss Verification after the 0.7.2 adversarial gate
 - Stable tag: `v0.7.0-stable-baseline` remains the pre-1D-2.1 baseline
 - Remote: `https://github.com/vanyu0710/aicad.git`
 - Last verified baseline: 199 backend tests, 48 frontend tests, frontend production build passed.
@@ -146,18 +146,18 @@ Do not push without explicit user permission. If the proxy port changes, ask the
 - `frontend/src/layout/BottomTaskPanel.tsx` and `frontend/src/layout/RightPropertyManager.tsx` are not imported by `App.tsx`; no test depends on them.
 - `HANDOFF.md` is a historical document with outdated branch/test information; this file supersedes it.
 - Counterbore, slot, rib, and pattern worker semantics are simplified and are not production-ready.
-- Semantic verification currently covers only isolated box/cylinder/hollow-cylinder bases.
 - Hole through-ness is V-span versus host thickness, not a topological both-ends-open proof.
-- Bosses, grooves, patterns, fillets, and chamfers still have no semantic verifier.
+- Patterns, fillets, and chamfers still have no semantic verifier. Additive vs subtractive cylinders are not distinguished in 1D-1 measurement.
 - Frontend production bundle exceeds the default 500 kB chunk warning threshold; it is a warning, not a failure.
 
 ## 10. Recommended Next Work
 
-The planned continuation is v0.7 1D-2.3 Generic Feature Verification:
+The planned continuation is 0.7.3-C adversarial coverage or 0.7.4 Global Geometry Integrity:
 
-- 1D-2.1 and 1D-2.2 are implemented. Worker writes `geometry_evidence` and hole verification consumes it.
-- 1D-2.3: extend the same Definition → Signature → Correspondence → Property Verifiers path to boss, groove, and only later fillet/chamfer. Do not add one-off templates.
-- Do not change `FeaturePlanV3`, Evidence Gate, worker execution policy, UI, or export behavior during 1D-2.x unless explicitly approved.
+- Hole, boss, and annular groove now share one GeometryEvidence pipeline.
+- 0.7.3-C: more cross-feature False PASS cases if needed; do not add feature-specific evidence types.
+- 0.7.4: model-level solidity, disconnected solids, empty booleans — not per-feature templates.
+- Do not change `FeaturePlanV3`, Evidence Gate, worker execution policy, UI, or export behavior unless explicitly approved.
 
 If the user approves a different direction, update this handoff with the new agreed scope before implementation.
 
@@ -167,4 +167,4 @@ If the user approves a different direction, update this handoff with the new agr
 2. Read the five primary documents listed in section 1.
 3. Run the full test baseline before changing anything.
 4. Inspect `backend/feature_definitions.py`, `backend/geometry/*`, and `cad_worker/freecad_executor.py`.
-5. Produce a short plan and ask the user to approve scope before implementing 1D-2.3 generic feature verification.
+5. Produce a short plan and ask the user to approve scope before implementing 0.7.4 global geometry integrity.

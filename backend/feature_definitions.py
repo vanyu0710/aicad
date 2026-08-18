@@ -288,7 +288,7 @@ def _build_default_definitions() -> list[FeatureDefinition]:
                 _constraint("groove_root_above_inner", "Groove root diameter must be greater than inner diameter."),
                 _constraint("groove_within_length", "Groove position plus width must fit within the body length."),
             ],
-            verification=_verify(["width", "depth", "position"], "partial"),
+            verification=_verify(["existence", "width", "depth", "position", "axis", "host"], "partial"),
             centered_placements=["main_axis", "model_center"],
         ),
         _definition(
@@ -303,7 +303,7 @@ def _build_default_definitions() -> list[FeatureDefinition]:
                 _constraint("internal_groove_root_under_outer", "Groove root diameter must be smaller than outer diameter."),
                 _constraint("internal_groove_within_length", "Groove position plus width must fit within the body length."),
             ],
-            verification=_verify(["width", "depth", "position"], "partial"),
+            verification=_verify(["existence", "width", "depth", "position", "axis", "host"], "partial"),
             centered_placements=["main_axis", "model_center"],
         ),
         _definition(
@@ -334,7 +334,7 @@ def _build_default_definitions() -> list[FeatureDefinition]:
             required_dimensions=["diameter", "height"],
             operations=["add", "update", "delete"],
             constraints=[positive],
-            verification=_verify(["diameter", "height", "position"], "partial"),
+            verification=_verify(["existence", "diameter", "height", "axis", "position", "host"], "partial"),
             centered_placements=["base_center", "origin"],
         ),
         _definition(

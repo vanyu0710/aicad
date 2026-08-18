@@ -55,6 +55,8 @@ _BINDABLE = {
     "through_hole",
     "blind_hole",
     "boss_cylinder",
+    "annular_groove",
+    "internal_annular_groove",
 }
 
 _AXIS_VECTORS = {
@@ -107,6 +109,8 @@ def _primitives_and_constraints(
 ) -> tuple[list[ExpectedPrimitive], list[SignatureConstraint]]:
     if feature.type in {"through_hole", "blind_hole", "boss_cylinder"}:
         return _cylinder_child_signature(feature, required_properties, role="bore" if "hole" in feature.type else "outer")
+    if feature.type in {"annular_groove", "internal_annular_groove"}:
+        return _groove_signature(feature, required_properties)
     if feature.type in {"cylinder_base", "hollow_cylinder"}:
         return _cylinder_base_signature(feature, required_properties)
     if feature.type == "box_base":
@@ -170,6 +174,53 @@ def _cylinder_child_signature(
             property_name="depth",
             reason="Depth and through-ness are not proven in 1D-2.1; cylinder height is a V-span, not hole depth.",
         ),
+    ]
+    return primitives, constraints
+
+
+def _groove_signature(
+    feature: FeatureV3,
+    required_properties: list[str],
+) -> tuple[list[ExpectedPrimitive], list[SignatureConstraint]]:
+    root = _dimension(feature, "reduced_outer_diameter")
+    width = _dimension(feature, "axial_width", "width")
+    z_start = _dimension(feature, "z_start")
+    axis_name = feature.placement.axis or "Z"
+    axial = None if z_start is None else {"z_start": z_start, "width": width}
+    primitives = [
+        ExpectedPrimitive(
+            role="region",
+            kind="cylinder",
+            expected={"diameter": root, "axis": axis_name, "z_start": z_start, "width": width},
+        )
+    ]
+    constraints = [
+        _constraint("type", required=True, evaluable=True, expected="cylinder"),
+        _constraint(
+            "position",
+            required="position" in required_properties or z_start is not None,
+            evaluable=z_start is not None,
+            property_name="z_start",
+            expected=axial,
+            reason="" if z_start is not None else "Groove z_start is missing, so axial position cannot be evaluated.",
+        ),
+        _constraint(
+            "axis",
+            required="axis" in required_properties,
+            evaluable=axis_name in _AXIS_VECTORS,
+            property_name="axis",
+            expected=_AXIS_VECTORS.get(axis_name),
+        ),
+        _constraint(
+            "dimension",
+            required="width" in required_properties or "depth" in required_properties,
+            evaluable=root is not None and root > 0,
+            property_name="diameter",
+            expected=root,
+            reason="" if root is not None and root > 0 else "Groove root diameter is not on the feature (internal grooves bind by Z/width).",
+        ),
+        _constraint("host", required=True, evaluable=True, property_name="host"),
+        _constraint("relationship", required=False, evaluable=False, reason="Groove relationships are not resolved in 0.7.3-B."),
     ]
     return primitives, constraints
 

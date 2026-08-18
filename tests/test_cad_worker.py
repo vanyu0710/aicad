@@ -99,6 +99,13 @@ class CADWorkerTests(unittest.TestCase):
         ]
         self.assertTrue(skipped)
 
+    def test_real_worker_skips_centered_hole_without_xy(self) -> None:
+        plan = _plate_plan_with_unpositioned_hole()
+        plan.features[0].placement.reference = "model_center"
+        artifacts, logs, ok = run_freecad_worker(plan, on_step=lambda payload: None)
+        self.assertTrue(ok, logs)
+        report = json.loads(Path(artifacts.execution_report).read_text(encoding="utf-8"))
+        self.assertEqual(report["feature_statuses"]["hole_unpositioned"], "skipped")
 
     def test_real_worker_skips_hole_without_position(self) -> None:
         artifacts, logs, ok = run_freecad_worker(_plate_plan_with_unpositioned_hole(), on_step=lambda payload: None)

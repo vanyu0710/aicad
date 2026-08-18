@@ -48,6 +48,11 @@ Level-A verifiers are deliberately small:
 - cylinder axis, only when the FeaturePlan explicitly supplies an axis;
 - `through_hole` / `blind_hole` (1D-2.2): existence, diameter, position, axis,
   depth, and through-span, only against a MATCHED `GeometryEvidence` row;
+- `boss_cylinder` (0.7.3-A): existence, diameter, height, axis, position, host
+  on the same evidence types. Host primitives are reserved. One candidate
+  cannot verify two features;
+- annular grooves (0.7.3-B): existence, width, depth, axial position, axis, host
+  on the same evidence types. Position is `z_start` occupancy, not XY;
 - optional global bounding-box and volume checks supplied through
   `VerificationContext`.
 

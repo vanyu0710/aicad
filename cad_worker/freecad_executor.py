@@ -12,6 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from cad_worker.font_guard import install as _install_font_guard
+
+_install_font_guard()
+
 from build123d import Align, BuildPart, Cylinder, Box, Locations, Mode, PolarLocations, export_step, export_stl
 
 from backend.geometry.measurement import measure_shape
@@ -24,7 +28,6 @@ from backend.validation import order_feature_plan
 _LANG = "zh"
 
 _NEEDS_XY_TYPES = {"through_hole", "blind_hole", "counterbore_hole", "rectangular_slot", "rectangular_pocket", "boss_cylinder", "rectangular_pad", "rib_box", "linear_pattern", "circular_pattern"}
-_CENTERED_PLACEMENTS = {"main_axis", "origin", "center", "flange_center", "model_center", "bottom_center", "bottom_end_center", "base_center", "top_center"}
 
 
 def _msg(zh: str, en: str) -> str:
@@ -400,9 +403,8 @@ def _placement_ready(feature) -> bool:
     placement = feature.placement
     if placement.reference == "needs_position":
         return False
-    if placement.x is not None and placement.y is not None:
-        return True
-    return placement.reference in _CENTERED_PLACEMENTS
+    # Centered labels are frames, not coordinates. Do not invent (0, 0).
+    return placement.x is not None and placement.y is not None
 
 
 def _placement(feature) -> tuple[float, float, float]:

@@ -469,10 +469,13 @@ def fill_smart_defaults(plan: FeaturePlanV3, clues: dict[str, float], language: 
     _fill_smart_defaults(plan, clues, language)
 
 def _smart_default(family: str, feature_type: str, name: str, clues: dict[str, float]) -> float | None:
-    if family == "flange" and feature_type == "circular_pattern" and name == "pitch_radius":
-        return clues.get("pitch_circle_diameter", 80.0) / 2.0 if clues.get("pitch_circle_diameter") else 40.0
+    if feature_type == "circular_pattern" and name == "pitch_radius":
+        circle = clues.get("pitch_circle_diameter")
+        if circle:
+            return circle / 2.0
+        return None
     if feature_type == "through_hole" and name == "diameter":
-        return clues.get("metric_thread", 6.0) if clues.get("metric_thread") else 6.0
+        return clues.get("metric_thread")
     if family == "link_plate" and name in {"end_diameter_1", "end_diameter_2"}:
         return 8.0 if name.endswith("2") else 12.0
     return None

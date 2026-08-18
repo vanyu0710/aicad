@@ -1,3 +1,29 @@
+## v0.7.3-B - Generic Groove Verification
+
+- `annular_groove` and `internal_annular_groove` use the same GeometryEvidence types as holes and bosses.
+- Groove identity is axial: bind the root cylinder by `z_start` / occupancy, not XY. Width is V-span; depth is derived from host vs root diameters.
+- Host outer/inner cylinders stay reserved. Two unlabeled same-Ø grooves are `AMBIGUOUS`. A groove and a hole cannot both PASS one cylinder.
+
+## v0.7.3-A.1 - General execution and envelope rules
+
+- Worker no longer treats a centered datum name as an executable XY. Features that need position require explicit X and Y, matching the evidence-layer contract.
+- Validation blocks child holes and circular patterns that fall outside the host in-plane envelope for both boxes and cylinders.
+- Smart fill no longer invents a circular pitch radius or hole diameter without a clue. Missing values stay unresolved instead of becoming out-of-host geometry.
+
+## v0.7.3-A - Generic Boss Verification
+
+- `boss_cylinder` now uses the same GeometryEvidence pipeline as holes: signature, resolver, exclusive assignment, property verifiers.
+- Boss checks: existence, diameter, height, axis, position, host. No new evidence types.
+- Host cylinder primitives stay reserved. A hole and a boss cannot both PASS the same cylinder.
+- Two unpositioned identical bosses remain `AMBIGUOUS` with no PASS.
+
+## v0.7.2.1 - Hole Verification Adversarial Gate
+
+- Position-first identity: Ø6 plan at a located XY against an Ø5 cylinder is `diameter=FAIL`, not `existence=FAIL`.
+- Host inner/outer cylinders cannot MATCH a child hole (no hollow-bore False PASS).
+- Exclusive candidate assignment: two FeaturePlan holes cannot both PASS one BRep cylinder.
+- Added `tests/test_geometry_hole_adversarial.py` as the False-PASS gate.
+
 ## v0.7.2 Phase 1D-2.2 - Complete Hole Verification
 
 - Hole verification now consumes `GeometryEvidence`. `through_hole` and `blind_hole` report existence, diameter, position, axis, depth, and through-span.

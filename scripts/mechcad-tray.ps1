@@ -23,6 +23,8 @@ $HealthUrl = "http://127.0.0.1:$Port/api/health"
 $MutexName = "MechCAD-Launcher-$Port"
 $Script:BackendProcess = $null
 $Script:StartedBackend = $false
+$Script:BackendOutLog = $null
+$Script:BackendErrLog = $null
 
 if (-not (Test-Path -LiteralPath $LogDir)) {
   New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
@@ -64,6 +66,43 @@ function Test-Health {
   }
 }
 
+function Test-PortInUse([int]$ListenPort) {
+  $listener = $null
+  try {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $ListenPort)
+    $listener.Start()
+    return $false
+  } catch {
+    return $true
+  } finally {
+    if ($listener) {
+      try { $listener.Stop() } catch {}
+    }
+  }
+}
+
+function Get-LogTail([string]$Path, [int]$Lines = 16) {
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return ""
+  }
+  try {
+    $content = Get-Content -LiteralPath $Path -Tail $Lines -ErrorAction Stop
+    return (($content | ForEach-Object { $_ }) -join "`n").Trim()
+  } catch {
+    return ""
+  }
+}
+
+function Test-PythonImports {
+  $probe = "import dotenv, fastapi, uvicorn, PIL, yaml"
+  try {
+    $output = & $PythonExe -c $probe 2>&1 | Out-String
+    return @{ ok = ($LASTEXITCODE -eq 0); detail = $output.Trim() }
+  } catch {
+    return @{ ok = $false; detail = $_.Exception.Message }
+  }
+}
+
 function Ensure-Shortcut {
   if ($SkipShortcut) {
     return
@@ -100,10 +139,34 @@ function Start-HiddenCommand([string]$CommandLine, [string]$WorkingDirectory) {
   return [System.Diagnostics.Process]::Start($psi)
 }
 
+function Resolve-NpmCmd {
+  $command = Get-Command "npm.cmd" -ErrorAction SilentlyContinue
+  if ($command) {
+    return $command.Source
+  }
+  $fallback = Join-Path $env:ProgramFiles "nodejs\npm.cmd"
+  if (Test-Path -LiteralPath $fallback) {
+    return $fallback
+  }
+  return $null
+}
+
+function Invoke-FrontendNpm([string]$NpmCmd, [string]$NpmArgs, [string]$OutLog, [string]$ErrLog) {
+  $quotedNpm = "`"$NpmCmd`""
+  $quotedOut = "`"$OutLog`""
+  $quotedErr = "`"$ErrLog`""
+  $commandLine = "$quotedNpm $NpmArgs > $quotedOut 2> $quotedErr"
+  $process = Start-HiddenCommand $commandLine $FrontendDir
+  $process.WaitForExit()
+  return $process.ExitCode
+}
+
 function Start-Backend {
   $stamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
   $outLog = Join-Path $LogDir "backend-pro-$Port-$stamp.out.log"
   $errLog = Join-Path $LogDir "backend-pro-$Port-$stamp.err.log"
+  $Script:BackendOutLog = $outLog
+  $Script:BackendErrLog = $errLog
   [Environment]::SetEnvironmentVariable("MECHCAD_PORT", [string]$Port)
   [Environment]::SetEnvironmentVariable("MECHCAD_HOST", "127.0.0.1")
   $quotedPython = "`"$PythonExe`""
@@ -114,6 +177,32 @@ function Start-Backend {
   $Script:BackendProcess = $process
   $Script:StartedBackend = $true
   Write-LauncherLog "backend started pid=$($process.Id) out=$outLog err=$errLog"
+}
+
+function Wait-BackendReady([int]$Attempts = 120) {
+  for ($i = 0; $i -lt $Attempts; $i++) {
+    if (Test-Health) {
+      return $true
+    }
+    if ($Script:BackendProcess -and $Script:BackendProcess.HasExited) {
+      Write-LauncherLog "backend process exited during startup code=$($Script:BackendProcess.ExitCode)"
+      return $false
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  return $false
+}
+
+function Show-BackendFailure([string]$Title) {
+  $detail = Get-LogTail $Script:BackendErrLog
+  if (-not $detail) {
+    $detail = Get-LogTail $Script:BackendOutLog
+  }
+  if ($detail) {
+    Show-Message "$Title`n`n$detail`n`n完整日志：$LogDir"
+  } else {
+    Show-Message "$Title`n请查看日志目录：$LogDir"
+  }
 }
 
 function Stop-Backend {
@@ -137,18 +226,10 @@ function Restart-BackendService {
   Stop-Backend
   Start-Sleep -Milliseconds 500
   Start-Backend
-  $ready = $false
-  for ($i = 0; $i -lt 120; $i++) {
-    if (Test-Health) {
-      $ready = $true
-      break
-    }
-    Start-Sleep -Milliseconds 500
-  }
-  if (-not $ready) {
-    Show-Message "服务重启失败，请查看日志目录：$LogDir"
-  } else {
+  if (Wait-BackendReady) {
     Show-Balloon "MechCAD IDE" "服务已重启：$Url"
+  } else {
+    Show-BackendFailure "服务重启失败。"
   }
 }
 
@@ -184,17 +265,40 @@ try {
     exit 1
   }
 
+  $imports = Test-PythonImports
+  if (-not $imports.ok) {
+    Write-LauncherLog "python imports failed: $($imports.detail)"
+    Show-Message "Python 依赖不完整，后端无法启动。`n`n请先运行：`n.\.venv\Scripts\python.exe -m pip install -r requirements.txt`n`n$($imports.detail)"
+    exit 1
+  }
+
   if (-not (Test-Path -LiteralPath $DistIndex)) {
+    $npmCmd = Resolve-NpmCmd
+    if (-not $npmCmd) {
+      Show-Message "未找到 npm。请先安装 Node.js，并确保 npm.cmd 可用，再启动 MechCAD。"
+      exit 1
+    }
+
+    $tscCmd = Join-Path $FrontendDir "node_modules\.bin\tsc.cmd"
+    if (-not (Test-Path -LiteralPath $tscCmd)) {
+      Show-Balloon "MechCAD IDE" "首次启动需要安装前端依赖，请稍候..."
+      Write-LauncherLog "frontend node_modules missing, installing..."
+      $installOut = Join-Path $LogDir "frontend-install-$Port.out.log"
+      $installErr = Join-Path $LogDir "frontend-install-$Port.err.log"
+      $installCode = Invoke-FrontendNpm $npmCmd "install" $installOut $installErr
+      if ($installCode -ne 0 -or -not (Test-Path -LiteralPath $tscCmd)) {
+        Show-Message "前端依赖安装失败，请查看日志：`n$installErr"
+        exit 1
+      }
+      Write-LauncherLog "frontend npm install completed"
+    }
+
     Show-Balloon "MechCAD IDE" "首次启动需要构建前端界面，请稍候..."
     Write-LauncherLog "frontend dist missing, building..."
     $buildOut = Join-Path $LogDir "frontend-build-$Port.out.log"
     $buildErr = Join-Path $LogDir "frontend-build-$Port.err.log"
-    $quotedBuildOut = "`"$buildOut`""
-    $quotedBuildErr = "`"$buildErr`""
-    $buildCommand = "npm.cmd run build > $quotedBuildOut 2> $quotedBuildErr"
-    $build = Start-HiddenCommand $buildCommand $FrontendDir
-    $build.WaitForExit()
-    if ($build.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $DistIndex)) {
+    $buildCode = Invoke-FrontendNpm $npmCmd "run build" $buildOut $buildErr
+    if ($buildCode -ne 0 -or -not (Test-Path -LiteralPath $DistIndex)) {
       Show-Message "前端构建失败，请查看日志：`n$buildErr"
       exit 1
     }
@@ -205,22 +309,14 @@ try {
     Write-LauncherLog "reusing running backend on port $Port"
     Show-Balloon "MechCAD IDE" "已连接正在运行的服务：$Url"
   } else {
-    $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-    if ($listener) {
+    if (Test-PortInUse $Port) {
       Show-Message "端口 $Port 已被其他程序占用。`n请关闭占用程序，或使用 -Port 指定其他端口。"
       exit 1
     }
+    Show-Balloon "MechCAD IDE" "正在启动后端服务..."
     Start-Backend
-    $ready = $false
-    for ($i = 0; $i -lt 120; $i++) {
-      if (Test-Health) {
-        $ready = $true
-        break
-      }
-      Start-Sleep -Milliseconds 500
-    }
-    if (-not $ready) {
-      Show-Message "后端服务启动失败，请查看日志目录：$LogDir"
+    if (-not (Wait-BackendReady)) {
+      Show-BackendFailure "后端服务启动失败。"
       Stop-Backend
       exit 1
     }

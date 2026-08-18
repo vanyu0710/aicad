@@ -26,7 +26,6 @@ _PATTERN_TYPES = {definition.feature_type for definition in FEATURE_DEFINITIONS.
 _MODIFY_TYPES = {definition.feature_type for definition in FEATURE_DEFINITIONS.list() if definition.geometry_effect == "modify"}
 _UNSUPPORTED_TYPES = {definition.feature_type for definition in FEATURE_DEFINITIONS.list() if definition.implementation_status == "unsupported"}
 _NEEDS_XY_TYPES = {"through_hole", "blind_hole", "counterbore_hole", "rectangular_slot", "rectangular_pocket", "boss_cylinder", "rectangular_pad", "rib_box", "linear_pattern", "circular_pattern"}
-_CENTERED_PLACEMENTS = {reference for definition in FEATURE_DEFINITIONS.list() for reference in definition.centered_placements}
 _REQUIRED_DIMS = {
     definition.feature_type: tuple(definition.required_dimensions)
     for definition in FEATURE_DEFINITIONS.list()
@@ -61,6 +60,36 @@ def _value(feature: FeatureV3 | None, *names: str) -> float | None:
 
 def _has(feature: FeatureV3 | None, name: str) -> bool:
     return _value(feature, name) is not None
+
+
+def _host_inplane_limit(base: FeatureV3 | None) -> float | None:
+    """Largest in-plane radius a child can occupy on the host, or None if unknown."""
+    if base is None:
+        return None
+    outer = _value(base, "outer_diameter")
+    if outer is not None and outer > 0:
+        return outer / 2.0
+    length = _value(base, "length")
+    width = _value(base, "width")
+    if length is not None and width is not None and length > 0 and width > 0:
+        return min(length, width) / 2.0
+    return None
+
+
+def _outside_host_xy(base: FeatureV3, x: float, y: float, child_radius: float) -> bool:
+    from math import hypot
+
+    limit = _host_inplane_limit(base)
+    if limit is None:
+        return False
+    return hypot(x, y) + child_radius > limit + 0.5
+
+
+def _circular_pattern_outside_host(base: FeatureV3, pitch_radius: float, instance_radius: float) -> bool:
+    limit = _host_inplane_limit(base)
+    if limit is None:
+        return False
+    return pitch_radius + instance_radius > limit + 0.5
 
 
 def compute_feature_order(plan: FeaturePlanV3) -> tuple[list[str], list[str]]:
@@ -153,10 +182,9 @@ def validate_feature_plan(plan: FeaturePlanV3, mode: str = "strict", language: s
         if feature.type in _NEEDS_XY_TYPES:
             placement = feature.placement
             positioned = placement.x is not None and placement.y is not None
-            centered = placement.reference in _CENTERED_PLACEMENTS
-            if placement.reference == "needs_position" or (not positioned and not centered):
+            if placement.reference == "needs_position" or not positioned:
                 status = "block" if mode == "strict" else "warning"
-                add_check("missing_placement", feature.id, status, _msg(language, f"特征 {feature.id} 缺少定位: 需要 X/Y 位置或明确基准", f"Feature {feature.id} is missing placement: X/Y position or a clear datum is required"))
+                add_check("missing_placement", feature.id, status, _msg(language, f"特征 {feature.id} 缺少定位: 需要明确的 X/Y，不能用基准名代替坐标", f"Feature {feature.id} is missing placement: explicit X/Y is required; a datum name is not a coordinate"))
 
         if feature.type in _UNSUPPORTED_TYPES:
             add_check("unsupported_feature", feature.id, "warning", _msg(language, f"特征 {feature.id} 类型暂不支持: {feature.type}", f"Feature {feature.id} type is not supported yet: {feature.type}"))
@@ -173,11 +201,8 @@ def validate_feature_plan(plan: FeaturePlanV3, mode: str = "strict", language: s
                     add_check("hole_larger_than_base", feature.id, "block", _msg(language, f"孔径 {diameter}mm 不小于基体外形 {limit}mm", f"Hole diameter {diameter}mm is not smaller than body size {limit}mm"))
             x = feature.placement.x
             y = feature.placement.y
-            if base is not None and base.type == "box_base" and x is not None and y is not None:
-                half_length = (_value(base, "length") or 0.0) / 2.0
-                half_width = (_value(base, "width") or 0.0) / 2.0
-                if abs(x) > half_length + 0.5 or abs(y) > half_width + 0.5:
-                    add_check("hole_outside_base", feature.id, "block", _msg(language, f"孔中心 ({x},{y}) 超出板件边界", f"Hole center ({x},{y}) is outside the plate boundary"))
+            if base is not None and x is not None and y is not None and _outside_host_xy(base, float(x), float(y), (diameter or 0.0) / 2.0):
+                add_check("hole_outside_base", feature.id, "block", _msg(language, f"孔中心 ({x},{y}) 超出基体边界", f"Hole center ({x},{y}) is outside the host boundary"))
 
         if feature.type == "annular_groove":
             reduced = _value(feature, "reduced_outer_diameter")
@@ -211,6 +236,14 @@ def validate_feature_plan(plan: FeaturePlanV3, mode: str = "strict", language: s
                 radius = _value(feature, "pitch_radius", "bolt_circle_radius")
                 if radius is not None and radius <= 0:
                     add_check("pattern_radius", feature.id, "block", _msg(language, "阵列半径必须大于 0", "Pattern radius must be greater than 0"))
+                instance_radius = (_value(feature, "diameter", "hole_diameter") or 0.0) / 2.0
+                if radius is not None and base is not None and _circular_pattern_outside_host(base, radius, instance_radius):
+                    add_check(
+                        "pattern_outside_host",
+                        feature.id,
+                        "block",
+                        _msg(language, f"圆周阵列半径 {radius}mm 超出基体轮廓", f"Circular pattern radius {radius}mm exceeds the host outline"),
+                    )
 
         unconfirmed = [
             name for name, dimension in feature.dimensions.items()

@@ -77,6 +77,16 @@ class EvidenceTests(unittest.TestCase):
 
 
 class TemplatePlanTests(unittest.TestCase):
+    def test_circular_pitch_is_not_invented_without_evidence(self):
+        plan = build_template_plan(
+            "Flange outer diameter 56 thickness 3 with a 25mm center through hole",
+            mode="smart",
+            smart_fill_policy="full_autonomous",
+        )
+        pattern = next(feature for feature in plan.features if feature.type == "circular_pattern")
+        pitch = pattern.dimensions.get("pitch_radius")
+        self.assertTrue(pitch is None or pitch.value is None)
+
     def test_flange_template_uses_center_hole_diameter(self):
         plan = build_template_plan(
             "Flange outer diameter 100 thickness 12 with a 20mm center through hole",

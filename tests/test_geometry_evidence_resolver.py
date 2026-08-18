@@ -171,10 +171,17 @@ class GeometryEvidenceResolverTests(unittest.TestCase):
         self.assertEqual(_constraint(hole_a, "position").status, "MATCHED")
         self.assertEqual(_constraint(hole_b, "position").status, "MATCHED")
 
-    def test_zero_matching_cylinders_is_not_found(self) -> None:
+    def test_wrong_diameter_at_located_position_keeps_identity(self) -> None:
         plan = FeaturePlanV3(base_feature=_box_base(), features=[_hole("hole_a", x=20.0, y=10.0, diameter=8.0)])
         evidence = _evidence(resolve_feature_geometry_evidence(plan, _two_hole_measurement()), "hole_a")
         self.assertEqual(_constraint(evidence, "dimension").status, "NOT_FOUND")
+        self.assertEqual(_constraint(evidence, "position").status, "MATCHED")
+        self.assertEqual(evidence.correspondence.status, "MATCHED")
+        self.assertEqual(evidence.correspondence.selected_candidate_ids, ["cyl:1"])
+
+    def test_empty_measurement_cylinders_are_not_found(self) -> None:
+        plan = FeaturePlanV3(base_feature=_box_base(), features=[_hole("hole_a", x=20.0, y=10.0)])
+        evidence = _evidence(resolve_feature_geometry_evidence(plan, _box_measurement([])), "hole_a")
         self.assertEqual(evidence.correspondence.status, "NOT_FOUND")
         self.assertEqual(evidence.correspondence.selected_candidate_ids, [])
 

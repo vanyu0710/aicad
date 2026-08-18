@@ -67,7 +67,8 @@ Position of a cylinder is **axis ∩ host plane**, never the raw
 - `box_base`
 - `cylinder_base` / `hollow_cylinder`
 - `through_hole` / `blind_hole` (evidence only; no hole verifier)
-- `boss_cylinder` (evidence only; no boss verifier)
+- `boss_cylinder` (0.7.3-A verifier: existence, diameter, height, axis, position, host)
+- `annular_groove` / `internal_annular_groove` (0.7.3-B: axial z_start + root cylinder)
 
 Every other registered type still receives a signature so absence is visible,
 but correspondence is `UNAVAILABLE`.

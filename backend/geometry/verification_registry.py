@@ -59,6 +59,8 @@ def build_default_registry(
     box_verifier: FeatureVerifier,
     cylinder_verifier: FeatureVerifier,
     hole_verifier: FeatureVerifier | None = None,
+    boss_verifier: FeatureVerifier | None = None,
+    groove_verifier: FeatureVerifier | None = None,
 ) -> GeometryVerificationRegistry:
     """Register every canonical feature type; only implemented verifiers get code."""
 
@@ -71,7 +73,14 @@ def build_default_registry(
     if hole_verifier is not None:
         primitive_verifiers["through_hole"] = hole_verifier
         primitive_verifiers["blind_hole"] = hole_verifier
+    if boss_verifier is not None:
+        primitive_verifiers["boss_cylinder"] = boss_verifier
+    if groove_verifier is not None:
+        primitive_verifiers["annular_groove"] = groove_verifier
+        primitive_verifiers["internal_annular_groove"] = groove_verifier
     hole_properties = ["existence", "diameter", "position", "axis", "depth", "through"]
+    boss_properties = ["existence", "diameter", "height", "axis", "position", "host"]
+    groove_properties = ["existence", "width", "depth", "position", "axis", "host"]
     for definition in FEATURE_DEFINITIONS.list():
         verifier = primitive_verifiers.get(definition.feature_type)
         if definition.feature_type in {"through_hole", "blind_hole"} and verifier is not None:
@@ -79,6 +88,18 @@ def build_default_registry(
             properties = list(hole_properties)
             limitations = [
                 "Hole depth and through-ness use cylindrical V-span versus host thickness, not a topological end-cap proof.",
+            ]
+        elif definition.feature_type == "boss_cylinder" and verifier is not None:
+            status = "partial"
+            properties = list(boss_properties)
+            limitations = [
+                "Boss height uses cylindrical V-span. Additive vs subtractive faces are not distinguished in 1D-1 measurement.",
+            ]
+        elif definition.feature_type in {"annular_groove", "internal_annular_groove"} and verifier is not None:
+            status = "partial"
+            properties = list(groove_properties)
+            limitations = [
+                "Groove width is cylindrical V-span; depth is derived from host vs root diameters. Not a topological pocket proof.",
             ]
         elif verifier is not None:
             status = "supported"

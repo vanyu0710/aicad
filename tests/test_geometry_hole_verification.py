@@ -138,12 +138,15 @@ class HoleVerificationTests(unittest.TestCase):
         hole = next(item for item in report.features if item.feature_id == "hole_a")
         self.assertEqual(hole.status, "UNKNOWN")
 
-    def test_wrong_diameter_does_not_bind_and_does_not_pass(self) -> None:
-        plan = FeaturePlanV3(base_feature=_box_base(), features=[_hole("hole_a", x=20.0, y=10.0, diameter=8.0)])
-        report = verify_feature_plan(plan, _measurement([_cylinder(0, diameter=6.0, x=20.0, y=10.0)]))
+    def test_wrong_diameter_at_correct_position_fails_diameter(self) -> None:
+        plan = FeaturePlanV3(base_feature=_box_base(), features=[_hole("hole_a", x=20.0, y=10.0, diameter=6.0)])
+        report = verify_feature_plan(plan, _measurement([_cylinder(0, diameter=5.0, x=20.0, y=10.0)]))
         props = _props(report, "hole_a")
-        self.assertEqual(props["existence"], "FAIL")
-        self.assertNotEqual(props["diameter"], "PASS")
+        self.assertEqual(props["existence"], "PASS")
+        self.assertEqual(props["position"], "PASS")
+        self.assertEqual(props["diameter"], "FAIL")
+        hole = next(item for item in report.features if item.feature_id == "hole_a")
+        self.assertEqual(hole.status, "FAIL")
 
     def test_wrong_position_on_unique_hole_fails_position(self) -> None:
         plan = FeaturePlanV3(base_feature=_box_base(), features=[_hole("hole_a", x=0.0, y=0.0)])

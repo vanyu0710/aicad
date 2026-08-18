@@ -26,7 +26,17 @@ from backend.schemas import (
 )
 
 
-_CONSTRAINT_ORDER = ("type", "dimension", "axis", "position", "region", "host", "relationship")
+_CONSTRAINT_ORDER = ("type", "position", "axis", "dimension", "region", "host", "relationship")
+_SOFT_WHEN_UNIQUE = {"axis", "position", "dimension"}
+_CHILD_CYLINDER_TYPES = {
+    "through_hole",
+    "blind_hole",
+    "counterbore_hole",
+    "boss_cylinder",
+    "annular_groove",
+    "internal_annular_groove",
+}
+_HOST_CYLINDER_TYPES = {"cylinder_base", "hollow_cylinder"}
 
 
 def resolve_feature_geometry_evidence(
@@ -44,9 +54,10 @@ def resolve_feature_geometry_evidence(
     candidates = collect_geometry_candidates(measurement)
     features: list[GeometryEvidence] = []
     errors: list[str] = []
+    reserved = _reserved_host_cylinder_ids(plan, candidates, policy)
     for feature in _plan_features(plan):
         try:
-            features.append(_resolve_one(plan, feature, measurement, candidates, policy))
+            features.append(_resolve_one(plan, feature, measurement, candidates, policy, reserved=reserved))
         except Exception as exc:
             errors.append(f"Geometry evidence error for {feature.id}: {exc}")
             signature = compile_feature_signature(feature)
@@ -64,6 +75,7 @@ def resolve_feature_geometry_evidence(
                     notes=[str(exc)],
                 )
             )
+    _apply_exclusive_assignment(features)
     return GeometryEvidenceReport(
         measurement_version=measurement.measurement_version,
         features=features,
@@ -100,15 +112,21 @@ def _resolve_one(
     measurement: GeometryMeasurementReport,
     candidates: list[GeometryCandidate],
     policy: VerificationTolerancePolicy,
+    *,
+    reserved: set[str] | None = None,
 ) -> GeometryEvidence:
     signature = compile_feature_signature(feature)
     reference = resolve_reference_context(plan, feature, measurement)
-    correspondence = correspond_feature(signature, reference, candidates, measurement, policy)
+    usable = list(candidates)
+    notes: list[str] = []
+    if feature.type in _CHILD_CYLINDER_TYPES and reserved:
+        usable = [item for item in candidates if item.candidate_id not in reserved]
+        notes.append("Host cylinder primitives are reserved and cannot bind a child feature.")
+    correspondence = correspond_feature(signature, reference, usable, measurement, policy)
     bound = []
     if correspondence.status == "MATCHED":
         selected = set(correspondence.selected_candidate_ids)
-        bound = [candidate for candidate in candidates if candidate.candidate_id in selected]
-    notes: list[str] = []
+        bound = [candidate for candidate in usable if candidate.candidate_id in selected]
     if correspondence.status == "AMBIGUOUS":
         notes.append("AMBIGUOUS correspondence never auto-selects a candidate.")
     if not signature.bindable:
@@ -176,10 +194,14 @@ def correspond_feature(
         if result.status == "UNAVAILABLE":
             continue
         evaluable_ran = True
-        # Axis/position disambiguate when several candidates remain. A unique
-        # leftover is kept so verification can FAIL that property instead of
-        # pretending the feature was not found.
-        soft = kind in {"axis", "position"} and len(survivors) == 1
+        # Unique leftovers stay bound so property verifiers can FAIL diameter,
+        # axis, or position instead of deleting the identity. Diameter is only
+        # kept when the candidate was already located; otherwise a lone leftover
+        # cylinder would steal another feature's identity.
+        soft = kind in _SOFT_WHEN_UNIQUE and len(survivors) == 1
+        if kind == "dimension":
+            position = next((item for item in constraint_results if item.constraint == "position"), None)
+            soft = soft and position is not None and position.status == "MATCHED"
         if result.status == "NOT_FOUND":
             if not soft:
                 survivors = []
@@ -412,8 +434,10 @@ def _position_constraint(
             status="UNAVAILABLE",
             reason="No candidates are available to compare position.",
         )
+    if isinstance(constraint.expected, dict) and "z_start" in constraint.expected:
+        return _axial_position_constraint(constraint, survivors, policy)
     expected = constraint.expected if isinstance(constraint.expected, list) else reference.resolved_position
-    if expected is None or len(expected) < 2:
+    if expected is None or not isinstance(expected, list) or len(expected) < 2:
         return ConstraintResult(
             constraint="position",
             status="UNAVAILABLE",
@@ -465,6 +489,71 @@ def _position_constraint(
         observed=observed[0] if len(observed) == 1 else observed,
         candidate_ids=matched,
         reason="Candidate position is the axis intersection with the host plane, not CylinderFact.center.",
+    )
+
+
+def _axial_position_constraint(
+    constraint: SignatureConstraint,
+    survivors: list[GeometryCandidate],
+    policy: VerificationTolerancePolicy,
+) -> ConstraintResult:
+    expected = constraint.expected if isinstance(constraint.expected, dict) else {}
+    z_start = expected.get("z_start")
+    width = expected.get("width")
+    if z_start is None:
+        return ConstraintResult(
+            constraint="position",
+            status="UNAVAILABLE",
+            property_name="z_start",
+            reason="No executable axial z_start is available.",
+        )
+    matched: list[str] = []
+    observed: list[Any] = []
+    unavailable = False
+    for candidate in survivors:
+        point = candidate.properties.get("axis_point")
+        height = candidate.properties.get("height")
+        if not isinstance(point, list) or len(point) < 3:
+            unavailable = True
+            continue
+        z_loc = float(point[2])
+        if _close(z_loc, z_start, policy):
+            matched.append(candidate.candidate_id)
+            observed.append({"z": z_loc, "height": height})
+            continue
+        if height is not None:
+            lo = min(z_loc, z_loc + float(height))
+            hi = max(z_loc, z_loc + float(height))
+            expected_hi = z_start + float(width or 0.0)
+            overlap = min(hi, max(z_start, expected_hi)) - max(lo, min(z_start, expected_hi))
+            if overlap + policy.linear_absolute_mm >= min(float(width or height), float(height)) * 0.5:
+                matched.append(candidate.candidate_id)
+                observed.append({"z": z_loc, "height": height, "overlap": overlap})
+    if not matched and unavailable and not observed:
+        return ConstraintResult(
+            constraint="position",
+            status="UNAVAILABLE",
+            property_name="z_start",
+            expected=z_start,
+            reason="Candidate axis location is unavailable for axial comparison.",
+        )
+    if not matched:
+        return ConstraintResult(
+            constraint="position",
+            status="NOT_FOUND",
+            property_name="z_start",
+            expected=z_start,
+            observed=observed,
+            reason="No candidate occupies the expected axial groove interval.",
+        )
+    return ConstraintResult(
+        constraint="position",
+        status="MATCHED" if len(matched) == 1 else "AMBIGUOUS",
+        property_name="z_start",
+        expected=z_start,
+        observed=observed[0] if len(observed) == 1 else observed,
+        candidate_ids=matched,
+        reason="Candidate axial location matches groove z_start / occupancy.",
     )
 
 
@@ -559,6 +648,64 @@ def _plan_features(plan: FeaturePlanV3) -> list[FeatureV3]:
         features.append(plan.base_feature)
     features.extend(plan.features)
     return features
+
+
+def _feature_dimension(feature: FeatureV3, name: str) -> float | None:
+    dimension = feature.dimensions.get(name)
+    if dimension is None or dimension.value is None:
+        return None
+    try:
+        return float(dimension.value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _reserved_host_cylinder_ids(
+    plan: FeaturePlanV3,
+    candidates: list[GeometryCandidate],
+    policy: VerificationTolerancePolicy,
+) -> set[str]:
+    base = plan.base_feature
+    if base is None or base.type not in _HOST_CYLINDER_TYPES:
+        return set()
+    reserved: set[str] = set()
+    expected = [_feature_dimension(base, "outer_diameter")]
+    if base.type == "hollow_cylinder":
+        expected.append(_feature_dimension(base, "inner_diameter"))
+    for candidate in candidates:
+        if candidate.kind != "cylinder":
+            continue
+        diameter = candidate.properties.get("diameter")
+        if any(value is not None and _close(diameter, value, policy) for value in expected):
+            reserved.add(candidate.candidate_id)
+    return reserved
+
+
+def _apply_exclusive_assignment(features: list[GeometryEvidence]) -> None:
+    owners: dict[str, list[GeometryEvidence]] = {}
+    for item in features:
+        if item.correspondence.status != "MATCHED":
+            continue
+        for candidate_id in item.correspondence.selected_candidate_ids:
+            owners.setdefault(candidate_id, []).append(item)
+    contended = {candidate_id: group for candidate_id, group in owners.items() if len(group) > 1}
+    if not contended:
+        return
+    seen: set[int] = set()
+    for group in contended.values():
+        for item in group:
+            marker = id(item)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            item.correspondence.status = "AMBIGUOUS"
+            item.correspondence.selected_candidate_ids = []
+            item.correspondence.reason = (
+                "Multiple FeaturePlan features matched the same geometry candidate; no candidate was selected."
+            )
+            item.bound_candidates = []
+            item.usable_for_verification = False
+            item.notes.append("Exclusive assignment: one BRep candidate cannot verify two features.")
 
 
 def _close(actual: Any, expected: Any, policy: VerificationTolerancePolicy) -> bool:

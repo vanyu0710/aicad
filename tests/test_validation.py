@@ -334,6 +334,84 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(any(item.startswith("[validation]") for item in plan.design_review.blocking))
         self.assertTrue(all(item.startswith("[validation]") for item in plan.design_review.blocking))
 
+    def test_centered_label_without_xy_is_missing_placement(self):
+        plan = FeaturePlanV3.model_validate(
+            {
+                "base_feature": _base(),
+                "features": [
+                    _feature("hole1", "through_hole", "remove", {"diameter": {"value": 6}}, placement={"reference": "model_center", "axis": "Z"}),
+                ],
+            }
+        )
+        strict = validate_feature_plan(plan, mode="strict", language="en")
+        self.assertTrue(any("placement" in item.lower() for item in strict["blocking"]))
+
+    def test_hole_outside_cylindrical_host_is_blocked(self):
+        plan = FeaturePlanV3.model_validate(
+            {
+                "base_feature": _base(
+                    "disk",
+                    "cylinder_base",
+                    {"outer_diameter": {"value": 50}, "length": {"value": 8}},
+                ),
+                "features": [
+                    _feature(
+                        "hole1",
+                        "through_hole",
+                        "remove",
+                        {"diameter": {"value": 6}},
+                        placement={"reference": "origin", "x": 30, "y": 0, "axis": "Z"},
+                    )
+                ],
+            }
+        )
+        result = validate_feature_plan(plan, mode="smart", language="en")
+        self.assertTrue(any("outside" in item.lower() for item in result["blocking"]))
+
+    def test_circular_pattern_outside_host_is_blocked(self):
+        plan = FeaturePlanV3.model_validate(
+            {
+                "base_feature": _base(
+                    "disk",
+                    "cylinder_base",
+                    {"outer_diameter": {"value": 56}, "length": {"value": 3}},
+                ),
+                "features": [
+                    _feature(
+                        "pattern1",
+                        "circular_pattern",
+                        "pattern",
+                        {"count": {"value": 4}, "pitch_radius": {"value": 40}, "diameter": {"value": 6}},
+                        placement={"reference": "origin", "x": 0, "y": 0, "axis": "Z"},
+                    )
+                ],
+            }
+        )
+        result = validate_feature_plan(plan, mode="smart", language="en")
+        self.assertTrue(any("pattern" in item.lower() and "exceed" in item.lower() for item in result["blocking"]))
+
+    def test_circular_pattern_inside_host_is_allowed(self):
+        plan = FeaturePlanV3.model_validate(
+            {
+                "base_feature": _base(
+                    "disk",
+                    "cylinder_base",
+                    {"outer_diameter": {"value": 100}, "length": {"value": 8}},
+                ),
+                "features": [
+                    _feature(
+                        "pattern1",
+                        "circular_pattern",
+                        "pattern",
+                        {"count": {"value": 4}, "pitch_radius": {"value": 35}, "diameter": {"value": 6}},
+                        placement={"reference": "origin", "x": 0, "y": 0, "axis": "Z"},
+                    )
+                ],
+            }
+        )
+        result = validate_feature_plan(plan, mode="smart", language="en")
+        self.assertFalse(any("exceed" in item.lower() for item in result["blocking"]))
+
 
 if __name__ == "__main__":
     unittest.main()

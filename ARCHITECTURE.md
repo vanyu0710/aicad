@@ -3,7 +3,7 @@
 ## Status
 
 - Current branch: `codex/mechcad-pro-ui`
-- Latest milestone: v0.7.2 Complete Hole Verification (1D-2.2)
+- Latest milestone: v0.7.3-B Generic Groove Verification
 - CAD engine: controlled Build123d worker behind a FreeCAD-ready subprocess boundary
 - UI: React + TypeScript + Three.js, SolidWorks-style three-panel IDE with full-screen viewport drawers
 
@@ -66,7 +66,7 @@
 
 ## Known Limitations
 
-- Feature geometry evidence can bind box/cylinder bases and hole/boss cylinders. Semantic verification covers isolated bases plus `through_hole` / `blind_hole`.
+- Feature geometry evidence can bind box/cylinder bases, holes, bosses, and annular grooves. Semantic verification covers isolated bases, holes, `boss_cylinder`, and annular grooves.
 - Holes, grooves, bosses, patterns, ribs, fillets, chamfers, and relations remain `UNSUPPORTED` in the verification registry.
 - Counterbores, slots, ribs, and patterns have partial worker semantics; they are not full production feature implementations.
 - Spur gear teeth, threads, sheet metal, fillets, and chamfers are intentionally unsupported and never faked.

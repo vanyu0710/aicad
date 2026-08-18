@@ -279,6 +279,97 @@ def _host_axis_size(feature: FeatureV3, measurement: GeometryMeasurementReport) 
     return {"X": bounds.get("size_x"), "Y": bounds.get("size_y"), "Z": bounds.get("size_z")}.get(axis)
 
 
+class BossVerifier:
+    """Verify boss_cylinder using the same GeometryEvidence contract as holes."""
+
+    def verify(
+        self,
+        feature: FeatureV3,
+        measurement: GeometryMeasurementReport,
+        context: VerificationContext,
+        *,
+        plan_has_followup_features: bool,
+        evidence: GeometryEvidence | None = None,
+    ) -> FeatureVerificationResult:
+        from backend.geometry import verification as _v
+
+        _ = plan_has_followup_features
+        policy = context.tolerance_policy
+        correspondence = (
+            to_geometry_correspondence(evidence.correspondence)
+            if evidence is not None
+            else GeometryCorrespondence(status="UNAVAILABLE", reason="No geometry evidence was supplied.")
+        )
+        existence = _existence_property(evidence, measurement)
+        if evidence is None or evidence.correspondence.status != "MATCHED" or not evidence.bound_candidates:
+            reason = (
+                evidence.correspondence.reason
+                if evidence is not None
+                else "Boss identity is not MATCHED, so remaining properties cannot be proven."
+            )
+            properties = [existence]
+            for name in ("diameter", "height", "axis", "position", "host"):
+                properties.append(VerificationPropertyResult(property_name=name, status="UNKNOWN", reason=reason))
+            return _v._feature_result(feature, properties, correspondence=correspondence)
+
+        candidate = evidence.bound_candidates[0]
+        evidence_ref = candidate.measurement_ref
+        properties = [
+            existence,
+            _diameter_property(feature, candidate, policy, evidence_ref),
+            _height_property(feature, candidate, policy, evidence_ref),
+            _axis_from_candidate(feature, candidate, policy, evidence_ref),
+            _position_property(evidence, policy, evidence_ref),
+            _host_property(evidence),
+        ]
+        return _v._feature_result(feature, properties, correspondence=correspondence)
+
+
+def _height_property(
+    feature: FeatureV3,
+    candidate: GeometryCandidate,
+    policy: VerificationTolerancePolicy,
+    evidence_ref: str,
+) -> VerificationPropertyResult:
+    from backend.geometry import verification as _v
+
+    expected = _v._dimension(feature, "height")
+    if expected is None:
+        expected = _v._dimension(feature, "length")
+    result = _v._numeric_property(
+        "height",
+        expected,
+        candidate.properties.get("height"),
+        policy.linear_absolute_mm,
+        policy.linear_relative,
+        evidence_ref=evidence_ref,
+        unavailable_reason="Cylindrical V-span is unavailable, so boss height cannot be proven.",
+    )
+    if result.status in {"PASS", "FAIL"}:
+        result.reason = "Observed height is the cylindrical-face V-span, not a manufacturing height. " + result.reason
+    return result
+
+
+def _host_property(evidence: GeometryEvidence) -> VerificationPropertyResult:
+    constraint = _constraint(evidence, "host")
+    if constraint is None:
+        return VerificationPropertyResult(property_name="host", status="UNKNOWN", reason="Host was not evaluated.")
+    if constraint.status == "MATCHED":
+        return VerificationPropertyResult(
+            property_name="host",
+            status="PASS",
+            observed=constraint.observed,
+            reason="A host bounding region is available for this feature.",
+        )
+    if constraint.status == "UNAVAILABLE":
+        return VerificationPropertyResult(property_name="host", status="UNKNOWN", reason=constraint.reason)
+    return VerificationPropertyResult(
+        property_name="host",
+        status="FAIL" if constraint.status == "NOT_FOUND" else "UNKNOWN",
+        reason=constraint.reason or "Host correspondence is not unique.",
+    )
+
+
 def _constraint(evidence: GeometryEvidence, kind: str) -> Any:
     for item in evidence.correspondence.constraint_results:
         if item.constraint == kind:
