@@ -106,32 +106,44 @@ environment variables `MECHCAD_VISION_*` / `MECHCAD_PLANNER_*` (see `.env`).
 If no model is configured or a call fails, the deterministic local stub in
 `backend/ai.py` takes over so the IDE and CAD chain keep working.
 
-## MechKernel Agent（P1 垂直切片）
+## MechKernel Agent（主路径，v0.9.0）
 
-除了上面的 FeaturePlanV3 主链路，aicad 还叠加了一条 agent 路径：LLM 通过原生
-function calling 直接驱动 MechKernel 参数化内核（`mechcad-kernel` 仓）的 33 个公开
-op，逐步自主建模，用户在视口上方的 Agent 运行条里启动/停止并看步数进度。
+MechKernel agent（harness）现在是 aicad 的**默认建模路径**：LLM 通过原生 function calling
+直接驱动 MechKernel 参数化内核（`mechcad-kernel` 仓）的 33 个公开 op，逐步自主建模；
+用户在视口上方的 Agent 运行条里启动/停止、看步数；特征树与属性面板直接渲染内核的
+`feature_graph`，可改参数（`update_feature` → 参数化重放）与撤销/重做。
 
 - 执行层直接是 MechKernel op；`feature_graph` / `_op_history` 是特征树与参数化重放的唯一来源（D1）。
 - Worker 是常驻子进程 `mech_kernel/server.py`（stdio JSON-lines RPC），backend 永不 import CAD 库（D2）。
-- `RECOVERABLE` 失败会按 capability schema 过滤 `suggestion.fix` 后自动重试一次；STL 在体积变化时导出，STEP 在收尾导出。
+- **人机协作确认点（P2）**：破坏性操作（delete_feature / confirm_replace / shell）、破坏性修复、
+  `ask_user` 提问都会暂停等待用户在助手面板审批（批准/改参/拒绝）；超时默认 600s
+  （`MECHCAD_AGENT_APPROVAL_TIMEOUT`）自动跳过。支持"暂停接管 → 手动编辑 → 交还继续"。
+- `RECOVERABLE` 失败按 capability schema 过滤 `suggestion.fix` 自动重试；体积变化时导 STL，收尾导 STEP。
 - 配置见 `.env.example` 的 `MECHCAD_KERNEL_REPO` / `MECHCAD_KERNEL_PYTHON` / `MECHCAD_KERNEL_TIMEOUT`；agent LLM 复用 planner 角色配置。
-- 路线图与分阶段任务：`G:\lfy design\ai cad\mechcad-kernel\docs\mechkernel-harness-roadmap.md`（P2 确认点 / P3 改动清单 / P4 打磨）。
-- FeaturePlanV3 → 受控 build123d worker 的旧链路保持冻结、可继续使用；agent 快照的执行语义放在 `ExecutionReport` 扩展字段中。
+- 路线图：`G:\lfy design\ai cad\mechcad-kernel\docs\mechkernel-harness-roadmap.md`（P3 改动清单 / P4 打磨）。
+
+> **FeaturePlanV3 链路已冻结**：前端默认不暴露旧入口（/generate、/chat、PATCH features 仍在 API 层可用）。
+> 旧的 AI 规划 → 校验 → 受控 build123d worker 链路及其测试全部保留，未删除，可经 git 历史或用
+> 旧版 UI 切回。
 
 ## API
 
 - `POST /api/projects`: create project.
 - `GET /api/projects/{project_id}`: read current state.
-- `POST /api/projects/{project_id}/generate`: create a new FeaturePlan and run the CAD worker.
-- `POST /api/projects/{project_id}/chat`: apply a natural language edit.
-- `POST /api/projects/{project_id}/agent/start`: start the MechKernel agent loop (see below).
+- `POST /api/projects/{project_id}/generate`: create a new FeaturePlan and run the CAD worker (frozen legacy).
+- `POST /api/projects/{project_id}/chat`: apply a natural language edit (frozen legacy).
+- `POST /api/projects/{project_id}/agent/start`: start the MechKernel agent loop (default path).
 - `POST /api/projects/{project_id}/agent/stop`: request a cooperative stop between agent steps.
-- `PATCH /api/projects/{project_id}/features/{feature_id}`: edit one feature.
-- `POST /api/projects/{project_id}/undo`: undo to previous snapshot.
-- `POST /api/projects/{project_id}/redo`: redo snapshot.
+- `POST /api/projects/{project_id}/agent/resolve`: answer a pending approval (approve/reject/edit).
+- `GET /api/projects/{project_id}/kernel/feature_tree`: current kernel feature_graph + op_history.
+- `POST /api/projects/{project_id}/kernel/update_feature`: parametric rebuild after a parameter change.
+- `POST /api/projects/{project_id}/kernel/delete_feature`: delete a feature (kernel replay).
+- `POST /api/projects/{project_id}/kernel/undo` / `.../kernel/redo`: undo/redo inside the kernel worker.
+- `PATCH /api/projects/{project_id}/features/{feature_id}`: edit one feature (frozen legacy).
+- `POST /api/projects/{project_id}/undo`: undo (kernel worker when alive, else legacy snapshot).
+- `POST /api/projects/{project_id}/redo`: redo (kernel worker when alive, else legacy snapshot).
 - `GET /api/artifacts/{run_id}/{kind}`: download `step`, `stl`, `obj`, `report`, or `execution_report`.
-- `WS /ws/projects/{project_id}`: receive generation progress events.
+- `WS /ws/projects/{project_id}`: receive agent step / approval / artifact events.
 
 ## Modeling Contract
 

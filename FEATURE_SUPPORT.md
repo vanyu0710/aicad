@@ -44,10 +44,18 @@ Legend: `Yes` = implemented and exercised, `Partial` = simplified implementation
 - All other feature types remain registered with an explicit `UNSUPPORTED` verification capability.
 - `UNKNOWN` is never promoted to `PASS`; missing or unreliable measurements are reported as not proven.
 
-## MechKernel Agent Path（v0.8.0-alpha，叠加路径）
+## MechKernel Agent Path（v0.9.0，默认主路径）
 
+- **主路径**：前端主按钮/Ctrl+G、特征树（`KernelFeatureTree`）、属性面板（`KernelFeatureForm`）、
+  undo/redo 全部走 MechKernel worker RPC。FeaturePlanV3 → 受控 build123d worker 链路**冻结保留**
+  （UI 不再展示旧入口，/generate、/chat、PATCH features 仍可用）。
 - 执行层是 MechKernel（mechcad-kernel 仓）的 33 个公开 op，经 `mech_kernel/server.py` stdio RPC 由 `backend/agent/` 逐步驱动。
 - 支持的建模能力以 MechKernel capability registry 为准（workplane/sketch/extrude/revolve/sweep/boolean/hole/fillet/chamfer/shell/pattern/select/undo 等）；fillet/chamfer/任意方向 hole 在 agent 路径可用，与本文件上方 FeaturePlanV3 特征矩阵无关。
-- 自修复：RECOVERABLE + suggestion.fix 按 schema 过滤后自动重试一次；其余失败原样回喂模型。
+- 自修复：RECOVERABLE + suggestion.fix 按 schema 过滤后自动重试一次（含 `confirm_replace` 的 fix 走审批）；其余失败原样回喂模型。
+- **P2 人机协作确认点**：破坏性操作（delete_feature / confirm_replace / shell）、破坏性修复、`ask_user`
+  提问会在 `POST /agent/resolve` 等待用户（approve/reject/edit）；超时默认 600s
+  （`MECHCAD_AGENT_APPROVAL_TIMEOUT`），超时自动跳过。支持"暂停接管 → 手动编辑 → 交还继续"（开局含 feature_graph 上下文）。
+- kernel 直接 REST：`/kernel/feature_tree`、`/kernel/update_feature`、`/kernel/delete_feature`、
+  `/kernel/undo`、`/kernel/redo`（参数化重放 + 重导 STL/STEP + 提交快照）。
 - 验证：收尾 `validate_geometry(level="standard")` + 体积/包围盒监控；aicad 的 semantic verifier / evidence gate 不参与 agent 路径（D3）。
-- 每步无确认点（P2 实现）；`production_ready` 恒为 false。
+- `production_ready` 恒为 false（agent 假设未全量确认）。

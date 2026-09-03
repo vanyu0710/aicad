@@ -1,4 +1,23 @@
-## v0.8.0-alpha - MechKernel Agent（P0+P1 垂直切片）
+## v0.9.0-alpha - Harness 主链路化 + P2 人机协作（弱化 FeaturePlanV3）
+
+- **主路径全面切 MechKernel harness**：前端主按钮/Ctrl+G、特征树、属性面板、undo/redo 全部走 kernel
+  worker RPC；FeaturePlanV3 → 受控 build123d worker 链路**冻结保留**（代码/测试/端点不动，
+  UI 不再展示旧入口，README 标注 frozen，git 可随时切回）。
+- **人机协作确认点（P2，`backend/agent/approvals.py`）**：
+  - `ApprovalBroker`：agent 线程 `request()` 阻塞等待，`POST /agent/resolve` 由前端答复（approve/reject/edit+args_override）。
+  - 三类暂停：破坏性操作（delete_feature / confirm_replace / shell）、破坏性修复（RECOVERABLE 且 fix 含 confirm_replace）、`ask_user` 合成工具。
+  - 超时由 `MECHCAD_AGENT_APPROVAL_TIMEOUT`（默认 600s）控制，超时自动跳过并告知模型。
+  - WS 事件 `approval_required`；前端新 `ApprovalPanel`（批准/改参/拒绝）。
+- **kernel 直连 REST**：`/kernel/feature_tree`、`/kernel/update_feature`、`/kernel/delete_feature`、
+  `/kernel/undo`、`/kernel/redo`（参数化重放，完成后重导 STL/STEP + 提交快照）。`/undo` `/redo`
+  在 kernel worker 存活时走内核，否则回退 legacy 快照。
+- **前端**：agent 状态入 store；`KernelFeatureTree`（op_history + nodes + 状态徽标 + 删除）、
+  `KernelFeatureForm`（改参数→update_feature）、`ApprovalPanel`；hasModel 只看 stl（agent 无 obj）。
+  旧 FeatureTree/FeatureForm/ClarificationPanel 保留但不再默认路径。
+- **agent 开局上下文**：首条用户消息含当前 feature_graph 摘要 + 可用 op 列表，支撑"暂停→手动接管→交还继续"的连续性。
+- 测试：后端 315/315（新增 test_approvals + loop/agent_api/kernel_worker 扩展）、前端 64/64（新增 16）。
+- **冻结说明**：ai.py / geometry / generic_engine / validation / evidence_gate / cad_worker 等 legacy 模块及
+  旧测试全部保留；网络环境下 MECHCAD_KERNEL_REPO / MECHCAD_KERNEL_PYTHON / MECHCAD_KERNEL_TIMEOUT 配置内核。
 
 - 新增 MechKernel worker RPC：`mechcad-kernel` 仓的 `mech_kernel/server.py`（stdio JSON-lines，见其 HANDOFF）。
   aicad 侧 `backend/kernel_worker.py` 提供会话级 client 与 manager（一会话一内核实例，崩溃自动重启；历史重放恢复留 P4）。
