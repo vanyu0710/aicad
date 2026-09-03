@@ -115,7 +115,7 @@ export default function TopCommandBar({
     <header className={`top-shell${focusMode ? " focus-mode" : ""}`}>
       <div className="title-bar compact-top">
         <div className="brand-block">
-          <p className="eyebrow">MECHCAD AI CAD IDE</p>
+          <p className="eyebrow">VAREN CAD IDE</p>
           <h1>{t("top.brand")}</h1>
         </div>
         <div className="title-project">

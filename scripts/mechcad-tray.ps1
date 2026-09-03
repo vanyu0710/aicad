@@ -38,7 +38,7 @@ function Write-LauncherLog([string]$Message) {
 function Show-Message([string]$Text) {
   [System.Windows.Forms.MessageBox]::Show(
     $Text,
-    "MechCAD IDE",
+    "Varen CAD IDE",
     [System.Windows.Forms.MessageBoxButtons]::OK,
     [System.Windows.Forms.MessageBoxIcon]::Error
   ) | Out-Null
@@ -111,14 +111,14 @@ function Ensure-Shortcut {
   if (-not $desktop) {
     return
   }
-  $lnk = Join-Path $desktop "MechCAD IDE.lnk"
+  $lnk = Join-Path $desktop "Varen CAD IDE.lnk"
   try {
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($lnk)
     $shortcut.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
     $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`""
     $shortcut.WorkingDirectory = $Root
-    $shortcut.Description = "MechCAD IDE"
+    $shortcut.Description = "Varen CAD IDE"
     if (Test-Path -LiteralPath $IconPath) {
       $shortcut.IconLocation = "$IconPath,0"
     }
@@ -227,7 +227,7 @@ function Restart-BackendService {
   Start-Sleep -Milliseconds 500
   Start-Backend
   if (Wait-BackendReady) {
-    Show-Balloon "MechCAD IDE" "服务已重启：$Url"
+    Show-Balloon "Varen CAD IDE" "服务已重启：$Url"
   } else {
     Show-BackendFailure "服务重启失败。"
   }
@@ -251,9 +251,9 @@ if (-not $hasHandle) {
     if (-not $NoBrowser -and $env:MECHCAD_OPEN_BROWSER -ne "0") {
       Start-Process $Url
     }
-    Show-Balloon "MechCAD IDE" "MechCAD 已在运行，已打开界面"
+    Show-Balloon "Varen CAD IDE" "Varen CAD 已在运行，已打开界面"
   } else {
-    Show-Message "MechCAD 已在运行，但服务尚未就绪。请稍后再试，或从系统托盘重启服务。"
+    Show-Message "Varen CAD 已在运行，但服务尚未就绪。请稍后再试，或从系统托盘重启服务。"
   }
   $mutex.Dispose()
   exit 0
@@ -261,7 +261,7 @@ if (-not $hasHandle) {
 
 try {
   if (-not (Test-Path -LiteralPath $PythonExe)) {
-    Show-Message "未找到 Python 环境：`n$PythonExe`n`n请先完成依赖安装，再启动 MechCAD。"
+    Show-Message "未找到 Python 环境：`n$PythonExe`n`n请先完成依赖安装，再启动 Varen CAD。"
     exit 1
   }
 
@@ -275,13 +275,13 @@ try {
   if (-not (Test-Path -LiteralPath $DistIndex)) {
     $npmCmd = Resolve-NpmCmd
     if (-not $npmCmd) {
-      Show-Message "未找到 npm。请先安装 Node.js，并确保 npm.cmd 可用，再启动 MechCAD。"
+      Show-Message "未找到 npm。请先安装 Node.js，并确保 npm.cmd 可用，再启动 Varen CAD。"
       exit 1
     }
 
     $tscCmd = Join-Path $FrontendDir "node_modules\.bin\tsc.cmd"
     if (-not (Test-Path -LiteralPath $tscCmd)) {
-      Show-Balloon "MechCAD IDE" "首次启动需要安装前端依赖，请稍候..."
+      Show-Balloon "Varen CAD IDE" "首次启动需要安装前端依赖，请稍候..."
       Write-LauncherLog "frontend node_modules missing, installing..."
       $installOut = Join-Path $LogDir "frontend-install-$Port.out.log"
       $installErr = Join-Path $LogDir "frontend-install-$Port.err.log"
@@ -293,7 +293,7 @@ try {
       Write-LauncherLog "frontend npm install completed"
     }
 
-    Show-Balloon "MechCAD IDE" "首次启动需要构建前端界面，请稍候..."
+    Show-Balloon "Varen CAD IDE" "首次启动需要构建前端界面，请稍候..."
     Write-LauncherLog "frontend dist missing, building..."
     $buildOut = Join-Path $LogDir "frontend-build-$Port.out.log"
     $buildErr = Join-Path $LogDir "frontend-build-$Port.err.log"
@@ -307,13 +307,13 @@ try {
 
   if (Test-Health) {
     Write-LauncherLog "reusing running backend on port $Port"
-    Show-Balloon "MechCAD IDE" "已连接正在运行的服务：$Url"
+    Show-Balloon "Varen CAD IDE" "已连接正在运行的服务：$Url"
   } else {
     if (Test-PortInUse $Port) {
       Show-Message "端口 $Port 已被其他程序占用。`n请关闭占用程序，或使用 -Port 指定其他端口。"
       exit 1
     }
-    Show-Balloon "MechCAD IDE" "正在启动后端服务..."
+    Show-Balloon "Varen CAD IDE" "正在启动后端服务..."
     Start-Backend
     if (-not (Wait-BackendReady)) {
       Show-BackendFailure "后端服务启动失败。"
@@ -339,7 +339,7 @@ try {
   } else {
     $tray.Icon = [System.Drawing.SystemIcons]::Application
   }
-  $tray.Text = "MechCAD IDE - 端口 $Port"
+  $tray.Text = "Varen CAD IDE - 端口 $Port"
   $tray.Visible = $true
 
   $menu = New-Object System.Windows.Forms.ContextMenu
@@ -359,7 +359,7 @@ try {
   $menu.MenuItems.AddRange(@($openItem, $restartItem, $logItem, $exitItem))
   $tray.ContextMenu = $menu
 
-  Show-Balloon "MechCAD IDE" "MechCAD 已在后台运行：$Url"
+  Show-Balloon "Varen CAD IDE" "Varen CAD 已在后台运行：$Url"
 
   $context = New-Object System.Windows.Forms.ApplicationContext
   [System.Windows.Forms.Application]::Run($context)

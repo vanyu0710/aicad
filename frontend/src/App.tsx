@@ -688,7 +688,7 @@ export default function App() {
         canUndo={canUndo}
         engineLabel={engineLabel}
         modeLabel={modeLabel}
-        projectName={project.name || "MechCAD IDE"}
+        projectName={project.name || "Varen CAD IDE"}
         statusLabel={t(statusLabelKeys[status])}
         onGenerate={() => void handleAgentStart()}
         onRedo={onRedo}

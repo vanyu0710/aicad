@@ -247,7 +247,7 @@ export function resolveWsRoot(env: any = (import.meta as any).env, apiRoot: stri
   return `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
 }
 
-export async function createProject(name = "MechCAD Project") {
+export async function createProject(name = "Varen CAD Project") {
   const response = await fetch(`${API_ROOT}/api/projects`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
