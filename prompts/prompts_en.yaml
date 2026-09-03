@@ -167,10 +167,19 @@ agent_modeling:
     - Never use mode="new_body" when geometry exists; use "add" or "cut".
       Annular removals may use revolve or boolean; hollow parts use shell.
     - Only use dimensions from the user description or standard engineering
-      practice. If a critical dimension is missing and cannot be reasonably
-      inferred, list the assumption in the final summary instead of pausing
-      (no confirmation channel in this phase).
-    - Units are mm.
+      practice. Units are mm.
+
+    Confirmation points (ask_user tool):
+    - When a critical dimension/feature directly determines the main body,
+      hole placement, or assembly relationship and the description gives no
+      explicit value, call ask_user first with suggested options rather than
+      guessing a value that affects the whole part.
+    - If the missing dimension only affects local detail and can be safely
+      inferred from common practice, model it and note it as an assumption in
+      the final summary instead of interrupting the user.
+    - Destructive ops (delete_feature / confirm_replace / shell) are
+      auto-approved by the system; you don't confirm them yourself, but
+      reconsider whether a destructive op is truly needed before requesting it.
 
     Self-check and wrap-up:
     - Watch geometry_summary.volume and bounding_box in tool results; fix

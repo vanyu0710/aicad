@@ -201,5 +201,41 @@ class KernelWorkerManagerTests(unittest.TestCase):
             manager.stop_all()
 
 
+class KernelWorkerEditCommandsTests(unittest.TestCase):
+    """P2 新增 RPC 封装：update_feature / delete_feature / undo / redo。"""
+
+    def _echo_payload(self, expected_cmd: str):
+        def responder(lines: list[str]) -> str:
+            request = json.loads(lines[-1])
+            assert request["cmd"] == expected_cmd, f"{request['cmd']} != {expected_cmd}"
+            return json.dumps({"id": request["id"], "ok": True, "data": {"success": True, "echo_cmd": request["cmd"], "echo_payload": request["payload"]}})
+
+        return responder
+
+    def test_update_feature(self) -> None:
+        client, proc = _make_client([self._echo_payload("update_feature")])
+        data = client.update_feature("F_0001", {"depth": 12})
+        self.assertTrue(data["success"])
+        sent = json.loads(proc.written_lines[0])
+        self.assertEqual(sent["payload"], {"feature_id": "F_0001", "new_params": {"depth": 12}})
+
+    def test_delete_feature(self) -> None:
+        client, proc = _make_client([self._echo_payload("delete_feature")])
+        client.delete_feature("F_0002")
+        sent = json.loads(proc.written_lines[0])
+        self.assertEqual(sent["payload"], {"feature_id": "F_0002"})
+
+    def test_undo_redo(self) -> None:
+        client, proc = _make_client([self._echo_payload("undo"), self._echo_payload("redo")])
+        client.undo(1)
+        client.redo(2)
+        sent0 = json.loads(proc.written_lines[0])
+        sent1 = json.loads(proc.written_lines[1])
+        self.assertEqual(sent0["cmd"], "undo")
+        self.assertEqual(sent0["payload"], {"steps": 1})
+        self.assertEqual(sent1["cmd"], "redo")
+        self.assertEqual(sent1["payload"], {"steps": 2})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -27,8 +27,11 @@ CAPABILITIES = {
          "inputs": {"sketch_name": {"type": "string", "required": True},
                     "depth": {"type": "number", "required": True, "min": 0.001},
                     "mode": {"type": "enum", "required": False,
-                             "enum": ["new_body", "add", "cut"]}},
+                             "enum": ["new_body", "add", "cut"]},
+                    "confirm_replace": {"type": "boolean", "required": False}},
          "examples": []},
+        {"name": "delete_feature", "category": "edit", "description": "删除特征",
+         "inputs": {"feature_id": {"type": "string", "required": True}}, "examples": []},
     ],
     "experimental": [],
 }
@@ -100,14 +103,14 @@ def _round_with_call(name: str, arguments: dict) -> ToolCallRound:
     )
 
 
-def _run(worker, chat, *, max_steps=10, stop_event=None, emit=None, run_dir=None):
+def _run(worker, chat, *, max_steps=10, stop_event=None, emit=None, run_dir=None, approvals=None):
     if run_dir is None:
         with tempfile.TemporaryDirectory() as td:
-            return _run_in_dir(worker, chat, Path(td), max_steps=max_steps, stop_event=stop_event, emit=emit)
-    return _run_in_dir(worker, chat, Path(run_dir), max_steps=max_steps, stop_event=stop_event, emit=emit)
+            return _run_in_dir(worker, chat, Path(td), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals)
+    return _run_in_dir(worker, chat, Path(run_dir), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals)
 
 
-def _run_in_dir(worker, chat, run_dir: Path, *, max_steps, stop_event, emit):
+def _run_in_dir(worker, chat, run_dir: Path, *, max_steps, stop_event, emit, approvals=None):
     return run_agent_loop(
         worker=worker,
         chat_with_tools=chat,
@@ -118,6 +121,7 @@ def _run_in_dir(worker, chat, run_dir: Path, *, max_steps, stop_event, emit):
         task_description="做一个方块",
         max_steps=max_steps,
         stop_event=stop_event,
+        approvals=approvals,
     )
 
 
@@ -271,6 +275,168 @@ class AgentLoopErrorPathTests(unittest.TestCase):
 
 class KernelDown(Exception):
     pass
+
+
+class AgentLoopApprovalTests(unittest.TestCase):
+    """P2：破坏性操作审批、破坏性修复审批、ask_user、超时、开局上下文。"""
+
+    def test_destructive_op_pauses_for_approval_then_continues(self) -> None:
+        from backend.agent.approvals import ApprovalBroker
+
+        broker = ApprovalBroker(timeout=5)
+        worker = FakeWorker([_success()])
+        events: list[tuple] = []
+
+        def chat(messages, tools):
+            # 第一轮请求 delete_feature；第二轮收尾
+            if not any(m.get("role") == "tool" for m in messages):
+                return _round_with_call("delete_feature", {"feature_id": "F_0001"})
+            return ToolCallRound(text="已删", tool_calls=[])
+
+        def emit(event_type, message, payload):
+            events.append((event_type, message, payload))
+
+        def resolve_after_time():
+            # 等 broker 收到请求后模拟用户 approve
+            import time as _t
+
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "approve")
+
+        t = threading.Thread(target=resolve_after_time)
+        t.start()
+        result = _run(worker, chat, approvals=broker, emit=emit)
+        t.join(timeout=2)
+        # LLM 请求了删除，但用户 approve 后执行了 delete_feature
+        self.assertIn(("delete_feature", {"feature_id": "F_0001"}), worker.executed)
+        # 审批事件已广播
+        self.assertTrue(any(e[0] == "approval_required" for e in events))
+        self.assertTrue(result.ok)
+
+    def test_destructive_op_reject_skips_op(self) -> None:
+        from backend.agent.approvals import ApprovalBroker
+
+        broker = ApprovalBroker(timeout=5)
+        worker = FakeWorker()
+
+        def chat(messages, tools):
+            if not any(m.get("role") == "tool" for m in messages):
+                return _round_with_call("delete_feature", {"feature_id": "F_0001"})
+            return ToolCallRound(text="好的", tool_calls=[])
+
+        def resolve_after_time():
+            import time as _t
+
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "reject")
+
+        t = threading.Thread(target=resolve_after_time)
+        t.start()
+        result = _run(worker, chat, approvals=broker)
+        t.join(timeout=2)
+        # 用户拒绝 → delete_feature 不被执行
+        self.assertNotIn("delete_feature", [op for op, _ in worker.executed])
+        self.assertTrue(result.ok)
+
+    def test_confirm_replace_fix_goes_through_approval(self) -> None:
+        from backend.agent.approvals import ApprovalBroker
+
+        broker = ApprovalBroker(timeout=5)
+        worker = FakeWorker([
+            {"success": False, "error_kind": "RECOVERABLE", "error": "new_body 会清空",
+             "suggestion": {"fix": {"confirm_replace": True, "mode": "new_body"}, "reason_code": "new_body_conflict"},
+             "geometry_summary": None},
+            _success(5000.0),
+        ])
+        events: list[tuple] = []
+
+        def chat(messages, tools):
+            if not any(m.get("role") == "tool" for m in messages):
+                return _round_with_call("extrude", {"sketch_name": "sk", "depth": 10, "mode": "new_body"})
+            return ToolCallRound(text="修好", tool_calls=[])
+
+        def resolve_after_time():
+            import time as _t
+
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "approve")
+
+        t = threading.Thread(target=resolve_after_time)
+        t.start()
+        result = _run(worker, chat, approvals=broker, emit=lambda ev, m, p: events.append((ev, m, p)))
+        t.join(timeout=2)
+        # confirm_replace 的 fix 走审批而非自动重试 → 有 approval_required 事件
+        self.assertTrue(any(e[0] == "approval_required" for e in events))
+        # 修复重试的 extrude 带 confirm_replace（收尾的 validate_geometry 会追加在最后）
+        extrudes = [args for op, args in worker.executed if op == "extrude"]
+        self.assertEqual(len(extrudes), 2)
+        self.assertTrue(extrudes[-1].get("confirm_replace") is True)
+        self.assertTrue(result.ok)
+
+    def test_ask_user_calls_and_receives_answer(self) -> None:
+        from backend.agent.approvals import ApprovalBroker
+
+        broker = ApprovalBroker(timeout=5)
+        worker = FakeWorker([_success()])
+
+        def chat(messages, tools):
+            tool_names = [t["function"]["name"] for t in tools]
+            self.assertIn("ask_user", tool_names)  # 工具表含 ask_user
+            if not any(m.get("role") == "tool" for m in messages):
+                return _round_with_call("ask_user", {"question": "孔直径多少？", "options": ["6", "8"]})
+            return ToolCallRound(text="收到", tool_calls=[])
+
+        def resolve_after_time():
+            import time as _t
+
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "edit", {"answer": "8mm"})
+
+        t = threading.Thread(target=resolve_after_time)
+        t.start()
+        final_messages = []
+        result = _run(worker, chat, approvals=broker,
+                      emit=lambda ev, m, p: None)
+        t.join(timeout=2)
+        # ask_user 不执行 kernel op（worker.executed 为空），答案经 tool result 回喂模型
+        self.assertEqual(worker.executed, [])
+        self.assertTrue(result.ok)
+
+    def test_approval_timeout_returns_skipped(self) -> None:
+        from backend.agent.approvals import ApprovalBroker
+
+        # 超时 0.15s，broker.request 返回 timeout；agent 把该步标记失败但继续
+        broker = ApprovalBroker(timeout=0.15)
+        worker = FakeWorker([_success()])
+        events: list[tuple] = []
+
+        def chat(messages, tools):
+            if not any(m.get("role") == "tool" for m in messages):
+                return _round_with_call("delete_feature", {"feature_id": "F_0001"})
+            return ToolCallRound(text="继续", tool_calls=[])
+
+        result = _run(worker, chat, approvals=broker, emit=lambda ev, m, p: events.append((ev, m, p)))
+        # 超时 → 跳过该步，agent 收到 SKIPPED 并继续到收尾文字
+        self.assertTrue(result.ok)
+        self.assertNotIn("delete_feature", [op for op, _ in worker.executed])
+
+    def test_opening_context_includes_feature_tree(self) -> None:
+        worker = FakeWorker()
+        chat = FakeChat([ToolCallRound(text="done", tool_calls=[])])
+        result = _run(worker, chat)
+        # 开局消息应含特征上下文（F_0001 + 可用 op 列表）
+        first_user = result.logs  # 记录在 messages 里；改从 chat.calls 拿到 messages
+        user_messages = chat.calls[0][0]
+        opening = [m for m in user_messages if m["role"] == "user"]
+        self.assertTrue(any("F_0001" in str(m["content"]) or "op" in str(m["content"]) for m in opening))
 
 
 if __name__ == "__main__":

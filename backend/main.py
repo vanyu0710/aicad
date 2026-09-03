@@ -22,7 +22,7 @@ from backend.ai import (
     patch_feature,
     questions_from_plan,
 )
-from backend.agent import AgentLoopResult, run_agent_loop
+from backend.agent import AgentLoopResult, ApprovalBroker, run_agent_loop
 from backend.cad import run_freecad_worker
 from backend.capabilities import CAPABILITIES, CapabilityValidationError
 from backend.evidence_gate import apply_evidence_gate_result, apply_evidence_resolutions, evaluate_evidence_gate
@@ -31,6 +31,7 @@ from backend.events import EventBus
 from backend.kernel_worker import get_worker_manager
 from backend.process import ProcessRecorder
 from backend.schemas import (
+    AgentResolveRequest,
     AgentStartRequest,
     ArtifactSet,
     ChatEditRequest,
@@ -41,6 +42,8 @@ from backend.schemas import (
     FeaturePatchRequest,
     FeaturePlanV3,
     GenerateRequest,
+    KernelDeleteFeatureRequest,
+    KernelUpdateFeatureRequest,
     ModelTestRequest,
     ModelTestResponse,
     ModelTestDiagnostics,
@@ -490,12 +493,13 @@ async def agent_start(project_id: str, request: AgentStartRequest):
         if existing is not None and existing["thread"].is_alive():
             raise HTTPException(status_code=409, detail="Agent is already running for this project")
         stop_event = threading.Event()
+        approvals = ApprovalBroker()
         thread = threading.Thread(
             target=_run_agent_thread,
-            args=(project_id, request, deepcopy(_project_or_404(project_id).settings), stop_event, asyncio.get_running_loop()),
+            args=(project_id, request, deepcopy(_project_or_404(project_id).settings), stop_event, asyncio.get_running_loop(), approvals),
             daemon=True,
         )
-        _agent_runs[project_id] = {"stop": stop_event, "thread": thread}
+        _agent_runs[project_id] = {"stop": stop_event, "thread": thread, "approvals": approvals}
         thread.start()
     return {"ok": True, "started": True, "project_id": project_id}
 
@@ -507,12 +511,29 @@ async def agent_stop(project_id: str):
     return {"ok": True, "stopped": stopped}
 
 
+@app.post("/api/projects/{project_id}/agent/resolve")
+async def agent_resolve(project_id: str, request: AgentResolveRequest):
+    _project_or_404(project_id)
+    with _agent_lock:
+        run = _agent_runs.get(project_id)
+    if run is None:
+        raise HTTPException(status_code=409, detail="No running agent for this project")
+    try:
+        result = run["approvals"].resolve(request.approval_id, request.action, request.args_override)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Approval not found or already resolved: {request.approval_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"ok": True, "resolved": result}
+
+
 def _run_agent_thread(
     project_id: str,
     request: AgentStartRequest,
     settings,
     stop_event: threading.Event,
     loop: asyncio.AbstractEventLoop,
+    approvals: ApprovalBroker,
 ) -> None:
     """后台线程：worker RPC + agent loop + 快照提交。事件经 EventBus 回主循环。"""
     language = request.language
@@ -539,6 +560,7 @@ def _run_agent_thread(
             language=language,
             max_steps=max(1, int(request.max_steps)),
             stop_event=stop_event,
+            approvals=approvals,
         )
         artifacts = ArtifactSet(
             run_id=run_id,
@@ -612,9 +634,70 @@ def _build_agent_report(project_id: str, result: AgentLoopResult, language: str)
     )
 
 
+def _kernel_worker_or_none(project_id: str):
+    """取项目存活 kernel worker；没有或已死则返回 None（触发 legacy 回退）。"""
+    worker = get_worker_manager().get(project_id)
+    return worker if worker is not None and worker.is_alive() else None
+
+
+@app.get("/api/projects/{project_id}/kernel/feature_tree")
+def kernel_feature_tree(project_id: str):
+    _project_or_404(project_id)
+    worker = _kernel_worker_or_none(project_id)
+    if worker is None:
+        return {"graph": {"nodes": {}, "edges": {}}, "op_history": [], "narrative": [], "node_count": 0}
+    data = worker.feature_tree()
+    data["node_count"] = len(data.get("graph", {}).get("nodes", {}))
+    return data
+
+
+@app.post("/api/projects/{project_id}/kernel/update_feature")
+async def kernel_update_feature(project_id: str, request: KernelUpdateFeatureRequest):
+    return await _kernel_edit(project_id, lambda worker: worker.update_feature(request.feature_id, request.new_params))
+
+
+@app.post("/api/projects/{project_id}/kernel/delete_feature")
+async def kernel_delete_feature(project_id: str, request: KernelDeleteFeatureRequest):
+    return await _kernel_edit(project_id, lambda worker: worker.delete_feature(request.feature_id))
+
+
+@app.post("/api/projects/{project_id}/kernel/undo")
+async def kernel_undo(project_id: str):
+    return await _kernel_edit(project_id, lambda worker: worker.undo(1))
+
+
+@app.post("/api/projects/{project_id}/kernel/redo")
+async def kernel_redo(project_id: str):
+    return await _kernel_edit(project_id, lambda worker: worker.redo(1))
+
+
+async def _kernel_edit(project_id: str, action) -> dict:
+    """kernel 编辑通用收尾：执行 op → 重导 STL/STEP → 提交快照 → 发 artifact_ready。"""
+    _project_or_404(project_id)
+    worker = _kernel_worker_or_none(project_id)
+    if worker is None:
+        raise HTTPException(status_code=409, detail="No alive kernel worker for this project; run the agent first")
+    try:
+        result = action(worker)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"kernel op failed: {exc}") from exc
+
+    _commit_kernel_state_snapshot(project_id, worker)
+    tree = worker.feature_tree()
+    artifacts = store.get_project(project_id).current.artifacts
+    await _emit(project_id, "artifact_ready", "cad", "kernel 手动编辑完成，已重导模型", artifacts.model_dump())
+    return {"ok": True, "result": result, "artifacts": artifacts.model_dump(), "feature_tree": tree, "project": _public_project(store.get_project(project_id))}
+
+
 @app.post("/api/projects/{project_id}/undo")
 def undo(project_id: str):
     _project_or_404(project_id)
+    # 存活 kernel worker → 走内核 undo（重放历史）；否则回退 legacy 快照 undo。
+    worker = _kernel_worker_or_none(project_id)
+    if worker is not None:
+        worker.undo(1)
+        _commit_kernel_state_snapshot(project_id, worker)
+        return _public_project(store.get_project(project_id))
     project = store.undo(project_id)
     return _public_project(_refresh_restored_validation(project))
 
@@ -622,8 +705,61 @@ def undo(project_id: str):
 @app.post("/api/projects/{project_id}/redo")
 def redo(project_id: str):
     _project_or_404(project_id)
+    worker = _kernel_worker_or_none(project_id)
+    if worker is not None:
+        worker.redo(1)
+        _commit_kernel_state_snapshot(project_id, worker)
+        return _public_project(store.get_project(project_id))
     project = store.redo(project_id)
     return _public_project(_refresh_restored_validation(project))
+
+
+def _commit_kernel_state_snapshot(project_id: str, worker) -> None:
+    """把内核当前状态导出为快照（undo/redo 或编辑后提交），供前端/回溯使用。"""
+    run_id, run_dir = create_run_dir()
+    stl_path = run_dir / "model.stl"
+    step_path = run_dir / "model.step"
+    stl = None
+    step = None
+    try:
+        worker.export_mesh(str(stl_path))
+        stl = str(stl_path)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        worker.export_step(str(step_path))
+        step = str(step_path)
+    except Exception:  # noqa: BLE001
+        pass
+    tree = worker.feature_tree()
+    artifacts = ArtifactSet(run_id=run_id, stl=stl, step=step, execution_report=str(run_dir / "execution_report.json"))
+    op_history = tree.get("op_history") or []
+    (run_dir / "execution_report.json").write_text(json.dumps({
+        "ok": True, "engine": "mechkernel", "worker": "mechkernel-agent",
+        "feature_graph": tree.get("graph") or {},
+        "op_history": op_history,
+        "narrative": tree.get("narrative") or [],
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    snapshot = DesignSnapshot(
+        feature_plan=FeaturePlanV3(part_family="agent_modeled", self_checks={"planning_source": "mechkernel_agent"}),
+        artifacts=artifacts,
+        execution_report=ExecutionReport(
+            execution_ok=True,
+            plan_complete=len(op_history) > 0,
+            geometry_valid=bool(stl or step),
+            production_ready=False,
+            fallback_used=False,
+            engine="mechkernel",
+            details=["kernel 状态快照"],
+            feature_graph=tree.get("graph") or {},
+            feature_tree=tree,
+            agent_steps=len(op_history),
+            agent_stopped=False,
+        ),
+        report_markdown=f"### MechKernel State Snapshot\n- Project: `{project_id}`\n- Run: `{run_id}`\n",
+        logs=["kernel 状态已提交快照"],
+    )
+    store.commit_snapshot(project_id, snapshot)
 
 
 @app.get("/api/artifacts/{run_id}/{kind}")

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 OperationMode = Literal["strict", "smart"]
 SmartFillPolicy = Literal["suggest_only", "limited_fill", "aggressive_fill", "full_autonomous"]
 FeatureOperation = Literal["base", "add", "remove", "modify", "pattern"]
-StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error", "process_step_started", "process_step_done", "process_step_failed", "process_step_blocked", "agent_step", "agent_done"]
+StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error", "process_step_started", "process_step_done", "process_step_failed", "process_step_blocked", "agent_step", "agent_done", "approval_required"]
 
 
 def now_iso() -> str:
@@ -784,11 +784,30 @@ class ProjectSettingsRequest(ModelConfig):
 
 
 class AgentStartRequest(BaseModel):
-    """MechKernel agent loop 启动参数（P1：无确认通道，模型自主建模）。"""
+    """MechKernel agent loop 启动参数（P1 无确认通道；P2 起带审批中枎）。"""
 
     description: str
     language: Literal["zh", "en"] = "zh"
     max_steps: int = 30
+
+
+class AgentResolveRequest(BaseModel):
+    """用户在审批点给出的答复（P2 确认点）。"""
+
+    approval_id: str
+    action: Literal["approve", "reject", "edit"]
+    args_override: dict[str, Any] | None = None
+
+
+class KernelUpdateFeatureRequest(BaseModel):
+    """kernel 参数化更新：改特征参数 → 内核全量重放。"""
+
+    feature_id: str
+    new_params: dict[str, Any] = Field(default_factory=dict)
+
+
+class KernelDeleteFeatureRequest(BaseModel):
+    feature_id: str
 
 
 class ChatEditRequest(BaseModel):

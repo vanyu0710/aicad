@@ -19,6 +19,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_KERNEL_REPO = ROOT.parents[1] / "mechcad-kernel"
@@ -179,6 +180,20 @@ class KernelWorkerClient:
 
     def feature_tree(self) -> dict:
         return self.request_ok("feature_tree")
+
+    def update_feature(self, feature_id: str, new_params: dict[str, Any], *, timeout: float | None = None) -> dict:
+        """参数化更新：改特征参数 → 内核全量重放 → 几何刷新。返回 StepResult。"""
+        return self.request_ok("update_feature", {"feature_id": feature_id, "new_params": new_params}, timeout=timeout)
+
+    def delete_feature(self, feature_id: str, *, timeout: float | None = None) -> dict:
+        """删除特征（含其依赖者失效风险）→ 内核重放。返回 StepResult。"""
+        return self.request_ok("delete_feature", {"feature_id": feature_id}, timeout=timeout)
+
+    def undo(self, steps: int = 1, *, timeout: float | None = None) -> dict:
+        return self.request_ok("undo", {"steps": steps}, timeout=timeout)
+
+    def redo(self, steps: int = 1, *, timeout: float | None = None) -> dict:
+        return self.request_ok("redo", {"steps": steps}, timeout=timeout)
 
     def export_mesh(self, path: str, *, fmt: str = "stl", timeout: float | None = None) -> dict:
         return self.request_ok("export_mesh", {"path": path, "format": fmt}, timeout=timeout)
