@@ -1,56 +1,81 @@
-# MechCAD IDE
+# Varen CAD —— AI CAD IDE
 
-MechCAD is being upgraded from a Gradio MVP into an AI CAD IDE.
+<p align="center">
+  <img src="assets/varen-cad-logo.svg" alt="Varen CAD logo" width="300"/>
+</p>
 
-## User Guide
+> **把草图变成可制造的三维模型。** Varen CAD 是一个面向机械工程师的 AI 建模 IDE：
+> AI agent 像工程师一样逐步自主建模，你随时看进度、改参数、确认关键决策，
+> 并保留参数化特征历史、精确 BRep 几何与可重放历史。
 
-New users should start with [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+<p align="center">
+  <img alt="Status" src="https://img.shields.io/badge/status-harness%20mainline-blue" />
+  <img alt="Python" src="https://img.shields.io/badge/python-3.12-blue" />
+  <img alt="UI" src="https://img.shields.io/badge/UI-React%20%2B%20Three.js-61dafb" />
+  <img alt="Kernel" src="https://img.shields.io/badge/CAD%20kernel-MechKernel%20(Build123d)-green" />
+</p>
 
-## Documentation
+> ⚠️ **License**：本项目仓库当前未附带 LICENSE 文件；所依赖的 CAD 内核
+> [`mechcad-kernel`](https://github.com/vanyu0710/mechcad-kernel) 采用 **AGPL-3.0-or-later**。
+> 若你计划闭源分发，请先处理内核许可证问题。
 
-- [ARCHITECTURE.md](ARCHITECTURE.md): how the system works and where each truth lives.
-- [FEATURE_SUPPORT.md](FEATURE_SUPPORT.md): what is really implemented, partial, or unsupported.
-- [DEVELOPMENT.md](DEVELOPMENT.md): setup, tests, and how to add a feature safely.
-- [docs/v0.7-r1-repository-audit.md](docs/v0.7-r1-repository-audit.md): R1 audit and KEEP/MIGRATE/DEPRECATE/DELETE classification.
-- [docs/rfc-1d-2.1-feature-geometry-evidence-resolver.md](docs/rfc-1d-2.1-feature-geometry-evidence-resolver.md): 1D-2.1 evidence resolver design.
-- [docs/geometry_evidence.md](docs/geometry_evidence.md): Feature-to-BRep correspondence boundary.
+---
 
-The old Gradio implementation is preserved in `legacy/gradio/`. The new mainline is:
+## 目录
 
-- `frontend/`: React + TypeScript + Vite + Three.js.
-- `backend/`: FastAPI REST API + WebSocket event stream.
-- `cad_worker/`: isolated CAD worker subprocess. It currently uses a controlled Build123d backend while keeping the FreeCAD worker boundary intact.
-- `prompts/prompts.yaml`: centralized prompts for vision analysis, FeaturePlan planning, chat edits, and design review.
+- [它是什么](#它是什么)
+- [怎么运行](#怎么运行)
+- [使用流程](#使用流程)
+- [架构总览](#架构总览)
+- [目录结构](#目录结构)
+- [功能矩阵](#功能矩阵)
+- [AI 集成](#ai-集成)
+- [开发与测试](#开发与测试)
+- [API](#api)
+- [文档](#文档)
+- [被冻结的旧链路（FeaturePlanV3）](#被冻结的旧链路featureplanv3)
 
-## Local Development
+---
 
-Backend:
+## 它是什么
 
-```powershell
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m backend.main
+Varen CAD 把 **MechKernel 参数化 CAD 内核**（真实 OCC 7.9.3 几何）接到一套
+**FastAPI + React + Three.js** 的 IDE 上，产品形态是 **"CAD 领域的 Codex"**：
+
+```
+你的一句话/草图
+   │
+   ▼
+┌──────────────────────── AI Agent（harness）────────────────────────┐
+│  LLM 原生 function calling 逐步调用内核 33 个公开 op                │
+│  每步: 观察 → 决策(工具调用) → 执行 → 读回 StepResult → 自修复       │
+│  人在回路: 破坏性操作/提问 → 审批卡 → 批准/改参/拒绝               │
+└───────────────────────────────┬────────────────────────────────────┘
+                                │ stdio JSON-lines RPC (子进程)
+                                ▼
+┌────────────────── MechKernel (mechcad-kernel 仓) ───────────────────┐
+│ 参数化特征历史 feature_graph · _op_history · select 选边/选面        │
+│ 任意方向孔/面上草图 · 测量 · 导出 STEP/STL · 事务 undo/redo          │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-Frontend:
+**不是"让 AI 写任意 Python"**。执行层被严格约束在 33 个经验证的公开 op 上，
+每步都有结构化反馈（`StepResult`）与几何验证，失败可自动修复或回退。
 
-```powershell
-cd frontend
-npm install
-npm run dev
-```
+---
 
-Open `http://127.0.0.1:5173`.
+## 怎么运行
 
-### 产品模式（Windows 桌面启动）
+### 推荐：Windows 产品模式（桌面启动）
 
-首次运行会自动构建前端，并在桌面创建 `MechCAD IDE` 快捷方式：
+首次运行会自动构建前端，并在桌面创建 `MechCAD IDE` 快捷方式（脚本沿用旧名，见 `scripts/mechcad-tray.ps1`）：
 
 ```powershell
 .\start-mechcad-pro.cmd
 ```
 
-之后双击桌面快捷方式即可。FastAPI 会同时托管前端、API 和 WebSocket，访问 `http://127.0.0.1:8001/`；系统托盘提供“打开界面 / 重启服务 / 打开日志 / 退出”。
+之后双击桌面快捷方式即可。FastAPI 会同时托管前端、API 和 WebSocket：
+打开 `http://127.0.0.1:8001/`。系统托盘提供"打开界面 / 重启服务 / 打开日志 / 退出"。
 
 可选参数：
 
@@ -62,103 +87,225 @@ Open `http://127.0.0.1:5173`.
 
 环境变量：`MECHCAD_PORT`、`MECHCAD_OPEN_BROWSER`、`MECHCAD_LOG_DIR`。
 
-### 开发模式
-
-`start-mechcad.cmd` 保留开发双进程模式（Vite + FastAPI），访问 `http://127.0.0.1:5173/`。
-
-## Tests
-
-Backend (unit + API integration, uses `unittest`):
+### 开发模式（Vite + FastAPI 双进程）
 
 ```powershell
-.\venv\Scripts\python.exe -m unittest discover -s tests
+.\start-mechcad.cmd          # 访问 http://127.0.0.1:5173/
 ```
 
-Frontend (Vitest + Testing Library):
+手动启动：
+
+```powershell
+# 后端 (Python 3.12 venv)
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt build123d==0.11.1 cadquery-ocp-novtk==7.9.3.0
+.\.venv\Scripts\python.exe -m backend.main
+
+# 前端 (另一个终端)
+cd frontend
+npm install
+npm run dev
+```
+
+> ⚠️ 需要 MechKernel 内核。Varen CAD 的 agent 通过 stdio RPC 调用
+> `mechcad-kernel` 仓的子进程 `mech_kernel/server.py`。
+> 默认假设内核在 aicad 旁的同级 `mechcad-kernel` 目录，可用
+> `MECHCAD_KERNEL_REPO` / `MECHCAD_KERNEL_PYTHON` 覆盖（见 `.env.example`）。
+
+---
+
+## 使用流程
+
+1. **打开界面**，`新建项目`。
+2. 在左侧 `特征` 抽屉中输入零件描述（如"120×120×12 法兰，中心 Ø30 通孔，6 个 Ø8 螺栓孔在 Ø90 圆上"）。
+3. 点击顶部 **Agent 建模**（或 `Ctrl+G`）。
+4. AI agent 逐步建模，顶部运行条显示步数与当前 op；3D 视口随几何变化刷新。
+5. 遇到需要你决定的事，右侧助手面板弹出**审批卡**：
+   - **破坏性操作**（删除特征 / confirm_replace 替换 / 抽壳）
+   - **破坏性修复**（RECOVERABLE 且需替换零件）
+   - **`ask_user` 提问**（关键尺寸/特征需要你确认）
+   - 你选 **批准 / 改参后批准 / 拒绝**；超时（默认 600s）自动跳过。
+6. 特征树直接渲染内核 `feature_graph`：可点选、**改参数**（触发参数化重放）、**删除特征**，支持内核级撤销/重做。
+7. 建模完成后收尾自动 `validate_geometry` + 导出 **STEP / STL**，可下载复盘。
+8. 随时可**暂停接管**（停止 agent → 手动编辑 → 交还继续，agent 开局含当前特征上下文）。
+
+---
+
+## 架构总览
+
+```
+┌──────────────────────────── React IDE (保留壳) ────────────────────────────┐
+│  Three.js 视口(STL) · 特征树(feature_graph) · 属性面板(改参数→重放)         │
+│  Agent 运行条 · 审批面板(approve/edit/reject) · 撤销/重做                   │
+└──────────────┬──────────────────────────────────────────────────────────────┘
+               │ REST + WS   (agent_step / approval_required / artifact_ready …)
+┌──────────────▼──────────────────────────────────────────────────────────────┐
+│  FastAPI backend  (backend/main.py + backend/agent + backend/kernel_worker)  │
+│   Agent loop:  cap.list_public() → LLM tools → 循环决策 → worker RPC         │
+│     → 读 StepResult → RECOVERABLE 自修复 → 人在回路确认点                    │
+│   会话/快照/事件总线/静态托管 (session/storage/events/static_assets)          │
+└──────────────┬──────────────────────────────────────────────────────────────┘
+               │ stdio JSON-lines RPC (子进程, 一会话一实例, 永不 import CAD)
+┌──────────────▼──────────────────────────────────────────────────────────────┐
+│  MechKernel worker (mechcad-kernel/mech_kernel/server.py)                    │
+│   commands: capabilities/execute/feature_tree/select_refs/update_feature/    │
+│             delete_feature/undo/redo/export/export_mesh/validate_geometry/…  │
+│   内部: MechKernel().execute(op, **kw) → StepResult                          │
+│        feature_graph + _op_history = 特征树与参数化重放源 (D1)               │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 关键边界（D1–D5）
+
+| 决策 | 内容 |
+|---|---|
+| **D1** | 特征锚点 = MechKernel `feature_graph` / `_op_history`。前端树/面板/撤销重做都基于它；`FeaturePlanV3` 不承担执行语义。 |
+| **D2** | 进程边界。MechKernel 跑在 worker 子进程，backend **永不 import CAD 库**；一会话一实例。 |
+| **D3** | 验证 = 每步 `validate_geometry` + `select` 几何摘要回喂 + RECOVERABLE 自修复 + 快照回退；保留只读测量。 |
+| **D4** | 人在回路 = 低打扰确认点 + 随时接管。默认只在推断尺寸、破坏性操作、选边歧义时暂停征求用户。 |
+| **D5** | 保留 aicad 壳：React 前端、Three.js 视口、mechcad_ai 客户端、WS/会话/工件、family template 概念。 |
+
+---
+
+## 目录结构
+
+```
+aicad/
+├─ backend/                  # FastAPI 后端
+│  ├─ main.py                # REST + WS + agent start/stop/resolve + kernel REST 接线
+│  ├─ agent/                 # 核心 agent loop
+│  │  ├─ loop.py             #   多轮原生 tool-call 循环 + RECOVERABLE 自修复 + 确认点
+│  │  ├─ tools.py            #   cap.list_public() → LLM 工具表(JSON Schema)
+│  │  └─ approvals.py        #   ApprovalBroker: 审批请求/答复/超时
+│  ├─ kernel_worker.py       # MechKernel 子进程 RPC client + 会话管理
+│  ├─ mechcad_ai/            # 模型层: client(OpenAI/Anthropic 兼容+原生 tools)/prompts
+│  ├─ session.py / storage.py# 快照历史/undo-redo/工件
+│  ├─ events.py              # 事件总线 (WS 推送)
+│  ├─ cad.py                 # (冻结) 旧受控 build123d worker launcher
+│  ├─ ai.py                  # (冻结) 旧 FeaturePlan 编排 + 确定性 fallback
+│  └─ geometry/              # (冻结) 只读 BRep 测量/证据/语义验证
+├─ cad_worker/               # (冻结) 旧受控 build123d subprocess
+├─ frontend/                 # React + TypeScript + Vite + Three.js
+│  ├─ src/KernelFeatureTree.tsx   # 特征树(内核 feature_graph)
+│  ├─ src/KernelFeatureForm.tsx   # 属性面板(改参数→update_feature)
+│  └─ src/ApprovalPanel.tsx       # 审批卡
+├─ prompts/prompts.yaml      # 集中式提示词 (agent_modeling 等)
+├─ tests/                    # 后端 unittest 套件
+├─ docs/                     # 架构/功能/审计文档
+└─ start-mechcad-pro.cmd     # 产品模式启动 (托盘+桌面快捷方式)
+```
+
+> 标注 **(冻结)** 的目录属于旧 FeaturePlanV3 链路，仅作参考与切回用途，前端默认不再调用。
+
+---
+
+## 功能矩阵
+
+| 领域 | 支持情况 |
+|---|---|
+| **建模能力** | 以 MechKernel capability registry 为准：workplane / sketch / extrude / revolve / sweep / boolean / hole(任意方向) / fillet / chamfer / shell / pattern / select 选边选面 / 测量 / undo-redo |
+| **AI agent** | 原生 function calling 逐步驱动 33 公开 op；`RECOVERABLE` 自修复（schema 过滤 `suggestion.fix`） |
+| **人机协作** | 三类确认点（破坏性操作 / 破坏性修复 / ask_user）→ 审批卡 approve-edit-reject；暂停接管→交还 |
+| **几何验证** | 每步 `validate_geometry` + `select` 几何摘要回喂；收尾 `validate_geometry(standard)`；不再依赖语义 verifier（D3） |
+| **导出** | STEP、STL（agent 路径）；旧 worker 还产 OBJ/report.md（保留） |
+| **旧 FeaturePlanV3 链** | **冻结**（`box_base`/`hole`/`groove` 等特征矩阵见 `FEATURE_SUPPORT.md`，已不在默认 UI 展示） |
+| **明确不支持** | 无内核对应实现的幻想 op；agent 假设须确认，`production_ready` 恒为 false |
+
+---
+
+## AI 集成
+
+`backend/mechcad_ai/` 是真实模型层（OpenAI / Anthropic 兼容 HTTP client，自动 `/v1` 重试）：
+
+- `client.py` —— `chat_completion_with_tools` 提供 **原生 function calling**（OpenAI `tools` / Anthropic `tool_use`）。
+- `prompts.py` —— 从 `prompts/prompts.yaml` 加载集中式提示词。
+- `gen` prompt `agent_modeling` 指导 agent 用 `ask_user` 向用户提问关键尺寸。
+
+模型配置来自 per-project `settings`，回退到环境变量 `MECHCAD_PLANNER_*` / `MECHCAD_VISION_*`。
+未配置模型时，旧链路有本地确定性 stub；agent 路径需配置 planner 模型才能运行。
+
+---
+
+## 开发与测试
+
+后端（unittest）：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests
+```
+
+前端（Vitest + Testing Library）：
 
 ```powershell
 cd frontend
 npm test
+npm run build
 ```
 
-Coverage:
+质量门：
 
-- `tests/test_session.py` – snapshot history, undo/redo semantics.
-- `tests/test_api.py` – FastAPI endpoints: generate / chat / patch / undo / redo, artifacts, WebSocket accept.
-- `tests/test_cad_worker.py` – worker success, timeout and failure reporting.
-- `tests/test_events.py` – EventBus publish/subscribe isolation.
-- `frontend/src/FeatureForm.test.tsx` – property panel interaction tests.
+```powershell
+.\.venv\Scripts\python.exe -m compileall -q backend cad_worker
+git diff --check
+```
 
+核心覆盖：`tests/test_agent_loop.py`（agent 循环 + 审批/自修复/超时）、`test_approvals.py`（审批 broker）、
+`test_kernel_worker.py`（RPC client）、`test_agent_api.py`（agent/kernel REST），以及前端
+`KernelFeatureTree.test.tsx`、`KernelFeatureForm.test.tsx`、`ApprovalPanel.test.tsx`。
 
-## AI Integration
+> 旧链路测试（`test_validation` / `test_geometry_*` / `test_cad_worker` 等）保留但不再驱动新功能。
 
-`backend/mechcad_ai/` is the real-model layer:
-
-- `client.py` – OpenAI / Anthropic compatible HTTP client (auto `/v1` retry).
-- `prompts.py` – loads the centralized prompts from `prompts/prompts.yaml`.
-- `vision.py` – vision model reads the sketch into a structured vision JSON.
-- `planner.py` – planner model turns vision JSON + description into FeaturePlanV3.
-- `normalize.py` – maps free-form model output onto the strict FeaturePlanV3 shape
-  without inventing values; missing dimensions stay in `unresolved`.
-
-Model config comes from `ModelConfig` (per-project `settings`), falling back to
-environment variables `MECHCAD_VISION_*` / `MECHCAD_PLANNER_*` (see `.env`).
-If no model is configured or a call fails, the deterministic local stub in
-`backend/ai.py` takes over so the IDE and CAD chain keep working.
-
-## MechKernel Agent（主路径，v0.9.0）
-
-MechKernel agent（harness）现在是 aicad 的**默认建模路径**：LLM 通过原生 function calling
-直接驱动 MechKernel 参数化内核（`mechcad-kernel` 仓）的 33 个公开 op，逐步自主建模；
-用户在视口上方的 Agent 运行条里启动/停止、看步数；特征树与属性面板直接渲染内核的
-`feature_graph`，可改参数（`update_feature` → 参数化重放）与撤销/重做。
-
-- 执行层直接是 MechKernel op；`feature_graph` / `_op_history` 是特征树与参数化重放的唯一来源（D1）。
-- Worker 是常驻子进程 `mech_kernel/server.py`（stdio JSON-lines RPC），backend 永不 import CAD 库（D2）。
-- **人机协作确认点（P2）**：破坏性操作（delete_feature / confirm_replace / shell）、破坏性修复、
-  `ask_user` 提问都会暂停等待用户在助手面板审批（批准/改参/拒绝）；超时默认 600s
-  （`MECHCAD_AGENT_APPROVAL_TIMEOUT`）自动跳过。支持"暂停接管 → 手动编辑 → 交还继续"。
-- `RECOVERABLE` 失败按 capability schema 过滤 `suggestion.fix` 自动重试；体积变化时导 STL，收尾导 STEP。
-- 配置见 `.env.example` 的 `MECHCAD_KERNEL_REPO` / `MECHCAD_KERNEL_PYTHON` / `MECHCAD_KERNEL_TIMEOUT`；agent LLM 复用 planner 角色配置。
-- 路线图：`G:\lfy design\ai cad\mechcad-kernel\docs\mechkernel-harness-roadmap.md`（P3 改动清单 / P4 打磨）。
-
-> **FeaturePlanV3 链路已冻结**：前端默认不暴露旧入口（/generate、/chat、PATCH features 仍在 API 层可用）。
-> 旧的 AI 规划 → 校验 → 受控 build123d worker 链路及其测试全部保留，未删除，可经 git 历史或用
-> 旧版 UI 切回。
+---
 
 ## API
 
-- `POST /api/projects`: create project.
-- `GET /api/projects/{project_id}`: read current state.
-- `POST /api/projects/{project_id}/generate`: create a new FeaturePlan and run the CAD worker (frozen legacy).
-- `POST /api/projects/{project_id}/chat`: apply a natural language edit (frozen legacy).
-- `POST /api/projects/{project_id}/agent/start`: start the MechKernel agent loop (default path).
-- `POST /api/projects/{project_id}/agent/stop`: request a cooperative stop between agent steps.
-- `POST /api/projects/{project_id}/agent/resolve`: answer a pending approval (approve/reject/edit).
-- `GET /api/projects/{project_id}/kernel/feature_tree`: current kernel feature_graph + op_history.
-- `POST /api/projects/{project_id}/kernel/update_feature`: parametric rebuild after a parameter change.
-- `POST /api/projects/{project_id}/kernel/delete_feature`: delete a feature (kernel replay).
-- `POST /api/projects/{project_id}/kernel/undo` / `.../kernel/redo`: undo/redo inside the kernel worker.
-- `PATCH /api/projects/{project_id}/features/{feature_id}`: edit one feature (frozen legacy).
-- `POST /api/projects/{project_id}/undo`: undo (kernel worker when alive, else legacy snapshot).
-- `POST /api/projects/{project_id}/redo`: redo (kernel worker when alive, else legacy snapshot).
-- `GET /api/artifacts/{run_id}/{kind}`: download `step`, `stl`, `obj`, `report`, or `execution_report`.
-- `WS /ws/projects/{project_id}`: receive agent step / approval / artifact events.
+**项目与设置**
 
-## Modeling Contract
+- `POST /api/projects` → 创建项目
+- `GET /api/projects` / `GET/PATCH/DELETE /api/projects/{id}` → 读/改名/更新设置/删除
+- `POST /api/model/test` → 测试模型连接（不泄漏 API key）
 
-The default path is no longer "AI writes arbitrary Python". The intended chain is:
+**Agent（主路径）**
 
-1. Vision model reads sketch evidence.
-2. Planner model outputs `FeaturePlanV3`.
-3. Pydantic validates the plan.
-4. CAD worker maps the validated feature tree to safe CAD operations.
-5. Frontend shows feature tree, 3D preview, questions, logs, and artifacts.
+- `POST /api/projects/{id}/agent/start` → 开始 agent loop
+- `POST /api/projects/{id}/agent/stop` → 步间软停
+- `POST /api/projects/{id}/agent/resolve` → 答复审批 `{approval_id, action: approve|reject|edit, args_override?}`
 
-Strict mode uses only explicit drawing or user-confirmed data and blocks CAD when required values are unresolved. Smart mode has three policies: `limited_fill` for conservative engineering completion, `aggressive_fill` for concept generation, and `full_autonomous` for active feature and manufacturing-intent design. Smart assumptions may execute for concept preview, but every inferred dimension is recorded in `assumptions`, `assumption_details`, and `design_review` with evidence and confirmation state.
+**Kernel 直连（主路径）**
 
-The current local worker is a controlled Build123d subprocess. Set `MECHCAD_CAD_ENGINE` to keep the runtime label explicit; do not describe this backend as FreeCAD until a FreeCAD executable is actually wired in.
+- `GET  /api/projects/{id}/kernel/feature_tree` → 当前 feature_graph + op_history
+- `POST /api/projects/{id}/kernel/update_feature` → 改参数 → 参数化重放
+- `POST /api/projects/{id}/kernel/delete_feature` → 删特征 → 重放
+- `POST /api/projects/{id}/kernel/undo` / `.../redo` → 内核级撤重做
+- `POST /api/projects/{id}/undo` / `.../redo` → 有存活 kernel 走内核，否则回退快照
 
-## Legacy Gradio
+**产物**
 
-The previous MVP lives under `legacy/gradio/`. To run it as a reference, start it from that directory and ensure its imports are available on `PYTHONPATH`.
+- `GET /api/artifacts/{run_id}/{kind}` → `step` / `stl` / `obj` / `report` / `execution_report`
+- `WS /ws/projects/{id}` → 订阅 `agent_step` / `approval_required` / `artifact_ready` / `agent_done` 等事件
+
+**冻结（保留可用，默认 UI 不再调用）**
+
+- `POST /api/projects/{id}/generate`、`POST /api/projects/{id}/chat`、`PATCH /api/projects/{id}/features/{feature_id}`
+
+---
+
+## 文档
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) —— 系统如何工作、各真相所在
+- [FEATURE_SUPPORT.md](FEATURE_SUPPORT.md) —— 真正实现 / 部分 / 不支持 的功能矩阵
+- [DEVELOPMENT.md](DEVELOPMENT.md) —— 环境、测试、安全加特性
+- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) —— 新手使用教程
+- 内核路线图：`G:\lfy design\ai cad\mechcad-kernel\docs\mechkernel-harness-roadmap.md`（P0–P2 已落地，P3/P4 待做）
+- 旧 Gradio MVP：`legacy/gradio/`（参考用，需在 `PYTHONPATH` 下启动）
+
+---
+
+## 被冻结的旧链路（FeaturePlanV3）
+
+Varen CAD 默认走向 **MechKernel agent**。旧的"一次性规划 → FeaturePlanV3 → 受控 build123d worker"
+链路（视觉读图 → planner 出 FeaturePlanV3 → 校验 → evidence gate → worker 映射）
+**保持原样保留但已冻结**：代码、端点、测试全部在，前端不暴露旧入口，可经 `git` 历史或旧版 UI 切回。
+该链路仍支持 strict/smart 模式与 `box_base`/`hole`/`groove` 等特征（见 `FEATURE_SUPPORT.md`）。
+
+> 如需将 agent 作为唯一出口、或在未来闭源分发，请注意内核是 **AGPL-3.0**（见 `mechcad-kernel/LICENSE`）。
