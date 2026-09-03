@@ -56,18 +56,18 @@ beforeEach(() => {
 });
 
 describe("LeftManager", () => {
-  it("shows the feature tree by default", () => {
+  it("shows the kernel feature tree (empty) by default", () => {
     renderManager();
-    expect(screen.getByText("base_plate")).toBeInTheDocument();
-    expect(screen.getByText("box_base")).toBeInTheDocument();
+    // 主路径已切 kernel feature_graph；默认无 kernelTree 时显示空态
+    expect(screen.getByText("尚无特征")).toBeInTheDocument();
   });
 
-  it("switches to the property tab", async () => {
+  it("switches to the property tab (kernel form empty)", async () => {
     const user = userEvent.setup();
     renderManager();
     await user.click(screen.getByRole("tab", { name: "属性" }));
-    expect(screen.getByText("PropertyManager")).toBeInTheDocument();
-    expect(screen.getByText("尺寸参数")).toBeInTheDocument();
+    // kernel 路径 property 面板显示 no-feature 空态
+    expect(screen.getByText("没有可编辑特征")).toBeInTheDocument();
   });
 
   it("closes the drawer from the header close button", async () => {

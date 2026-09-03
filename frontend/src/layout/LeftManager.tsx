@@ -1,7 +1,9 @@
 import { useState } from "react";
 import FeatureForm from "../FeatureForm";
 import FeatureTree from "../FeatureTree";
-import type { ModelConfig } from "../api";
+import KernelFeatureForm from "../KernelFeatureForm";
+import KernelFeatureTree from "../KernelFeatureTree";
+import type { KernelFeatureData, KernelFeatureTree as KernelFeatureTreeType, ModelConfig } from "../api";
 import { DEFAULT_SETTINGS, useAppStore, type ManagerTab } from "../store";
 import { useT } from "../i18n";
 
@@ -21,6 +23,11 @@ type Props = {
   intentSummary?: string;
   completenessScore?: number;
   settings?: ModelConfig;
+  kernelTree?: KernelFeatureTreeType;
+  kernelSelectedFeature?: KernelFeatureData | null;
+  onSelectKernelFeature?: (featureId: string) => void;
+  onSaveKernelFeature?: (featureId: string, newParams: Record<string, unknown>) => void;
+  onDeleteKernelFeature?: (featureId: string) => void;
   onSettingsChange?: (value: ModelConfig) => void;
   onApplySettings?: (value: ModelConfig) => void;
   onDescriptionChange: (value: string) => void;
@@ -53,6 +60,11 @@ export default function LeftManager({
   intentSummary,
   completenessScore,
   settings = DEFAULT_SETTINGS,
+  kernelTree = { graph: { nodes: {}, edges: {} }, op_history: [], narrative: [], node_count: 0 },
+  kernelSelectedFeature = null,
+  onSelectKernelFeature,
+  onSaveKernelFeature,
+  onDeleteKernelFeature,
   onSettingsChange,
   onApplySettings,
   onDescriptionChange,
@@ -146,19 +158,17 @@ export default function LeftManager({
             <section className="feature-manager-section">
               <div className="manager-section-title">
                 <h3>{t("manager.feature_title")}</h3>
-                <span>{t("manager.feature_count", { count: features.length })}</span>
+                <span>{t("manager.feature_count", { count: kernelTree.op_history.length })}</span>
               </div>
-              <FeatureTree
-                features={features}
+              <KernelFeatureTree
+                opHistory={kernelTree.op_history}
+                nodes={kernelTree.graph?.nodes ?? {}}
                 selectedFeatureId={selectedFeatureId}
-                onSelectFeature={onSelectFeature}
-                evidenceCount={evidenceCount}
-                intentSummary={intentSummary}
-                completenessScore={completenessScore}
+                onSelectFeature={onSelectKernelFeature ?? (() => {})}
+                onDeleteFeature={onDeleteKernelFeature}
               />
-                            <div className="project-meta">
+              <div className="project-meta">
                 <span>{t("manager.part_family", { value: partFamily || t("manager.unrecognized") })}</span>
-                <span>{t("manager.unresolved", { count: unresolvedCount })}</span>
                 <span>{t("manager.mode", { value: modeLabel })}</span>
               </div>
             </section>
@@ -169,10 +179,16 @@ export default function LeftManager({
           <div className="manager-tab-page">
             <div className="manager-section-title">
               <h3>{t("manager.property_title")}</h3>
-              <span>{selectedFeature ? selectedFeature.type : t("manager.none_selected")}</span>
+              <span>{kernelSelectedFeature ? kernelSelectedFeature.type : t("manager.none_selected")}</span>
             </div>
-            {selectedFeature ? (
-              <FeatureForm key={selectedFeature.id} feature={selectedFeature} busy={busy} onSave={onSaveFeature} />
+            {kernelSelectedFeature ? (
+              <KernelFeatureForm
+                key={kernelSelectedFeature.id}
+                feature={kernelSelectedFeature}
+                busy={busy}
+                onSave={onSaveKernelFeature ?? (() => {})}
+                onDelete={onDeleteKernelFeature}
+              />
             ) : (
               <div className="inspector-empty">
                 <strong>{t("manager.no_feature")}</strong>

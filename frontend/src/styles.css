@@ -1994,3 +1994,324 @@ a.disabled {
   flex-basis: 100%;
   color: #2e383c;
 }
+/* === MechKernel feature graph tree / form (harness path) === */
+.kernel-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.kernel-tree-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.kernel-tree-row.selected {
+  background: rgba(224, 240, 230, 0.45);
+}
+
+.kernel-tree-select {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: inherit;
+}
+
+.kernel-tree-label {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kernel-tree-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #6b7a72;
+  font-size: 12px;
+}
+
+.kernel-tree-state {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.05);
+  color: #6b7a72;
+}
+
+.kernel-tree-row.state-pending .kernel-tree-state {
+  background: rgba(244, 180, 0, 0.15);
+  color: #9a6b00;
+}
+
+.kernel-tree-row.state-failed .kernel-tree-state {
+  background: rgba(200, 60, 60, 0.12);
+  color: #a33;
+}
+
+.kernel-tree-delete {
+  border: none;
+  background: none;
+  color: #999;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 15px;
+}
+
+.kernel-tree-delete:hover {
+  color: #a33;
+}
+
+.kernel-tree-empty {
+  color: #8a9a90;
+  padding: 16px 12px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.kernel-form {
+  padding: 12px;
+}
+
+.kernel-form-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.kernel-form-id {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.kernel-form-type {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.06);
+  color: #5a6b62;
+}
+
+.kernel-form-name {
+  color: #6b7a72;
+  font-size: 12px;
+}
+
+.kernel-form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.kernel-form-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.kernel-form-key {
+  flex: 0 0 120px;
+  color: #6b7a72;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kernel-form-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 5px;
+  font-size: 13px;
+  background: #fff;
+  color: #2e383c;
+}
+
+.kernel-form-error {
+  color: #a33;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.kernel-form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.kernel-form-save,
+.kernel-form-delete {
+  padding: 6px 12px;
+  border-radius: 5px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  background: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.kernel-form-save:disabled,
+.kernel-form-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.kernel-form-delete {
+  color: #a33;
+}
+
+.kernel-form-empty {
+  color: #8a9a90;
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+/* === approval cards (P2 human-in-the-loop) === */
+.approval-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.approval-card {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-left: 3px solid #d19a2a;
+  border-radius: 6px;
+  padding: 10px;
+  background: rgba(255, 253, 245, 0.85);
+}
+
+.approval-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.approval-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: rgba(209, 154, 42, 0.18);
+  color: #8a5a00;
+}
+
+.approval-op {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2e383c;
+}
+
+.approval-message {
+  font-size: 13px;
+  margin: 4px 0;
+  color: #2e383c;
+}
+
+.approval-args {
+  font-size: 12px;
+  color: #6b7a72;
+  margin: 4px 0;
+}
+
+.approval-args summary {
+  cursor: pointer;
+}
+
+.approval-args pre {
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 6px;
+  border-radius: 5px;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.approval-actions button {
+  padding: 5px 10px;
+  border-radius: 5px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.approval-approve {
+  background: #e6f2e9 !important;
+}
+
+.approval-reject {
+  color: #a33;
+}
+
+.approval-edit {
+  margin-top: 8px;
+}
+
+.approval-edit-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.approval-edit-field span {
+  flex: 0 0 120px;
+  color: #6b7a72;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.approval-edit-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.approval-edit-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.approval-edit-actions button {
+  padding: 5px 10px;
+  border-radius: 5px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}

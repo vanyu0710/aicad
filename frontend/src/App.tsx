@@ -5,21 +5,30 @@ import {
   chatProject,
   createProject,
   deleteProject,
+  deleteKernelFeature,
+  fetchKernelFeatureTree,
   fetchProject,
   generateProject,
+  kernelRedo,
+  kernelUndo,
   listProjects,
   patchFeature,
   redo,
   renameProject,
+  resolveAgent,
   resolveWsRoot,
   startAgent,
   stopAgent,
+  updateKernelFeature,
   updateProjectSettings,
   undo,
+  type Approval,
+  type KernelFeatureTree,
   type ModelConfig,
   type ProcessStep,
   type ProjectState,
 } from "./api";
+import ApprovalPanel from "./ApprovalPanel";
 import LeftManager from "./layout/LeftManager";
 import TaskPane from "./layout/TaskPane";
 import TopCommandBar from "./layout/TopCommandBar";
@@ -89,12 +98,17 @@ export default function App() {
     setSettingsNotice,
     setProcessSteps,
     setUi,
+    agentRunning,
+    agentSteps,
+    agentLastOp,
+    pendingApprovals,
+    setAgentRunning,
+    setAgentSteps,
+    setAgentLastOp,
+    setPendingApprovals,
   } = useAppStore();
   const bootRef = useRef(false);
   const language = useAppStore((state) => state.language);
-  const [agentRunning, setAgentRunning] = useState(false);
-  const [agentSteps, setAgentSteps] = useState(0);
-  const [agentLastOp, setAgentLastOp] = useState("");
 
   const handleAgentStart = async () => {
     if (!project?.project_id || !description.trim()) {
@@ -106,6 +120,7 @@ export default function App() {
       setAgentRunning(true);
       setAgentSteps(0);
       setAgentLastOp("");
+      setPendingApprovals([]);
     } catch (err) {
       setError(t("app.agent.start_failed", { err: String(err) }));
     }
@@ -119,6 +134,79 @@ export default function App() {
       await stopAgent(project.project_id);
     } catch {
       // 停止失败不打断 UI；agent 完成事件会自行收尾
+    }
+  };
+
+  const handleAgentResolve = async (approval: Approval, action: "approve" | "reject" | "edit", argsOverride?: Record<string, unknown>) => {
+    if (!project?.project_id) {
+      return;
+    }
+    try {
+      await resolveAgent(project.project_id, { approval_id: approval.approval_id, action, args_override: argsOverride });
+      setPendingApprovals(pendingApprovals.filter((item) => item.approval_id !== approval.approval_id));
+    } catch (err) {
+      setError(t("app.agent.resolve_failed", { err: String(err) }));
+    }
+  };
+
+  const [kernelTree, setKernelTree] = useState<KernelFeatureTree>({
+    graph: { nodes: {}, edges: {} },
+    op_history: [],
+    narrative: [],
+    node_count: 0,
+  });
+
+  const refreshKernelTree = async () => {
+    if (!project?.project_id) {
+      return;
+    }
+    try {
+      const tree = await fetchKernelFeatureTree(project.project_id);
+      setKernelTree(tree);
+    } catch {
+      // 无存活 worker 时为空树；静默
+    }
+  };
+
+  useEffect(() => {
+    void refreshKernelTree();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.project_id]);
+
+  const kernelNodes = kernelTree.graph?.nodes ?? {};
+
+  const onSaveKernelFeature = async (featureId: string, newParams: Record<string, unknown>) => {
+    if (!project?.project_id) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const next = await updateKernelFeature(project.project_id, featureId, newParams);
+      replaceProject(next.project);
+      await refreshKernelTree();
+      setSettingsDirty(false);
+    } catch (err) {
+      setError(t("app.kernel.edit_failed", { err: String(err) }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onDeleteKernelFeature = async (featureId: string) => {
+    if (!project?.project_id) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const next = await deleteKernelFeature(project.project_id, featureId);
+      replaceProject(next.project);
+      await refreshKernelTree();
+    } catch (err) {
+      setError(t("app.kernel.delete_failed", { err: String(err) }));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -291,7 +379,22 @@ export default function App() {
       }
       if (event.type === "agent_step") {
         setAgentSteps(Number(event.payload?.step || 0));
-        setAgentLastOp(String(event.message || event.payload?.op || ""));
+        setAgentLastOp(String(event.payload?.op || event.message || ""));
+      }
+      if (event.type === "approval_required") {
+        const approval: Approval = {
+          approval_id: String(event.payload?.approval_id ?? ""),
+          kind: (event.payload?.kind as Approval["kind"]) ?? "ask_user",
+          op: String(event.payload?.op ?? "ask_user"),
+          args: (event.payload?.args as Record<string, unknown>) ?? {},
+          message: String(event.message ?? ""),
+          options: (event.payload?.options as Record<string, unknown>) ?? {},
+          context: String(event.payload?.context ?? ""),
+        };
+        if (approval.approval_id && !pendingApprovals.some((item) => item.approval_id === approval.approval_id)) {
+          setPendingApprovals([...pendingApprovals, approval]);
+          setUi({ rightTab: "assistant", rightDrawerOpen: true });
+        }
       }
       if (event.type === "agent_done") {
         setAgentRunning(false);
@@ -299,6 +402,7 @@ export default function App() {
           try {
             const next = await fetchProject(project.project_id);
             setProject({ ...next, settings: mergeSettings(next.settings, settings) });
+            await refreshKernelTree();
           } catch {
             // 保留当前状态；事件流里已有错误信息
           }
@@ -357,7 +461,9 @@ export default function App() {
   const evidence = plan?.evidence?.items || [];
   const evidenceConflicts = plan?.evidence?.conflicts || [];
   const designIntent = plan?.design_intent_details;
-  const runId = project?.current.artifacts.run_id;  const hasModel = Boolean(project?.current.artifacts.stl || project?.current.artifacts.obj);
+  const runId = project?.current.artifacts.run_id;
+  // agent 路径只产出 stl/step（无 obj）；hasModel 只看 stl
+  const hasModel = Boolean(project?.current.artifacts.stl);
   const canUndo = Boolean(project?.history?.length);
   const canRedo = Boolean(project?.redo_stack?.length);
   const hasRequiredQuestions = questions.some((question) => question.required !== false && !question.answer);
@@ -367,7 +473,7 @@ export default function App() {
     ? "empty"
     : error && !busy
       ? "failed"
-      : busy
+      : busy || agentRunning
         ? "analyzing"
         : hasRequiredQuestions
           ? "awaiting_questions"
@@ -535,7 +641,7 @@ export default function App() {
         if (project && settingsDirty) void onApplySettings();
       } else if (mod && key === "g") {
         event.preventDefault();
-        if (project) void onGenerate();
+        if (project && !agentRunning) void handleAgentStart();
       } else if (mod && key === ",") {
         event.preventDefault();
         setUi({ settingsOpen: true });
@@ -584,7 +690,7 @@ export default function App() {
         modeLabel={modeLabel}
         projectName={project.name || "MechCAD IDE"}
         statusLabel={t(statusLabelKeys[status])}
-        onGenerate={() => void onGenerate()}
+        onGenerate={() => void handleAgentStart()}
         onRedo={onRedo}
         onUndo={onUndo}
         onNewProject={() => void handleNewProject()}
@@ -637,7 +743,9 @@ export default function App() {
           <div className="artifact-row">
             <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "step")}>STEP</a>
             <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "stl")}>STL</a>
-            <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "obj")}>OBJ</a>
+            {artifactUrl(runId, "obj") && (
+              <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "obj")}>OBJ</a>
+            )}
             <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "execution_report")}>{t("app.artifact.report")}</a>
           </div>
         </section>
@@ -731,6 +839,11 @@ export default function App() {
               intentSummary={designIntent?.summary}
               completenessScore={typeof plan?.completeness?.score === "number" ? plan.completeness.score : undefined}
               settings={settings}
+              kernelTree={kernelTree}
+              kernelSelectedFeature={kernelNodes[selectedFeatureId] ?? null}
+              onSelectKernelFeature={setSelectedFeatureId}
+              onSaveKernelFeature={(fid, params) => void onSaveKernelFeature(fid, params)}
+              onDeleteKernelFeature={(fid) => void onDeleteKernelFeature(fid)}
               onSettingsChange={onSettingsChange}
               onApplySettings={(next) => void onApplySettings(next)}
               onDescriptionChange={setDescription}
@@ -758,9 +871,12 @@ export default function App() {
               evidence={evidence}
               evidenceConflicts={evidenceConflicts}
               designIntent={designIntent}
-              review={review}              unresolved={unresolved}
+              review={review}
+              unresolved={unresolved}
               runId={runId}
               engineLabel={engineLabel}
+              pendingApprovals={pendingApprovals}
+              onResolveApproval={(approval, action, argsOverride) => void handleAgentResolve(approval, action, argsOverride)}
               onChatMessageChange={setChatMessage}
               onClarificationContinue={(answers) => void onClarificationContinue(answers)}
               onSendChat={() => void onChat()}

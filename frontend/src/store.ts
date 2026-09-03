@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ModelConfig, ProcessStep, ProjectState } from "./api";
+import type { Approval, ModelConfig, ProcessStep, ProjectState } from "./api";
 
 export type Lang = "zh" | "en";
 export type ManagerTab = "feature" | "property" | "configuration";
@@ -89,6 +89,10 @@ type AppState = {
   settingsSaving: boolean;
   settingsNotice: string;
   ui: UiState;
+  agentRunning: boolean;
+  agentSteps: number;
+  agentLastOp: string;
+  pendingApprovals: Approval[];
   setProject: (project: ProjectState | null) => void;
   setDescription: (value: string) => void;
   setImageFile: (file: File | null) => void;
@@ -110,6 +114,10 @@ type AppState = {
   setSettingsSaving: (saving: boolean) => void;
   setSettingsNotice: (notice: string) => void;
   setUi: (patch: Partial<UiState>) => void;
+  setAgentRunning: (running: boolean) => void;
+  setAgentSteps: (steps: number) => void;
+  setAgentLastOp: (op: string) => void;
+  setPendingApprovals: (approvals: Approval[]) => void;
 };
 
 export function readLanguage(): Lang {
@@ -166,6 +174,10 @@ export const useAppStore = create<AppState>((set) => ({
   settingsDirty: false,
   settingsSaving: false,
   settingsNotice: "",
+  agentRunning: false,
+  agentSteps: 0,
+  agentLastOp: "",
+  pendingApprovals: [],
   ui: {
     leftTab: "feature",
     rightTab: "assistant",
@@ -220,4 +232,8 @@ export const useAppStore = create<AppState>((set) => ({
       writeStoredUi(ui);
       return { ui };
     }),
+  setAgentRunning: (agentRunning) => set({ agentRunning }),
+  setAgentSteps: (agentSteps) => set({ agentSteps }),
+  setAgentLastOp: (agentLastOp) => set({ agentLastOp }),
+  setPendingApprovals: (pendingApprovals) => set({ pendingApprovals }),
 }));

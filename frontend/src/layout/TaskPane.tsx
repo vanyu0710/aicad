@@ -1,5 +1,6 @@
+import ApprovalPanel from "../ApprovalPanel";
 import ClarificationPanel from "../ClarificationPanel";
-import { artifactUrl, type DesignIntentDetails, type EvidenceItem, type ExecutionReport, type ProcessStep } from "../api";
+import { artifactUrl, type Approval, type DesignIntentDetails, type EvidenceItem, type ExecutionReport, type ProcessStep } from "../api";
 import { useAppStore, type TaskTab } from "../store";
 import { useT } from "../i18n";
 
@@ -26,6 +27,8 @@ type Props = {
   unresolved: { feature: string; reason: string }[];
   runId?: string;
   engineLabel: string;
+  pendingApprovals?: Approval[];
+  onResolveApproval?: (approval: Approval, action: "approve" | "reject" | "edit", argsOverride?: Record<string, unknown>) => void;
   onChatMessageChange: (value: string) => void;
   onClarificationContinue: (answers: string) => void;
   onSendChat: () => void;
@@ -58,6 +61,8 @@ export default function TaskPane({
   unresolved,
   runId,
   engineLabel,
+  pendingApprovals,
+  onResolveApproval,
   onChatMessageChange,
   onClarificationContinue,
   onSendChat,
@@ -104,6 +109,9 @@ export default function TaskPane({
       <div className="task-pane-content">
         {rightTab === "assistant" && (
           <div className="task-pane-section">
+            {pendingApprovals && pendingApprovals.length > 0 && onResolveApproval && (
+              <ApprovalPanel approvals={pendingApprovals} busy={busy} onResolve={onResolveApproval} />
+            )}
             {questions.length > 0 && (
               <ClarificationPanel questions={questions} onContinue={onClarificationContinue} disabled={busy} />
             )}

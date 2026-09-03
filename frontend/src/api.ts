@@ -19,6 +19,33 @@ export type ModelConfig = {
 
 export type ModelRole = "vision" | "planner";
 
+export type Approval = {
+  approval_id: string;
+  kind: "destructive_op" | "destructive_fix" | "ask_user";
+  op: string;
+  args: Record<string, unknown>;
+  message: string;
+  options?: Record<string, unknown>;
+  context?: string;
+};
+
+export type KernelFeatureData = {
+  id: string;
+  type: string;
+  name?: string;
+  state?: string;
+  parameters?: Record<string, unknown>;
+  parent_id?: string | null;
+  error?: string | null;
+};
+
+export type KernelFeatureTree = {
+  graph: { nodes: Record<string, KernelFeatureData>; edges: Record<string, string[]> };
+  op_history: Array<Record<string, unknown>>;
+  narrative: string[];
+  node_count: number;
+};
+
 export type ProcessStep = {
   id: string;
   stage: "upload" | "vision" | "planning" | "validation" | "chat_edit" | "cad" | "export";
@@ -314,6 +341,51 @@ export async function startAgent(
 export async function stopAgent(projectId: string) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}/agent/stop`, { method: "POST" });
   return parseResponse<{ ok: boolean; stopped: boolean }>(response);
+}
+
+export async function resolveAgent(
+  projectId: string,
+  payload: { approval_id: string; action: "approve" | "reject" | "edit"; args_override?: Record<string, unknown> },
+) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/agent/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<{ ok: boolean; resolved: { action: string; args?: Record<string, unknown> } }>(response);
+}
+
+export async function fetchKernelFeatureTree(projectId: string) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/kernel/feature_tree`);
+  return parseResponse<KernelFeatureTree>(response);
+}
+
+export async function updateKernelFeature(projectId: string, featureId: string, newParams: Record<string, unknown>) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/kernel/update_feature`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ feature_id: featureId, new_params: newParams }),
+  });
+  return parseResponse<{ ok: boolean; project: ProjectState }>(response);
+}
+
+export async function deleteKernelFeature(projectId: string, featureId: string) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/kernel/delete_feature`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ feature_id: featureId }),
+  });
+  return parseResponse<{ ok: boolean; project: ProjectState }>(response);
+}
+
+export async function kernelUndo(projectId: string) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/kernel/undo`, { method: "POST" });
+  return parseResponse<{ ok: boolean; project: ProjectState }>(response);
+}
+
+export async function kernelRedo(projectId: string) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/kernel/redo`, { method: "POST" });
+  return parseResponse<{ ok: boolean; project: ProjectState }>(response);
 }
 
 export async function testModelConnection(role: ModelRole, config: ModelConfig, language: string) {
