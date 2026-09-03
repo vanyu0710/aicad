@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   API_ROOT,
   artifactUrl,
@@ -12,6 +12,8 @@ import {
   redo,
   renameProject,
   resolveWsRoot,
+  startAgent,
+  stopAgent,
   updateProjectSettings,
   undo,
   type ModelConfig,
@@ -90,6 +92,35 @@ export default function App() {
   } = useAppStore();
   const bootRef = useRef(false);
   const language = useAppStore((state) => state.language);
+  const [agentRunning, setAgentRunning] = useState(false);
+  const [agentSteps, setAgentSteps] = useState(0);
+  const [agentLastOp, setAgentLastOp] = useState("");
+
+  const handleAgentStart = async () => {
+    if (!project?.project_id || !description.trim()) {
+      return;
+    }
+    setError("");
+    try {
+      await startAgent(project.project_id, { description, language });
+      setAgentRunning(true);
+      setAgentSteps(0);
+      setAgentLastOp("");
+    } catch (err) {
+      setError(t("app.agent.start_failed", { err: String(err) }));
+    }
+  };
+
+  const handleAgentStop = async () => {
+    if (!project?.project_id) {
+      return;
+    }
+    try {
+      await stopAgent(project.project_id);
+    } catch {
+      // 停止失败不打断 UI；agent 完成事件会自行收尾
+    }
+  };
 
   const refreshProjects = async () => {
     try {
@@ -257,6 +288,21 @@ export default function App() {
       const event = JSON.parse(message.data);
       if (typeof event.type === "string" && event.type.startsWith("process_step_") && event.payload?.process_step) {
         addProcessStep(event.payload.process_step as ProcessStep);
+      }
+      if (event.type === "agent_step") {
+        setAgentSteps(Number(event.payload?.step || 0));
+        setAgentLastOp(String(event.message || event.payload?.op || ""));
+      }
+      if (event.type === "agent_done") {
+        setAgentRunning(false);
+        void (async () => {
+          try {
+            const next = await fetchProject(project.project_id);
+            setProject({ ...next, settings: mergeSettings(next.settings, settings) });
+          } catch {
+            // 保留当前状态；事件流里已有错误信息
+          }
+        })();
       }
       const payloadLogs = Array.isArray(event.payload?.logs) ? event.payload.logs : [];
       const detail = payloadLogs.map((item: unknown) => String(item));
@@ -560,6 +606,25 @@ export default function App() {
         }}
       >
         <section className="workspace-center" aria-label={t("app.viewport.aria")}>
+          <div className="agent-strip">
+            <button
+              type="button"
+              className="agent-strip-start"
+              disabled={agentRunning || busy || !description.trim()}
+              onClick={() => void handleAgentStart()}
+            >
+              {agentRunning ? t("agent.running") : t("agent.start")}
+            </button>
+            {agentRunning && (
+              <>
+                <span className="agent-strip-step">{t("agent.step", { step: agentSteps })}</span>
+                <span className="agent-strip-op" title={agentLastOp}>{agentLastOp}</span>
+                <button type="button" className="agent-strip-stop" onClick={() => void handleAgentStop()}>
+                  {t("agent.stop")}
+                </button>
+              </>
+            )}
+          </div>
           <Viewport
             objUrl={artifactUrl(runId, "obj")}
             stlUrl={artifactUrl(runId, "stl")}

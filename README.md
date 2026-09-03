@@ -106,12 +106,27 @@ environment variables `MECHCAD_VISION_*` / `MECHCAD_PLANNER_*` (see `.env`).
 If no model is configured or a call fails, the deterministic local stub in
 `backend/ai.py` takes over so the IDE and CAD chain keep working.
 
+## MechKernel Agent（P1 垂直切片）
+
+除了上面的 FeaturePlanV3 主链路，aicad 还叠加了一条 agent 路径：LLM 通过原生
+function calling 直接驱动 MechKernel 参数化内核（`mechcad-kernel` 仓）的 33 个公开
+op，逐步自主建模，用户在视口上方的 Agent 运行条里启动/停止并看步数进度。
+
+- 执行层直接是 MechKernel op；`feature_graph` / `_op_history` 是特征树与参数化重放的唯一来源（D1）。
+- Worker 是常驻子进程 `mech_kernel/server.py`（stdio JSON-lines RPC），backend 永不 import CAD 库（D2）。
+- `RECOVERABLE` 失败会按 capability schema 过滤 `suggestion.fix` 后自动重试一次；STL 在体积变化时导出，STEP 在收尾导出。
+- 配置见 `.env.example` 的 `MECHCAD_KERNEL_REPO` / `MECHCAD_KERNEL_PYTHON` / `MECHCAD_KERNEL_TIMEOUT`；agent LLM 复用 planner 角色配置。
+- 路线图与分阶段任务：`G:\lfy design\ai cad\mechcad-kernel\docs\mechkernel-harness-roadmap.md`（P2 确认点 / P3 改动清单 / P4 打磨）。
+- FeaturePlanV3 → 受控 build123d worker 的旧链路保持冻结、可继续使用；agent 快照的执行语义放在 `ExecutionReport` 扩展字段中。
+
 ## API
 
 - `POST /api/projects`: create project.
 - `GET /api/projects/{project_id}`: read current state.
 - `POST /api/projects/{project_id}/generate`: create a new FeaturePlan and run the CAD worker.
 - `POST /api/projects/{project_id}/chat`: apply a natural language edit.
+- `POST /api/projects/{project_id}/agent/start`: start the MechKernel agent loop (see below).
+- `POST /api/projects/{project_id}/agent/stop`: request a cooperative stop between agent steps.
 - `PATCH /api/projects/{project_id}/features/{feature_id}`: edit one feature.
 - `POST /api/projects/{project_id}/undo`: undo to previous snapshot.
 - `POST /api/projects/{project_id}/redo`: redo snapshot.

@@ -13,6 +13,7 @@ end with it, because several Chinese providers expose both forms.
 import json
 import os
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 import requests
@@ -366,6 +367,235 @@ def strip_json_fence(content: str) -> str:
         text = text.split("\n", 1)[1] if "\n" in text else text[3:]
         text = text.rsplit("```", 1)[0]
     return text.strip()
+
+
+# --------------------------------------------------------------------------
+# Native tool calling (OpenAI `tools` / Anthropic `tool_use`), used by the
+# MechKernel agent loop. Kept protocol-shape aware: each round returns the raw
+# assistant message so callers can append tool results without re-serializing.
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class ToolCall:
+    """One normalized tool invocation parsed from a model response."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ToolCallRound:
+    """One model turn that may contain text and/or tool calls."""
+
+    text: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    raw_message: dict[str, Any] = field(default_factory=dict)
+    finish_reason: str | None = None
+
+
+def tool_result_message(tool_call: ToolCall, content: str, *, protocol: str) -> dict[str, Any]:
+    """Build the protocol-correct follow-up message carrying one tool result."""
+    if protocol == "anthropic":
+        return {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": tool_call.id, "content": content}],
+        }
+    return {"role": "tool", "tool_call_id": tool_call.id, "content": content}
+
+
+def _openai_tool_payload(tools: list[dict[str, Any]], tool_choice: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {"tools": tools}
+    if tool_choice and tool_choice != "auto":
+        payload["tool_choice"] = tool_choice
+    return payload
+
+
+def _anthropic_tool_payload(tools: list[dict[str, Any]], tool_choice: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {"tools": [{"name": t["function"]["name"],
+                                          "description": t["function"]["description"],
+                                          "input_schema": t["function"]["parameters"]} for t in tools]}
+    if tool_choice == "required":
+        payload["tool_choice"] = {"type": "any"}
+    return payload
+
+
+def chat_completion_with_tools(
+    settings,
+    role: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    *,
+    tool_choice: str = "auto",
+    max_tokens: int = 4096,
+    temperature: float = 0.1,
+    timeout: int | None = None,
+    max_retries: int | None = None,
+) -> ToolCallRound:
+    """Send a chat request with native tool definitions and return the parsed round.
+
+    ``tools`` uses the OpenAI wire shape ``{"type": "function", "function": {...}}``;
+    the Anthropic branch converts it to ``input_schema`` form automatically.
+    """
+    config = resolve_role_config(settings, role)
+    if not config["api_key"]:
+        raise ApiCallError(f"{role} API key is not configured")
+    timeout = _role_timeout(role) if timeout is None else timeout
+    max_retries = _role_max_retries(role) if max_retries is None else max_retries
+    last_error: ApiCallError | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            if config["protocol"] == "anthropic":
+                return _anthropic_tool_round(config, messages, tools, tool_choice, max_tokens, temperature, timeout)
+            return _openai_tool_round(config, messages, tools, tool_choice, max_tokens, temperature, timeout)
+        except ApiCallError as exc:
+            last_error = exc
+            if not exc.retryable:
+                raise
+            if attempt >= max_retries:
+                raise ApiCallError(f"{role} tool call failed after {max_retries + 1} attempts: {last_error}", retryable=False) from exc
+            time.sleep(0.5 * (attempt + 1))
+    raise ApiCallError(f"{role} tool call failed after {max_retries + 1} attempts: {last_error}", retryable=False)
+
+
+def _openai_tool_round(
+    config: dict[str, str],
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    tool_choice: str,
+    max_tokens: int,
+    temperature: float,
+    timeout: int,
+) -> ToolCallRound:
+    payload: dict[str, Any] = {
+        "model": config["model"],
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        **_openai_tool_payload(tools, tool_choice),
+    }
+    headers = {"Authorization": f"Bearer {config['api_key']}", "Content-Type": "application/json"}
+    urls = [f"{config['base_url']}/chat/completions"]
+    if not config["base_url"].rstrip("/").endswith("/v1"):
+        urls.append(f"{config['base_url']}/v1/chat/completions")
+
+    last_error: Exception | None = None
+    for url in urls:
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        except requests.RequestException as exc:
+            last_error = ApiCallError(f"model call failed: {exc}", retryable=True)
+            continue
+        content_type = response.headers.get("content-type", "").lower()
+        if response.ok and "json" in content_type:
+            try:
+                data = response.json()
+            except ValueError as exc:
+                last_error = ApiCallError(f"service returned invalid JSON: {response.text[:300]}", retryable=True)
+                continue
+            choice = (data.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            tool_calls: list[ToolCall] = []
+            for raw_call in message.get("tool_calls") or []:
+                function = raw_call.get("function") or {}
+                raw_args = function.get("arguments")
+                if isinstance(raw_args, str):
+                    try:
+                        args = json.loads(raw_args) if raw_args.strip() else {}
+                    except json.JSONDecodeError:
+                        args = {}
+                elif isinstance(raw_args, dict):
+                    args = raw_args
+                else:
+                    args = {}
+                tool_calls.append(ToolCall(
+                    id=str(raw_call.get("id") or f"call_{len(tool_calls)}"),
+                    name=str(function.get("name") or ""),
+                    arguments=args if isinstance(args, dict) else {},
+                ))
+            return ToolCallRound(
+                text=str(message.get("content") or ""),
+                tool_calls=tool_calls,
+                raw_message=message,
+                finish_reason=choice.get("finish_reason"),
+            )
+        if response.ok and "text/html" in content_type:
+            last_error = ApiCallError(f"provider returned HTML (base url may be missing /v1): {url}")
+            continue
+        retryable = response.status_code in {429, 500, 502, 503, 504}
+        raise ApiCallError(f"HTTP {response.status_code} from {url}: {response.text[:500]}", retryable=retryable)
+    if last_error:
+        raise last_error
+    raise ApiCallError("model call failed: no response", retryable=True)
+
+
+def _anthropic_tool_round(
+    config: dict[str, str],
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    tool_choice: str,
+    max_tokens: int,
+    temperature: float,
+    timeout: int,
+) -> ToolCallRound:
+    system_parts: list[str] = []
+    chat_messages: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") == "system":
+            system_parts.append(str(message.get("content")))
+        else:
+            chat_messages.append(message)
+
+    payload: dict[str, Any] = {
+        "model": config["model"],
+        "messages": chat_messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        **_anthropic_tool_payload(tools, tool_choice),
+    }
+    if system_parts:
+        payload["system"] = "\n\n".join(system_parts)
+
+    url = f"{config['base_url']}/v1/messages"
+    headers = {
+        "X-Api-Key": config["api_key"],
+        "Authorization": f"Bearer {config['api_key']}",
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=timeout)
+    except requests.RequestException as exc:
+        raise ApiCallError(f"model call failed: {exc}", retryable=True) from exc
+    if not response.ok:
+        retryable = response.status_code in {429, 500, 502, 503, 504}
+        raise ApiCallError(f"HTTP {response.status_code} from {url}: {response.text[:500]}", retryable=retryable)
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise ApiCallError(f"service returned invalid JSON: {response.text[:300]}", retryable=True) from exc
+    blocks = data.get("content", [])
+    tool_calls: list[ToolCall] = []
+    texts: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_use":
+            args = block.get("input")
+            tool_calls.append(ToolCall(
+                id=str(block.get("id") or f"toolu_{len(tool_calls)}"),
+                name=str(block.get("name") or ""),
+                arguments=args if isinstance(args, dict) else {},
+            ))
+        elif block.get("type") == "text":
+            texts.append(str(block.get("text", "")))
+    return ToolCallRound(
+        text="\n".join(texts),
+        tool_calls=tool_calls,
+        raw_message={"role": "assistant", "content": blocks},
+        finish_reason=data.get("stop_reason"),
+    )
 
 
 def parse_json_object(content: str) -> dict[str, Any]:

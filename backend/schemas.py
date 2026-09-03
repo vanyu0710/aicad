@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 OperationMode = Literal["strict", "smart"]
 SmartFillPolicy = Literal["suggest_only", "limited_fill", "aggressive_fill", "full_autonomous"]
 FeatureOperation = Literal["base", "add", "remove", "modify", "pattern"]
-StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error", "process_step_started", "process_step_done", "process_step_failed", "process_step_blocked"]
+StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error", "process_step_started", "process_step_done", "process_step_failed", "process_step_blocked", "agent_step", "agent_done"]
 
 
 def now_iso() -> str:
@@ -781,6 +781,14 @@ class GenerateRequest(BaseModel):
 
 class ProjectSettingsRequest(ModelConfig):
     """Settings are saved separately so mode changes do not require a model run."""
+
+
+class AgentStartRequest(BaseModel):
+    """MechKernel agent loop 启动参数（P1：无确认通道，模型自主建模）。"""
+
+    description: str
+    language: Literal["zh", "en"] = "zh"
+    max_steps: int = 30
 
 
 class ChatEditRequest(BaseModel):

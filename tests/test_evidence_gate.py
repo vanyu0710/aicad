@@ -60,7 +60,8 @@ def _plan(evidence=None, hole_diameter: float = 8.0) -> FeaturePlanV3:
                 type="through_hole",
                 operation="remove",
                 dimensions={"diameter": _dim(hole_diameter)},
-                placement=PlacementV3(reference="center"),
+                # v0.7.3 起校验要求显式 X/Y 坐标（基准名不算定位）
+                placement=PlacementV3(reference="center", x=0.0, y=0.0),
                 depends_on=["base_plate"],
             )
         ],

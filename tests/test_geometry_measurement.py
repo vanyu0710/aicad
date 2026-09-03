@@ -3,10 +3,15 @@ from __future__ import annotations
 import math
 import unittest
 
+# 本机的部分 Windows 字体文件损坏，会让 build123d 导入时崩溃（FontManager 扫描字体）。
+# 与 cad_worker/freecad_executor.py 的做法一致：先装 guard 再导入 build123d。
+import cad_worker.font_guard as _font_guard
+
+_font_guard.install()
+
 from build123d import Box, BuildPart, Cylinder, Locations, Mode
 
 from backend.geometry.measurement import measure_bounding_box, measure_shape, measure_volume
-
 
 class GeometryMeasurementTests(unittest.TestCase):
     def test_simple_box_measures_bounding_box_and_volume(self) -> None:

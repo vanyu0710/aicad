@@ -3,6 +3,12 @@ from __future__ import annotations
 from copy import deepcopy
 import unittest
 
+# 本机的部分 Windows 字体文件损坏，会让 build123d 导入时崩溃（FontManager 扫描字体）。
+# 与 cad_worker/freecad_executor.py 的做法一致：先装 guard 再导入 build123d。
+import cad_worker.font_guard as _font_guard
+
+_font_guard.install()
+
 from build123d import Box, BuildPart, Cylinder, Locations, Mode
 
 from backend.feature_definitions import FEATURE_DEFINITIONS

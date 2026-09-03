@@ -43,3 +43,11 @@ Legend: `Yes` = implemented and exercised, `Partial` = simplified implementation
 - 0.7.3-B verifies annular grooves with axial position on the same evidence types.
 - All other feature types remain registered with an explicit `UNSUPPORTED` verification capability.
 - `UNKNOWN` is never promoted to `PASS`; missing or unreliable measurements are reported as not proven.
+
+## MechKernel Agent Path（v0.8.0-alpha，叠加路径）
+
+- 执行层是 MechKernel（mechcad-kernel 仓）的 33 个公开 op，经 `mech_kernel/server.py` stdio RPC 由 `backend/agent/` 逐步驱动。
+- 支持的建模能力以 MechKernel capability registry 为准（workplane/sketch/extrude/revolve/sweep/boolean/hole/fillet/chamfer/shell/pattern/select/undo 等）；fillet/chamfer/任意方向 hole 在 agent 路径可用，与本文件上方 FeaturePlanV3 特征矩阵无关。
+- 自修复：RECOVERABLE + suggestion.fix 按 schema 过滤后自动重试一次；其余失败原样回喂模型。
+- 验证：收尾 `validate_geometry(level="standard")` + 体积/包围盒监控；aicad 的 semantic verifier / evidence gate 不参与 agent 路径（D3）。
+- 每步无确认点（P2 实现）；`production_ready` 恒为 false。

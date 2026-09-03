@@ -1265,6 +1265,53 @@
   background: rgba(238, 244, 241, 0.82);
 }
 
+.agent-strip {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: calc(100% - 24px);
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 252, 0.9);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+}
+
+.agent-strip-start,
+.agent-strip-stop {
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 252, 0.85);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.agent-strip-start:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.agent-strip-step {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.agent-strip-op {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #5a6b62;
+}
+
 .bottom-statusbar {
   position: absolute;
   left: 50%;

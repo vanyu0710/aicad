@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 from copy import deepcopy
+import asyncio
 import io
 import json
 import os
+import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,19 +22,24 @@ from backend.ai import (
     patch_feature,
     questions_from_plan,
 )
+from backend.agent import AgentLoopResult, run_agent_loop
 from backend.cad import run_freecad_worker
 from backend.capabilities import CAPABILITIES, CapabilityValidationError
 from backend.evidence_gate import apply_evidence_gate_result, apply_evidence_resolutions, evaluate_evidence_gate
 from backend.generic_engine import build_execution_report, feature_semantics
 from backend.events import EventBus
+from backend.kernel_worker import get_worker_manager
 from backend.process import ProcessRecorder
 from backend.schemas import (
+    AgentStartRequest,
+    ArtifactSet,
     ChatEditRequest,
     CreateProjectRequest,
     CreateProjectResponse,
     DesignSnapshot,
     ExecutionReport,
     FeaturePatchRequest,
+    FeaturePlanV3,
     GenerateRequest,
     ModelTestRequest,
     ModelTestResponse,
@@ -42,10 +49,16 @@ from backend.schemas import (
     RenameProjectRequest,
     StageEvent,
 )
-from backend.mechcad_ai.client import resolve_role_config, test_model_connection
+from backend.mechcad_ai.client import (
+    chat_completion_with_tools,
+    has_configured_model,
+    resolve_role_config,
+    test_model_connection,
+)
+from backend.mechcad_ai.prompts import get_prompt
 from backend.normalization import normalize_feature_plan
 from backend.session import SessionStore
-from backend.storage import artifact_path
+from backend.storage import artifact_path, create_run_dir
 from backend.validation import apply_validation_result, validate_feature_plan
 from backend.static_assets import mount_frontend
 
@@ -69,6 +82,27 @@ def _loc(language: str, zh: str, en: str) -> str:
 
 store = SessionStore(os.getenv("MECHCAD_STORE_PATH") or (Path(__file__).resolve().parent.parent / "work" / "projects.json"))
 events = EventBus()
+
+# MechKernel agent loop（P1）：project_id → 运行状态。旧 FeaturePlanV3 链路完全不动。
+_agent_runs: dict[str, dict] = {}
+_agent_lock = threading.Lock()
+
+
+def _schedule_publish(event: StageEvent) -> None:
+    asyncio.ensure_future(events.publish(event))
+
+
+def _emit_from_thread_factory(project_id: str, loop: asyncio.AbstractEventLoop):
+    """agent 线程用：把事件安全投递回主事件循环的 EventBus。"""
+
+    def emit(event_type: str, message: str, payload: dict | None = None) -> None:
+        event = StageEvent(type=event_type, project_id=project_id, stage="agent", message=message, payload=payload or {})
+        try:
+            loop.call_soon_threadsafe(_schedule_publish, event)
+        except RuntimeError:
+            pass  # 主循环已关闭（应用退出）
+
+    return emit
 
 
 @app.get("/api/health")
@@ -128,6 +162,8 @@ def rename_project(project_id: str, request: RenameProjectRequest):
 @app.delete("/api/projects/{project_id}")
 def delete_project(project_id: str):
     _project_or_404(project_id)
+    _stop_agent_run(project_id)
+    get_worker_manager().stop(project_id)
     store.delete_project(project_id)
     return {"ok": True}
 @app.patch("/api/projects/{project_id}/settings")
@@ -433,6 +469,147 @@ async def patch_project_feature(project_id: str, feature_id: str, request: Featu
     store.commit_snapshot(project_id, snapshot)
     await _emit(project_id, "stage_done", "feature_patch", _loc(language, f"特征 {feature_id} 已更新", f"Feature {feature_id} updated"))
     return _public_project(store.get_project(project_id))
+
+
+def _stop_agent_run(project_id: str) -> bool:
+    with _agent_lock:
+        run = _agent_runs.pop(project_id, None)
+    if run is None:
+        return False
+    run["stop"].set()
+    return True
+
+
+@app.post("/api/projects/{project_id}/agent/start")
+async def agent_start(project_id: str, request: AgentStartRequest):
+    _project_or_404(project_id)
+    if not request.description.strip():
+        raise HTTPException(status_code=422, detail="description is required")
+    with _agent_lock:
+        existing = _agent_runs.get(project_id)
+        if existing is not None and existing["thread"].is_alive():
+            raise HTTPException(status_code=409, detail="Agent is already running for this project")
+        stop_event = threading.Event()
+        thread = threading.Thread(
+            target=_run_agent_thread,
+            args=(project_id, request, deepcopy(_project_or_404(project_id).settings), stop_event, asyncio.get_running_loop()),
+            daemon=True,
+        )
+        _agent_runs[project_id] = {"stop": stop_event, "thread": thread}
+        thread.start()
+    return {"ok": True, "started": True, "project_id": project_id}
+
+
+@app.post("/api/projects/{project_id}/agent/stop")
+async def agent_stop(project_id: str):
+    _project_or_404(project_id)
+    stopped = _stop_agent_run(project_id)
+    return {"ok": True, "stopped": stopped}
+
+
+def _run_agent_thread(
+    project_id: str,
+    request: AgentStartRequest,
+    settings,
+    stop_event: threading.Event,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """后台线程：worker RPC + agent loop + 快照提交。事件经 EventBus 回主循环。"""
+    language = request.language
+    emit = _emit_from_thread_factory(project_id, loop)
+    try:
+        if not has_configured_model(settings, "planner"):
+            emit("agent_done", _loc(language, "未配置模型：请先在设置里配置 planner 模型。", "No model configured: set up the planner model in settings first."), {"ok": False, "error": "model_not_configured"})
+            return
+        worker = get_worker_manager().get_or_start(project_id)
+        run_id, run_dir = create_run_dir()
+        config = resolve_role_config(settings, "planner")
+
+        def chat_with_tools(messages, tools):
+            return chat_completion_with_tools(settings, "planner", messages, tools, max_tokens=8192)
+
+        result = run_agent_loop(
+            worker=worker,
+            chat_with_tools=chat_with_tools,
+            protocol=config["protocol"],
+            emit=emit,
+            run_dir=run_dir,
+            system_prompt=get_prompt("agent_modeling", language),
+            task_description=request.description,
+            language=language,
+            max_steps=max(1, int(request.max_steps)),
+            stop_event=stop_event,
+        )
+        artifacts = ArtifactSet(
+            run_id=run_id,
+            step=result.artifacts.get("step"),
+            stl=result.artifacts.get("stl"),
+            execution_report=result.artifacts.get("execution_report"),
+        )
+        snapshot = DesignSnapshot(
+            feature_plan=FeaturePlanV3(
+                design_intent=request.description,
+                part_family="agent_modeled",
+                self_checks={"planning_source": "mechkernel_agent"},
+            ),
+            artifacts=artifacts,
+            execution_report=_agent_execution_report(result),
+            report_markdown=_build_agent_report(project_id, result, language),
+            logs=result.logs,
+        )
+        store.commit_snapshot(project_id, snapshot)
+        if result.ok:
+            message = _loc(language, f"agent 建模完成（{result.steps} 步）。", f"Agent finished modeling in {result.steps} steps.")
+        elif result.stopped:
+            message = _loc(language, "agent 已按用户请求停止，当前状态已保存。", "Agent stopped by user; current state was saved.")
+        else:
+            message = _loc(language, f"agent 失败：{result.error}", f"Agent failed: {result.error}")
+        emit("agent_done", message, {
+            "ok": result.ok,
+            "stopped": result.stopped,
+            "steps": result.steps,
+            "error": result.error,
+            "artifacts": artifacts.model_dump(),
+        })
+    except Exception as exc:  # noqa: BLE001 —— 线程内兜底，事件上报
+        emit("agent_done", _loc(language, f"agent 异常退出：{exc}", f"Agent crashed: {exc}"), {"ok": False, "error": str(exc)})
+    finally:
+        with _agent_lock:
+            run = _agent_runs.get(project_id)
+            if run is not None and run["stop"] is stop_event:
+                _agent_runs.pop(project_id, None)
+
+
+def _agent_execution_report(result: AgentLoopResult) -> ExecutionReport:
+    """agent 快照的执行报告：FeaturePlanV3 不再承载执行语义（D1）。"""
+    return ExecutionReport(
+        execution_ok=bool(result.ok and not result.error),
+        plan_complete=bool(result.ok and not result.stopped),
+        geometry_valid=bool(result.volume),
+        production_ready=False,
+        fallback_used=False,
+        engine="mechkernel",
+        details=[line for line in result.logs if line][-20:],
+        feature_graph=result.feature_graph,
+        feature_tree=result.feature_tree,
+        agent_steps=result.steps,
+        agent_final_text=result.final_text,
+        agent_stopped=result.stopped,
+        volume=result.volume,
+    )
+
+
+def _build_agent_report(project_id: str, result: AgentLoopResult, language: str) -> str:
+    status = _loc(language, "成功", "succeeded") if result.ok else (_loc(language, "已停止", "stopped") if result.stopped else _loc(language, "失败", "failed"))
+    log_text = "\n".join(f"- {line}" for line in result.logs[-12:]) or _loc(language, "- 无日志", "- No logs")
+    return (
+        f"### MechKernel Agent Run\n"
+        f"- Project: `{project_id}`\n"
+        f"- Engine: **mechkernel**\n"
+        f"- Steps: {result.steps}\n"
+        f"- Status: **{status}**\n\n"
+        f"### {_loc(language, '日志', 'Logs')}\n{log_text}\n"
+    )
 
 
 @app.post("/api/projects/{project_id}/undo")

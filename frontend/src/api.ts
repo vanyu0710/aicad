@@ -299,6 +299,23 @@ export async function redo(projectId: string) {
   return parseResponse<ProjectState>(response);
 }
 
+export async function startAgent(
+  projectId: string,
+  payload: { description: string; language: string; max_steps?: number },
+) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/agent/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<{ ok: boolean; started: boolean; project_id: string }>(response);
+}
+
+export async function stopAgent(projectId: string) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/agent/stop`, { method: "POST" });
+  return parseResponse<{ ok: boolean; stopped: boolean }>(response);
+}
+
 export async function testModelConnection(role: ModelRole, config: ModelConfig, language: string) {
   const response = await fetch(`${API_ROOT}/api/model/test`, {
     method: "POST",

@@ -1,3 +1,21 @@
+## v0.8.0-alpha - MechKernel Agent（P0+P1 垂直切片）
+
+- 新增 MechKernel worker RPC：`mechcad-kernel` 仓的 `mech_kernel/server.py`（stdio JSON-lines，见其 HANDOFF）。
+  aicad 侧 `backend/kernel_worker.py` 提供会话级 client 与 manager（一会话一内核实例，崩溃自动重启；历史重放恢复留 P4）。
+- 新增 agent loop（`backend/agent/`）：LLM 通过原生 function calling 直接驱动 33 个公开 kernel op，
+  逐步建模 + StepResult 结构化反馈 + RECOVERABLE 自修复（按 schema 过滤 suggestion.fix 自动重试一次）。
+  提示词集中在 `prompts/prompts.yaml` 的 `agent_modeling`（中英）。
+- 新增 REST：`POST /api/projects/{id}/agent/start`、`POST /api/projects/{id}/agent/stop`；
+  WebSocket 新事件 `agent_step` / `agent_done`。前端视口上方新增 Agent 运行条（开始/停止/步数）。
+- 快照契约：agent 运行把 feature_graph / op_history / 最终文字总结写入 `ExecutionReport` 扩展字段
+  （`feature_graph`、`agent_steps`、`agent_final_text` 等），`feature_plan` 仅存占位 —— FeaturePlanV3 不再承担 agent 路径的执行语义（D1）。
+- 冻结说明：既有 FeaturePlanV3 → 受控 build123d worker 链路（/generate、/chat、PATCH features）保持原样可切换，
+  agent 是叠加路径而非替换。
+- 环境变量：`MECHCAD_KERNEL_REPO`、`MECHCAD_KERNEL_PYTHON`、`MECHCAD_KERNEL_TIMEOUT`（见 .env.example）。
+- 环境修复：`tests/test_geometry_measurement.py`、`tests/test_geometry_verification.py` 先安装 font guard
+  再导入 build123d（损坏 Windows 字体会让导入崩溃）；`tests/test_evidence_gate.py` 的 `_plan` fixture
+  补显式 X/Y（v0.7.3 校验收紧后的过期测试修复）。
+
 ## v0.7.3-B - Generic Groove Verification
 
 - `annular_groove` and `internal_annular_groove` use the same GeometryEvidence types as holes and bosses.
