@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 240" role="img" aria-labelledby="title desc">
+  <title id="title">Varen CAD logo</title>
+  <desc id="desc">A cyan crescent moon layered over an isometric island on a calm sea, beside the Varen CAD wordmark.</desc>
+
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#050E1F"/>
+      <stop offset="0.55" stop-color="#071B3A"/>
+      <stop offset="1" stop-color="#0B4964"/>
+    </linearGradient>
+    <linearGradient id="moon" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E0FBFF"/>
+      <stop offset="0.55" stop-color="#9FF0FB"/>
+      <stop offset="1" stop-color="#38C3E8"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#F4FBFD"/>
+      <stop offset="1" stop-color="#BFF2FB"/>
+    </linearGradient>
+    <linearGradient id="cad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#38C3E8"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+  </defs>
+
+  <!-- mark tile -->
+  <g transform="translate(28 24)">
+    <rect width="192" height="192" rx="42" fill="url(#sky)"/>
+    <circle cx="136" cy="52" r="28" fill="url(#moon)"/>
+    <circle cx="148" cy="43" r="28" fill="#071B3A"/>
+    <g fill="#CFFAFE">
+      <circle cx="52" cy="38" r="1.4"/>
+      <circle cx="40" cy="74" r="1" opacity="0.7"/>
+    </g>
+    <path d="M17 138c22-18 40-18 62 0s40 18 62 0 40-18 51 0" fill="none" stroke="#38C3E8" stroke-width="8" stroke-linecap="round"/>
+    <path d="M17 164c22-18 40-18 62 0s40 18 62 0 40-18 51 0" fill="none" stroke="#22D3EE" stroke-width="4" stroke-linecap="round" opacity="0.85"/>
+    <path d="M17 189c22-18 40-18 62 0s40 18 62 0 40-18 51 0" fill="none" stroke="#155E75" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+    <path d="M40 100 96 134l56-34v30l-56 32-56-32Z" fill="#0A3550" stroke="#A5F3FC" stroke-width="3"/>
+    <path d="M96 134v30" stroke="#A5F3FC" stroke-width="3"/>
+  </g>
+
+  <!-- wordmark -->
+  <g transform="translate(276 84)">
+    <text x="0" y="54" font-family="Georgia, 'Times New Roman', serif" font-size="62" font-weight="700" letter-spacing="4" fill="url(#word)">VAREN</text>
+    <text x="6" y="98" font-family="Georgia, 'Times New Roman', serif" font-size="24" font-weight="600" letter-spacing="12" fill="url(#cad)">CAD · 栖云</text>
+  </g>
+
+  <path d="M276 200h348" stroke="url(#cad)" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+</svg>
