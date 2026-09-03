@@ -65,7 +65,7 @@ export default function StartupScreen({
 
       <header className="startup-header">
         <div className="startup-brand">
-          <strong>MECHCAD</strong>
+          <strong>VAREN CAD</strong>
           <span>{t("startup.brand")}</span>
         </div>
         <div className="startup-header-status">
@@ -77,6 +77,7 @@ export default function StartupScreen({
 
       <main className="startup-main">
         <section className="startup-hero">
+          <img className="startup-hero-logo" src="/varen-cad-logo.svg" alt="Varen CAD logo" />
           <p className="eyebrow">FROM SKETCH TO STEP</p>
           <h1>{t("startup.title")}</h1>
           <p>{t("startup.subtitle")}</p>

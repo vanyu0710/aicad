@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" role="img" aria-hidden="true">
+  <title>Varen CAD ambient background</title>
+
+  <defs>
+    <!-- deep-space sky -->
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#03091A"/>
+      <stop offset="0.45" stop-color="#06162F"/>
+      <stop offset="0.78" stop-color="#0A2C4B"/>
+      <stop offset="1" stop-color="#0B4964"/>
+    </linearGradient>
+
+    <!-- soft warm-cyan glow behind the moon -->
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#67E8F9" stop-opacity="0.30"/>
+      <stop offset="0.4" stop-color="#38C3E8" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- moon body -->
+    <radialGradient id="moon" cx="0.38" cy="0.36" r="0.7">
+      <stop offset="0" stop-color="#F5FEFF"/>
+      <stop offset="0.55" stop-color="#BFF2FB"/>
+      <stop offset="1" stop-color="#5FD9F1"/>
+    </radialGradient>
+
+    <!-- sea-glow near the horizon -->
+    <radialGradient id="seaGlow" cx="0.5" cy="1" r="0.7">
+      <stop offset="0" stop-color="#22D3EE" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#sky)"/>
+
+  <!-- ambient glow, upper right, soft and large -->
+  <circle cx="1200" cy="300" r="680" fill="url(#glow)"/>
+
+  <!-- faint stars -->
+  <g fill="#CFFAFE">
+    <circle cx="280" cy="180" r="2" opacity="0.7"/>
+    <circle cx="520" cy="120" r="1.4" opacity="0.5"/>
+    <circle cx="820" cy="240" r="1.8" opacity="0.6"/>
+    <circle cx="1650" cy="160" r="2" opacity="0.6"/>
+    <circle cx="1780" cy="420" r="1.4" opacity="0.45"/>
+    <circle cx="1500" cy="90" r="1.3" opacity="0.5"/>
+    <circle cx="360" cy="420" r="1.2" opacity="0.4"/>
+    <circle cx="1080" cy="120" r="1.5" opacity="0.55"/>
+    <circle cx="620" cy="360" r="1.1" opacity="0.35"/>
+    <circle cx="880" cy="520" r="1.2" opacity="0.3"/>
+  </g>
+
+  <!-- crescent moon, upper right -->
+  <circle cx="1180" cy="270" r="150" fill="url(#moon)"/>
+  <circle cx="1236" cy="228" r="150" fill="#071B3A"/>
+
+  <!-- layered, flowing ridge silhouettes (island feel) -->
+  <!-- far ridge -->
+  <path d="M0 640 C 260 520, 420 520, 600 600 C 760 664, 920 560, 1120 600
+           C 1320 640, 1480 560, 1680 610 C 1800 640, 1880 620, 1920 606
+           L 1920 1080 L 0 1080 Z"
+        fill="#0A3A57" opacity="0.55"/>
+  <!-- mid ridge -->
+  <path d="M0 720 C 220 600, 460 620, 660 690 C 860 758, 1040 640, 1240 686
+           C 1440 730, 1620 656, 1920 716 L 1920 1080 L 0 1080 Z"
+        fill="#0C4866" opacity="0.62"/>
+  <!-- near ridge / island surface -->
+  <path d="M0 820 C 260 730, 480 760, 700 812 C 920 866, 1120 748, 1340 800
+           C 1520 842, 1720 760, 1920 804 L 1920 1080 L 0 1080 Z"
+        fill="#0E5471" opacity="0.5"/>
+
+  <!-- calm sea with soft glow -->
+  <rect x="0" y="820" width="1920" height="260" fill="url(#seaGlow)"/>
+
+  <!-- gentle, drifting wave lines over the sea -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M120 900 C 300 876, 460 876, 640 900 C 820 924, 980 924, 1160 900
+             C 1340 876, 1500 876, 1680 900 C 1780 916, 1860 916, 1920 908"
+          stroke="#38C3E8" stroke-width="5" opacity="0.5"/>
+    <path d="M60 940 C 260 916, 420 916, 620 940 C 820 964, 980 964, 1180 940
+             C 1380 916, 1540 916, 1740 940 C 1820 952, 1880 952, 1920 946"
+          stroke="#22D3EE" stroke-width="3" opacity="0.35"/>
+  </g>
+
+  <!-- vignette so center text and cards stay readable -->
+  <rect width="1920" height="1080" fill="url(#sky)" opacity="0"/>
+  <radialGradient id="vignette" cx="0.5" cy="0.44" r="0.72">
+    <stop offset="0" stop-color="#03091A" stop-opacity="0"/>
+    <stop offset="0.72" stop-color="#03091A" stop-opacity="0.10"/>
+    <stop offset="1" stop-color="#03091A" stop-opacity="0.42"/>
+  </radialGradient>
+  <rect width="1920" height="1080" fill="url(#vignette)"/>
+</svg>
