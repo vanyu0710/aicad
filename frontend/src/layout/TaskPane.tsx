@@ -1,12 +1,14 @@
 import ApprovalPanel from "../ApprovalPanel";
 import ClarificationPanel from "../ClarificationPanel";
+import { useEffect, useRef } from "react";
 import { artifactUrl, type Approval, type DesignIntentDetails, type EvidenceItem, type ExecutionReport, type ProcessStep } from "../api";
-import { useAppStore, type TaskTab } from "../store";
+import { useAppStore, type ChatEntry, type TaskTab } from "../store";
 import { useT } from "../i18n";
 
 type Props = {
   busy: boolean;
   chatMessage: string;
+  chat: ChatEntry[];
   events: string[];
   processSteps: ProcessStep[];
   featurePlan: any;
@@ -48,6 +50,7 @@ const tabs: { id: TaskTab; labelKey: string }[] = [
 export default function TaskPane({
   busy,
   chatMessage,
+  chat,
   events,
   processSteps,
   featurePlan,
@@ -72,7 +75,14 @@ export default function TaskPane({
   const t = useT();
   const rightTab = useAppStore((state) => state.ui.rightTab);
   const setUi = useAppStore((state) => state.setUi);
+  const agentRunning = useAppStore((state) => state.agentRunning);
+  const streamEndRef = useRef<HTMLDivElement | null>(null);
   const unanswered = questions.filter((question) => question.required !== false && !question.answer).length;
+
+  useEffect(() => {
+    // 新消息/流式增量到达时贴底（jsdom 无 scrollIntoView，可选调用）
+    streamEndRef.current?.scrollIntoView?.({ block: "end" });
+  }, [chat]);
 
   return (
     <aside className="task-pane-panel" aria-label="AI Task Pane">
@@ -108,13 +118,44 @@ export default function TaskPane({
 
       <div className="task-pane-content">
         {rightTab === "assistant" && (
-          <div className="task-pane-section">
+          <div className="task-pane-section chat-pane">
             {pendingApprovals && pendingApprovals.length > 0 && onResolveApproval && (
               <ApprovalPanel approvals={pendingApprovals} busy={busy} onResolve={onResolveApproval} />
             )}
             {questions.length > 0 && (
               <ClarificationPanel questions={questions} onContinue={onClarificationContinue} disabled={busy} />
             )}
+            <div className="chat-stream">
+              {chat.length === 0 && <p className="empty-note">{t("task.chat.empty")}</p>}
+              {chat.map((entry) => (
+                <div key={entry.id} className={`chat-entry ${entry.role}`}>
+                  {entry.role === "user" ? (
+                    <div className="chat-bubble user">
+                      {entry.hasImage && <span className="chat-image-chip">{t("task.chat.image_attached")}</span>}
+                      <span className="chat-text">{entry.text}</span>
+                    </div>
+                  ) : (
+                    <div className="chat-bubble assistant">
+                      {entry.text && <span className="chat-text">{entry.text}</span>}
+                      {entry.status === "streaming" && <span className="chat-caret" aria-hidden="true" />}
+                      {entry.tools.map((card, index) => (
+                        <div
+                          key={`${card.step}-${index}`}
+                          className={`chat-tool-card${card.success === false ? " failed" : ""}${card.autofix ? " autofix" : ""}`}
+                        >
+                          <span className="chat-tool-op">{card.autofix ? `${card.op} ·fix` : card.op}</span>
+                          {card.argsPreview && <code className="chat-tool-args">{card.argsPreview}</code>}
+                          {(card.summary || card.message) && (
+                            <span className="chat-tool-summary">{card.summary || card.message}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+              <div ref={streamEndRef} />
+            </div>
             <div className="chat-box">
               <div className="chat-row">
                 <span className="chat-prompt" aria-hidden="true">❯</span>
@@ -130,11 +171,11 @@ export default function TaskPane({
                     }
                   }}
                 />
-                <button type="button" onClick={onSendChat} disabled={busy || !chatMessage.trim()}>
+                <button type="button" onClick={onSendChat} disabled={!chatMessage.trim()}>
                   {t("task.chat.send")}
                 </button>
               </div>
-              <p className="hint">{t("task.chat.hint")}</p>
+              <p className="hint">{agentRunning ? t("task.chat.queued_hint") : t("task.chat.hint")}</p>
             </div>
           </div>
         )}

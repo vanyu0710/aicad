@@ -6,6 +6,27 @@ export type ManagerTab = "feature" | "property" | "configuration";
 export type TaskTab = "assistant" | "review" | "process" | "logs" | "plan" | "export";
 export type StartupMode = "always" | "first" | "off";
 
+/** agent 会话流里的工具调用卡片（对应 WS agent_step 事件）。 */
+export type ChatToolCard = {
+  step: number;
+  op: string;
+  argsPreview?: string;
+  success?: boolean;
+  summary?: string;
+  autofix: boolean;
+  message?: string;
+};
+
+/** 会话流消息：user/assistant 气泡，assistant 可携带工具卡并处于流式状态。 */
+export type ChatEntry = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  hasImage: boolean;
+  status: "streaming" | "done";
+  tools: ChatToolCard[];
+};
+
 export const DEFAULT_DESCRIPTION_ZH =
   "一件带孔或带槽的机械零件，请按整体到细节规划。已知尺寸请直接写明，未知尺寸请留给系统提问。";
 export const DEFAULT_DESCRIPTION_EN =
@@ -93,6 +114,7 @@ type AppState = {
   agentSteps: number;
   agentLastOp: string;
   pendingApprovals: Approval[];
+  chat: ChatEntry[];
   setProject: (project: ProjectState | null) => void;
   setDescription: (value: string) => void;
   setImageFile: (file: File | null) => void;
@@ -118,7 +140,19 @@ type AppState = {
   setAgentSteps: (steps: number) => void;
   setAgentLastOp: (op: string) => void;
   setPendingApprovals: (approvals: Approval[]) => void;
+  setChat: (entries: ChatEntry[]) => void;
+  appendChatUser: (text: string, hasImage?: boolean) => void;
+  appendChatAssistantDelta: (chunk: string) => void;
+  attachChatToolCard: (card: ChatToolCard) => void;
+  finalizeChatAssistant: () => void;
 };
+
+let chatEntrySeq = 0;
+
+function nextChatId(role: string) {
+  chatEntrySeq += 1;
+  return `chat-${role}-${Date.now()}-${chatEntrySeq}`;
+}
 
 export function readLanguage(): Lang {
   const stored = localStorage.getItem(LANGUAGE_KEY);
@@ -178,6 +212,7 @@ export const useAppStore = create<AppState>((set) => ({
   agentSteps: 0,
   agentLastOp: "",
   pendingApprovals: [],
+  chat: [],
   ui: {
     leftTab: "feature",
     rightTab: "assistant",
@@ -236,4 +271,43 @@ export const useAppStore = create<AppState>((set) => ({
   setAgentSteps: (agentSteps) => set({ agentSteps }),
   setAgentLastOp: (agentLastOp) => set({ agentLastOp }),
   setPendingApprovals: (pendingApprovals) => set({ pendingApprovals }),
+  setChat: (chat) => set({ chat }),
+  appendChatUser: (text, hasImage = false) =>
+    set((state) => ({
+      chat: [...state.chat, { id: nextChatId("user"), role: "user", text, hasImage, status: "done", tools: [] }],
+    })),
+  appendChatAssistantDelta: (chunk) =>
+    set((state) => {
+      if (!chunk) {
+        return {};
+      }
+      const last = state.chat[state.chat.length - 1];
+      if (last && last.role === "assistant" && last.status === "streaming") {
+        const updated = { ...last, text: last.text + chunk };
+        return { chat: [...state.chat.slice(0, -1), updated] };
+      }
+      return {
+        chat: [...state.chat, { id: nextChatId("assistant"), role: "assistant", text: chunk, hasImage: false, status: "streaming", tools: [] }],
+      };
+    }),
+  attachChatToolCard: (card) =>
+    set((state) => {
+      const last = state.chat[state.chat.length - 1];
+      if (last && last.role === "assistant" && last.status === "streaming") {
+        const updated = { ...last, tools: [...last.tools, card] };
+        return { chat: [...state.chat.slice(0, -1), updated] };
+      }
+      return {
+        chat: [...state.chat, { id: nextChatId("assistant"), role: "assistant", text: "", hasImage: false, status: "streaming", tools: [card] }],
+      };
+    }),
+  finalizeChatAssistant: () =>
+    set((state) => {
+      const last = state.chat[state.chat.length - 1];
+      if (!last || last.status === "done") {
+        return {};
+      }
+      const updated = { ...last, status: "done" as const };
+      return { chat: [...state.chat.slice(0, -1), updated] };
+    }),
 }));

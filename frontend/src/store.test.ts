@@ -110,3 +110,50 @@ describe("app store", () => {
     expect(useAppStore.getState().events).toEqual([]);
   });
 });
+describe("agent chat stream store (v0.10)", () => {
+  beforeEach(() => {
+    useAppStore.setState({ chat: [], agentRunning: false });
+  });
+
+  it("appends user entries with image flag", () => {
+    useAppStore.getState().appendChatUser("做一个法兰", true);
+    const chat = useAppStore.getState().chat;
+    expect(chat).toHaveLength(1);
+    expect(chat[0].role).toBe("user");
+    expect(chat[0].hasImage).toBe(true);
+    expect(chat[0].status).toBe("done");
+  });
+
+  it("streams assistant deltas into one bubble then finalizes", () => {
+    useAppStore.getState().appendChatUser("任务");
+    useAppStore.getState().appendChatAssistantDelta("先建");
+    useAppStore.getState().appendChatAssistantDelta("基准面");
+    let chat = useAppStore.getState().chat;
+    expect(chat).toHaveLength(2);
+    expect(chat[1].text).toBe("先建基准面");
+    expect(chat[1].status).toBe("streaming");
+    useAppStore.getState().attachChatToolCard({ step: 1, op: "create_workplane", autofix: false });
+    useAppStore.getState().finalizeChatAssistant();
+    chat = useAppStore.getState().chat;
+    expect(chat[1].tools).toHaveLength(1);
+    expect(chat[1].tools[0].op).toBe("create_workplane");
+    expect(chat[1].status).toBe("done");
+  });
+
+  it("starts a new assistant bubble for tool-only rounds", () => {
+    useAppStore.getState().attachChatToolCard({ step: 1, op: "extrude", autofix: false });
+    const chat = useAppStore.getState().chat;
+    expect(chat).toHaveLength(1);
+    expect(chat[0].role).toBe("assistant");
+    expect(chat[0].text).toBe("");
+    expect(chat[0].tools[0].op).toBe("extrude");
+  });
+
+  it("replaces the whole stream on session load", () => {
+    useAppStore.getState().appendChatUser("旧的");
+    useAppStore.getState().setChat([
+      { id: "h1", role: "user", text: "历史消息", hasImage: false, status: "done", tools: [] },
+    ]);
+    expect(useAppStore.getState().chat.map((entry) => entry.text)).toEqual(["历史消息"]);
+  });
+});

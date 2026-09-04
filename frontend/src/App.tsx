@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import {
   API_ROOT,
   artifactUrl,
-  chatProject,
   createProject,
   deleteProject,
   deleteKernelFeature,
+  fetchAgentSession,
   fetchKernelFeatureTree,
   fetchProject,
   generateProject,
@@ -17,7 +17,7 @@ import {
   renameProject,
   resolveAgent,
   resolveWsRoot,
-  startAgent,
+  sendAgentMessage,
   stopAgent,
   updateKernelFeature,
   updateProjectSettings,
@@ -102,28 +102,49 @@ export default function App() {
     agentSteps,
     agentLastOp,
     pendingApprovals,
+    chat,
     setAgentRunning,
     setAgentSteps,
     setAgentLastOp,
     setPendingApprovals,
+    setChat,
+    appendChatUser,
+    appendChatAssistantDelta,
+    attachChatToolCard,
+    finalizeChatAssistant,
   } = useAppStore();
   const bootRef = useRef(false);
   const language = useAppStore((state) => state.language);
 
-  const handleAgentStart = async () => {
-    if (!project?.project_id || !description.trim()) {
+  /** 统一发送入口：空闲=开新任务；运行中=插话。首条消息携带草图图片。 */
+  const handleSendAgentMessage = async (text: string) => {
+    if (!project?.project_id || !text.trim()) {
       return;
     }
+    const attachImage = chat.length === 0 && imageFile ? await fileToDataUrl(imageFile) : null;
     setError("");
+    appendChatUser(text.trim(), Boolean(attachImage));
+    setAgentRunning(true);
+    setAgentSteps(0);
+    setAgentLastOp("");
+    setPendingApprovals([]);
     try {
-      await startAgent(project.project_id, { description, language });
-      setAgentRunning(true);
-      setAgentSteps(0);
-      setAgentLastOp("");
-      setPendingApprovals([]);
+      await sendAgentMessage(project.project_id, {
+        text: text.trim(),
+        image_data_url: attachImage,
+        language,
+      });
     } catch (err) {
+      setAgentRunning(false);
       setError(t("app.agent.start_failed", { err: String(err) }));
     }
+  };
+
+  const handleAgentStart = async () => {
+    if (!description.trim()) {
+      return;
+    }
+    await handleSendAgentMessage(description);
   };
 
   const handleAgentStop = async () => {
@@ -239,6 +260,7 @@ export default function App() {
       setSelectedFeatureId("");
       clearEvents();
       setProcessSteps([]);
+      setChat([]);
       enterWorkspace();
       setBackendState("connected");
       await refreshProjects();
@@ -265,6 +287,20 @@ export default function App() {
       enterWorkspace();
       setBackendState("connected");
       await refreshProjects();
+      // 恢复该项目的 agent 会话历史（失败静默——空会话即可）
+      try {
+        const sessionView = await fetchAgentSession(projectId);
+        setChat(sessionView.messages.map((message, index) => ({
+          id: `chat-history-${index}`,
+          role: message.role,
+          text: message.text,
+          hasImage: message.has_image,
+          status: "done" as const,
+          tools: [],
+        })));
+      } catch {
+        setChat([]);
+      }
     } catch (err) {
       setError(t("app.open.failed", { err: String(err) }));
     } finally {
@@ -377,9 +413,24 @@ export default function App() {
       if (typeof event.type === "string" && event.type.startsWith("process_step_") && event.payload?.process_step) {
         addProcessStep(event.payload.process_step as ProcessStep);
       }
+      if (event.type === "agent_text_delta") {
+        appendChatAssistantDelta(String(event.message ?? event.payload?.text ?? ""));
+      }
       if (event.type === "agent_step") {
         setAgentSteps(Number(event.payload?.step || 0));
         setAgentLastOp(String(event.payload?.op || event.message || ""));
+        attachChatToolCard({
+          step: Number(event.payload?.step || 0),
+          op: String(event.payload?.op || event.message || ""),
+          argsPreview: event.payload?.args_preview ? String(event.payload.args_preview) : undefined,
+          success: typeof event.payload?.success === "boolean" ? event.payload.success : undefined,
+          summary: event.payload?.summary ? String(event.payload.summary) : undefined,
+          autofix: Boolean(event.payload?.autofix),
+          message: event.payload?.message ? String(event.payload.message) : undefined,
+        });
+      }
+      if (event.type === "agent_queued") {
+        addEvents([`${event.stage}: ${event.message}`]);
       }
       if (event.type === "approval_required") {
         const approval: Approval = {
@@ -398,6 +449,7 @@ export default function App() {
       }
       if (event.type === "agent_done") {
         setAgentRunning(false);
+        finalizeChatAssistant();
         void (async () => {
           try {
             const next = await fetchProject(project.project_id);
@@ -554,18 +606,10 @@ export default function App() {
     if (!project || !chatMessage.trim()) {
       return;
     }
-    setBusy(true);
+    const text = chatMessage.trim();
+    setChatMessage("");
     setError("");
-    try {
-      const next = await chatProject(project.project_id, chatMessage.trim(), language);
-      replaceProject(next);
-      setChatMessage("");
-      await refreshProjects();
-    } catch (err) {
-      setError(t("app.chat.failed", { err: String(err) }));
-    } finally {
-      setBusy(false);
-    }
+    await handleSendAgentMessage(text);
   };
 
   const onSaveFeature = async (payload: any) => {
@@ -862,6 +906,7 @@ export default function App() {
             <TaskPane
               busy={busy}
               chatMessage={chatMessage}
+              chat={chat}
               events={events}
               processSteps={processSteps}
               featurePlan={project.current.feature_plan}

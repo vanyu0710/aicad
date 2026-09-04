@@ -355,6 +355,39 @@ export async function resolveAgent(
   return parseResponse<{ ok: boolean; resolved: { action: string; args?: Record<string, unknown> } }>(response);
 }
 
+export type AgentSessionMessage = {
+  role: "user" | "assistant";
+  text: string;
+  has_image: boolean;
+};
+
+export type AgentSessionView = {
+  status: "idle" | "running" | "waiting_approval";
+  messages: AgentSessionMessage[];
+};
+
+export async function sendAgentMessage(
+  projectId: string,
+  payload: { text: string; image_data_url?: string | null; language: string; max_steps?: number },
+) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/agent/message`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseResponse<{ ok: boolean; started?: boolean; queued?: boolean; project_id: string }>(response);
+}
+
+export async function fetchAgentSession(projectId: string) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/agent/session`);
+  return parseResponse<AgentSessionView>(response);
+}
+
+export async function clearAgentSession(projectId: string) {
+  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/agent/session/clear`, { method: "POST" });
+  return parseResponse<{ ok: boolean; cleared: boolean }>(response);
+}
+
 export async function fetchKernelFeatureTree(projectId: string) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}/kernel/feature_tree`);
   return parseResponse<KernelFeatureTree>(response);

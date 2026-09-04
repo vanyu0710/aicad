@@ -349,6 +349,122 @@
   gap: 12px;
 }
 
+/* ===== Agent 会话流（v0.10 对话式 harness）===== */
+
+.chat-pane {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+}
+
+.chat-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.chat-entry {
+  display: flex;
+}
+
+.chat-entry.user {
+  justify-content: flex-end;
+}
+
+.chat-entry.assistant {
+  justify-content: flex-start;
+}
+
+.chat-bubble {
+  display: grid;
+  gap: 6px;
+  max-width: 92%;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(10, 22, 42, 0.86);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.chat-bubble.user {
+  border-color: rgba(56, 195, 232, 0.4);
+  background: rgba(24, 58, 92, 0.72);
+}
+
+.chat-bubble.assistant {
+  border-color: rgba(120, 180, 215, 0.22);
+  background: rgba(8, 20, 38, 0.92);
+}
+
+.chat-image-chip {
+  justify-self: start;
+  padding: 1px 8px;
+  border: 1px solid rgba(56, 195, 232, 0.4);
+  border-radius: 999px;
+  color: var(--jade);
+  font-size: 11px;
+}
+
+.chat-caret {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--jade);
+  animation: chat-caret-blink 0.9s steps(1) infinite;
+}
+
+@keyframes chat-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.chat-tool-card {
+  display: grid;
+  gap: 3px;
+  padding: 6px 9px;
+  border: 1px solid rgba(120, 180, 215, 0.18);
+  border-left: 3px solid var(--jade);
+  border-radius: 6px;
+  background: rgba(6, 16, 32, 0.85);
+  font-size: 11.5px;
+}
+
+.chat-tool-card.failed {
+  border-left-color: var(--seal);
+}
+
+.chat-tool-card.autofix {
+  border-left-color: #f0b45e;
+}
+
+.chat-tool-op {
+  color: var(--jade);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-weight: 600;
+}
+
+.chat-tool-card.failed .chat-tool-op {
+  color: var(--seal);
+}
+
+.chat-tool-args {
+  color: var(--ink-soft);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10.5px;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.chat-tool-summary {
+  color: var(--ink-muted);
+}
+
 .chat-box {
   display: grid;
   gap: 8px;

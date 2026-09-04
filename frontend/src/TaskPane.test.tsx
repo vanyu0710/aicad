@@ -25,6 +25,7 @@ function renderPane() {
     <TaskPane
       busy={false}
       chatMessage=""
+      chat={[]}
       events={["worker ok"]}
       processSteps={[]}
       featurePlan={null}
@@ -56,6 +57,7 @@ describe("TaskPane", () => {
       <TaskPane
         busy={false}
         chatMessage=""
+      chat={[]}
         events={[]}
         processSteps={[]}
         featurePlan={null}
@@ -92,6 +94,7 @@ describe("TaskPane", () => {
       <TaskPane
         busy={false}
         chatMessage=""
+      chat={[]}
         events={[]}
         processSteps={[
           {
@@ -136,6 +139,78 @@ describe("TaskPane", () => {
   });
 });
 
+describe("TaskPane v0.10 agent chat stream", () => {
+  const chatStream = [
+    { id: "c1", role: "user" as const, text: "做一个法兰，中心孔 30mm", hasImage: true, status: "done" as const, tools: [] },
+    {
+      id: "c2",
+      role: "assistant" as const,
+      text: "好的，先建基准面。",
+      hasImage: false,
+      status: "streaming" as const,
+      tools: [
+        { step: 1, op: "create_workplane", argsPreview: '{"name":"base"}', success: true, summary: "", autofix: false },
+        { step: 2, op: "extrude", argsPreview: "{}", success: false, summary: "depth 必须大于 0", autofix: true },
+      ],
+    },
+  ];
+
+  it("renders user/assistant bubbles with tool cards", () => {
+    render(
+      <TaskPane
+        busy={false}
+        chatMessage=""
+        chat={chatStream}
+        events={[]}
+        processSteps={[]}
+        featurePlan={null}
+        questions={[]}
+        reportMarkdown=""
+        review={undefined}
+        unresolved={[]}
+        runId=""
+        engineLabel="Build123d Worker（受控执行）"
+        onChatMessageChange={vi.fn()}
+        onClarificationContinue={vi.fn()}
+        onSendChat={vi.fn()}
+        onSelectProcessStep={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("做一个法兰，中心孔 30mm")).toBeInTheDocument();
+    expect(screen.getByText(/先建基准面/)).toBeInTheDocument();
+    expect(screen.getByText("create_workplane")).toBeInTheDocument();
+    expect(screen.getByText('{"name":"base"}')).toBeInTheDocument();
+    expect(screen.getByText("extrude ·fix")).toBeInTheDocument();
+    expect(screen.getByText("已附草图")).toBeInTheDocument();
+    expect(document.querySelector(".chat-caret")).not.toBeNull();
+  });
+
+  it("shows the queued hint while the agent is running", () => {
+    useAppStore.setState({ agentRunning: true });
+    render(
+      <TaskPane
+        busy={false}
+        chatMessage=""
+        chat={[]}
+        events={[]}
+        processSteps={[]}
+        featurePlan={null}
+        questions={[]}
+        reportMarkdown=""
+        review={undefined}
+        unresolved={[]}
+        runId=""
+        engineLabel="Build123d Worker（受控执行）"
+        onChatMessageChange={vi.fn()}
+        onClarificationContinue={vi.fn()}
+        onSendChat={vi.fn()}
+        onSelectProcessStep={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/将在当前步骤结束后生效/)).toBeInTheDocument();
+  });
+});
+
 describe("TaskPane v0.6 report", () => {
   it("shows four-dimensional execution report and evidence", async () => {
     const user = userEvent.setup();
@@ -144,6 +219,7 @@ describe("TaskPane v0.6 report", () => {
       <TaskPane
         busy={false}
         chatMessage=""
+      chat={[]}
         events={[]}
         processSteps={[]}
         featurePlan={null}
