@@ -189,7 +189,8 @@ class AgentLoop:
         self.chat_with_tools = chat_with_tools
         self.protocol = protocol
         self.emit = emit
-        self.run_dir = Path(run_dir)
+        # 绝对路径：kernel 子进程 cwd 在内核仓，相对路径会在那边解析失败
+        self.run_dir = Path(run_dir).resolve()
         self.capabilities = capabilities or worker.capabilities()
         self.tools = [*build_llm_tools(self.capabilities), _ask_user_tool()]
         self.approvals = approvals

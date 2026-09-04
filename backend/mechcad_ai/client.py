@@ -469,7 +469,13 @@ def chat_completion_with_tools(
 
 
 def _sse_data_lines(response) -> Iterator[str]:
-    """逐行产出 SSE ``data:`` 载荷（跳过空行/event 行/注释）。"""
+    """逐行产出 SSE ``data:`` 载荷（跳过空行/event 行/注释）。
+
+    SSE 规范恒为 UTF-8；provider 的 Content-Type 常缺 charset，requests 会
+    退回 ISO-8859-1 解码导致中文乱码，这里强制按 UTF-8 解码。
+    """
+    if getattr(response, "encoding", None) not in ("utf-8", "utf8"):
+        response.encoding = "utf-8"
     for raw in response.iter_lines(decode_unicode=True):
         if not raw:
             continue
