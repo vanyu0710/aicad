@@ -435,7 +435,7 @@
 .viewport-breadcrumb {
   position: absolute;
   z-index: 3;
-  top: 10px;
+  top: 52px;
   left: 50%;
   max-width: 46%;
   overflow: hidden;
