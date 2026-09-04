@@ -42,7 +42,7 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel }: Pr
     const width = Math.max(1, mount.clientWidth);
     const height = Math.max(1, mount.clientHeight);
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf6f4ee);
+    scene.background = new THREE.Color(0x0a1c36);
 
     const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 4000);
     camera.position.set(110, 90, 110);
@@ -51,7 +51,7 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel }: Pr
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(window.devicePixelRatio || 1);
-    renderer.setClearColor(0xf6f4ee, 1);
+    renderer.setClearColor(0x0a1c36, 1);
     mount.innerHTML = "";
     mount.appendChild(renderer.domElement);
 
@@ -59,19 +59,19 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel }: Pr
     controls.enableDamping = true;
     controlsRef.current = controls;
 
-    const ambient = new THREE.AmbientLight(0xffffff, 1.5);
+    const ambient = new THREE.AmbientLight(0xdce6f0, 1.4);
     scene.add(ambient);
 
-    const dir1 = new THREE.DirectionalLight(0xffffff, 1.15);
+    const dir1 = new THREE.DirectionalLight(0xbfe6f5, 1.15);
     dir1.position.set(90, 140, 90);
     scene.add(dir1);
 
-    const dir2 = new THREE.DirectionalLight(0xf3efe5, 0.7);
+    const dir2 = new THREE.DirectionalLight(0x38c3e8, 0.5);
     dir2.position.set(-80, 60, -60);
     scene.add(dir2);
 
-    const grid = new THREE.GridHelper(220, 22, 0x7f8f88, 0xb7b1a7);
-    grid.material.opacity = 0.2;
+    const grid = new THREE.GridHelper(220, 22, 0x2c6f8c, 0x1c4a66);
+    grid.material.opacity = 0.35;
     grid.material.transparent = true;
     scene.add(grid);
 

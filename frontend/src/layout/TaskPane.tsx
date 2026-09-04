@@ -117,7 +117,9 @@ export default function TaskPane({
             )}
             <div className="chat-box">
               <div className="chat-row">
+                <span className="chat-prompt" aria-hidden="true">❯</span>
                 <input
+                  className="chat-input"
                   value={chatMessage}
                   onChange={(event) => onChatMessageChange(event.target.value)}
                   placeholder={t("task.chat.placeholder")}
