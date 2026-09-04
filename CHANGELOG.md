@@ -14,7 +14,10 @@
   流式光标 + 自动贴底；生成按钮/Ctrl+G/聊天框全部收敛为同一条发送路径；legacy `/chat` 从 UI 摘除（API 保留）。
 - **vision 进 agent**：任务消息支持草图图片（OpenAI `image_url` blocks；Anthropic 分支请求时转换为
   `source.base64`）。UI 在会话首条消息自动携带左侧上传的草图。
-- 测试：后端 341/341（+17：会话流、插话注入、审批 id、SSE 双协议、端点）、前端 70/70（+6：会话流渲染、store 动作）。
+- **可视化快照**：几何变化时自动调 kernel `render`（iso 证据图，480px）落盘
+  `snapshot_s{步号}.png`，WS `agent_snapshot` 推送 URL，会话流内嵌缩略图（点击看原图）；
+  base64 不进 LLM 上下文。`/api/artifacts/{run}/snapshot_s{n}` 新 artifact 种类。
+- 测试：后端 330/330（+18：会话流、插话注入、审批 id、SSE 双协议、端点、快照）、前端 72/72（+8：会话流渲染、store 动作、快照）。
 
 ## v0.9.0-alpha - Harness 主链路化 + P2 人机协作（弱化 FeaturePlanV3）
 

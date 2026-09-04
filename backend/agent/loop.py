@@ -17,6 +17,7 @@ loop 调 worker RPC 执行，把精简后的 StepResult 作为工具结果回喂
 
 from __future__ import annotations
 
+import base64
 import inspect
 import json
 import threading
@@ -426,6 +427,35 @@ class AgentLoop:
                 })
         except Exception as exc:  # noqa: BLE001 —— 网格导出失败不阻断建模
             self.logs.append(f"STL 导出失败: {type(exc).__name__}: {exc}")
+        self._render_snapshot(result)
+
+    def _render_snapshot(self, result: AgentLoopResult) -> None:
+        """几何变化后的可视化快照：kernel render → PNG 落盘 → WS 发 URL。
+
+        base64 不回喂 LLM（会撑爆上下文），只落盘并经 ``agent_snapshot`` 事件
+        给前端会话流内嵌展示。
+        """
+        try:
+            data = self.worker.render_snapshot(size=480)
+        except Exception as exc:  # noqa: BLE001 —— 渲染失败不阻断建模
+            self.logs.append(f"快照渲染失败: {type(exc).__name__}: {exc}")
+            return
+        b64 = data.get("render_base64")
+        if not b64:
+            return
+        try:
+            step_no = max(self.step_count, 1)
+            path = self.run_dir / f"snapshot_s{step_no}.png"
+            path.write_bytes(base64.b64decode(b64))
+        except Exception as exc:  # noqa: BLE001
+            self.logs.append(f"快照落盘失败: {type(exc).__name__}: {exc}")
+            return
+        result.artifacts[f"snapshot_s{step_no}"] = str(path)
+        self.emit("agent_snapshot", "几何快照已更新", {
+            "step": step_no,
+            "url": f"/api/artifacts/{self.run_dir.name}/snapshot_s{step_no}",
+            "path": str(path),
+        })
 
     # ---------------------------------------------------------------- finish
     def _finalize(self, result: AgentLoopResult) -> None:

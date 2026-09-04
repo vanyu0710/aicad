@@ -111,6 +111,7 @@ export default function App() {
     appendChatUser,
     appendChatAssistantDelta,
     attachChatToolCard,
+    attachChatSnapshot,
     finalizeChatAssistant,
   } = useAppStore();
   const bootRef = useRef(false);
@@ -297,6 +298,7 @@ export default function App() {
           hasImage: message.has_image,
           status: "done" as const,
           tools: [],
+          snapshots: [],
         })));
       } catch {
         setChat([]);
@@ -431,6 +433,12 @@ export default function App() {
       }
       if (event.type === "agent_queued") {
         addEvents([`${event.stage}: ${event.message}`]);
+      }
+      if (event.type === "agent_snapshot") {
+        const url = String(event.payload?.url || "");
+        if (url) {
+          attachChatSnapshot(url);
+        }
       }
       if (event.type === "approval_required") {
         const approval: Approval = {

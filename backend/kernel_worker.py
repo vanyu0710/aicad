@@ -201,6 +201,15 @@ class KernelWorkerClient:
     def export_step(self, path: str, timeout: float | None = None) -> dict:
         return self.request_ok("export", {"path": path, "format": "step"}, timeout=timeout)
 
+    def render_snapshot(self, *, views: list[str] | None = None, size: int = 480, timeout: float | None = None) -> dict:
+        """渲染当前几何的 PNG 证据图。``render_base64`` 只随 include_render=True 下发，
+        结果不进参数化历史；调用方负责解码落盘，base64 不回喂 LLM。"""
+        return self.request_ok("execute", {
+            "op": "render",
+            "args": {"views": views or ["iso"], "size": size, "quality": "evidence"},
+            "include_render": True,
+        }, timeout=timeout)
+
     # -------------------------------------------------------------- internal
     def _readline(self) -> str:
         """读一行响应；读过程中断/管道损坏统一转 WORKER_DEAD。"""

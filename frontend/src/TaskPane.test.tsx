@@ -141,7 +141,7 @@ describe("TaskPane", () => {
 
 describe("TaskPane v0.10 agent chat stream", () => {
   const chatStream = [
-    { id: "c1", role: "user" as const, text: "做一个法兰，中心孔 30mm", hasImage: true, status: "done" as const, tools: [] },
+    { id: "c1", role: "user" as const, text: "做一个法兰，中心孔 30mm", hasImage: true, status: "done" as const, tools: [], snapshots: [] },
     {
       id: "c2",
       role: "assistant" as const,
@@ -152,6 +152,7 @@ describe("TaskPane v0.10 agent chat stream", () => {
         { step: 1, op: "create_workplane", argsPreview: '{"name":"base"}', success: true, summary: "", autofix: false },
         { step: 2, op: "extrude", argsPreview: "{}", success: false, summary: "depth 必须大于 0", autofix: true },
       ],
+      snapshots: ["/api/artifacts/run9/snapshot_s2"],
     },
   ];
 
@@ -183,6 +184,7 @@ describe("TaskPane v0.10 agent chat stream", () => {
     expect(screen.getByText("extrude ·fix")).toBeInTheDocument();
     expect(screen.getByText("已附草图")).toBeInTheDocument();
     expect(document.querySelector(".chat-caret")).not.toBeNull();
+    expect(document.querySelector(".chat-snapshot")).not.toBeNull();
   });
 
   it("shows the queued hint while the agent is running", () => {

@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 OperationMode = Literal["strict", "smart"]
 SmartFillPolicy = Literal["suggest_only", "limited_fill", "aggressive_fill", "full_autonomous"]
 FeatureOperation = Literal["base", "add", "remove", "modify", "pattern"]
-StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error", "process_step_started", "process_step_done", "process_step_failed", "process_step_blocked", "agent_step", "agent_text_delta", "agent_queued", "agent_done", "approval_required"]
+StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error", "process_step_started", "process_step_done", "process_step_failed", "process_step_blocked", "agent_step", "agent_text_delta", "agent_queued", "agent_snapshot", "agent_done", "approval_required"]
 
 
 def now_iso() -> str:

@@ -465,6 +465,20 @@
   color: var(--ink-muted);
 }
 
+.chat-snapshot-link {
+  display: block;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(120, 180, 215, 0.25);
+}
+
+.chat-snapshot {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #0a1626;
+}
+
 .chat-box {
   display: grid;
   gap: 8px;

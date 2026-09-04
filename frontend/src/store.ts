@@ -25,6 +25,8 @@ export type ChatEntry = {
   hasImage: boolean;
   status: "streaming" | "done";
   tools: ChatToolCard[];
+  /** 几何可视化快照（/api/artifacts/... 相对 URL），按到达顺序内嵌展示。 */
+  snapshots: string[];
 };
 
 export const DEFAULT_DESCRIPTION_ZH =
@@ -144,6 +146,7 @@ type AppState = {
   appendChatUser: (text: string, hasImage?: boolean) => void;
   appendChatAssistantDelta: (chunk: string) => void;
   attachChatToolCard: (card: ChatToolCard) => void;
+  attachChatSnapshot: (url: string) => void;
   finalizeChatAssistant: () => void;
 };
 
@@ -274,7 +277,7 @@ export const useAppStore = create<AppState>((set) => ({
   setChat: (chat) => set({ chat }),
   appendChatUser: (text, hasImage = false) =>
     set((state) => ({
-      chat: [...state.chat, { id: nextChatId("user"), role: "user", text, hasImage, status: "done", tools: [] }],
+      chat: [...state.chat, { id: nextChatId("user"), role: "user", text, hasImage, status: "done", tools: [], snapshots: [] }],
     })),
   appendChatAssistantDelta: (chunk) =>
     set((state) => {
@@ -287,7 +290,7 @@ export const useAppStore = create<AppState>((set) => ({
         return { chat: [...state.chat.slice(0, -1), updated] };
       }
       return {
-        chat: [...state.chat, { id: nextChatId("assistant"), role: "assistant", text: chunk, hasImage: false, status: "streaming", tools: [] }],
+        chat: [...state.chat, { id: nextChatId("assistant"), role: "assistant", text: chunk, hasImage: false, status: "streaming", tools: [], snapshots: [] }],
       };
     }),
   attachChatToolCard: (card) =>
@@ -298,7 +301,21 @@ export const useAppStore = create<AppState>((set) => ({
         return { chat: [...state.chat.slice(0, -1), updated] };
       }
       return {
-        chat: [...state.chat, { id: nextChatId("assistant"), role: "assistant", text: "", hasImage: false, status: "streaming", tools: [card] }],
+        chat: [...state.chat, { id: nextChatId("assistant"), role: "assistant", text: "", hasImage: false, status: "streaming", tools: [card], snapshots: [] }],
+      };
+    }),
+  attachChatSnapshot: (url) =>
+    set((state) => {
+      if (!url) {
+        return {};
+      }
+      const last = state.chat[state.chat.length - 1];
+      if (last && last.role === "assistant" && last.status === "streaming") {
+        const updated = { ...last, snapshots: [...last.snapshots, url] };
+        return { chat: [...state.chat.slice(0, -1), updated] };
+      }
+      return {
+        chat: [...state.chat, { id: nextChatId("assistant"), role: "assistant", text: "", hasImage: false, status: "streaming", tools: [], snapshots: [url] }],
       };
     }),
   finalizeChatAssistant: () =>

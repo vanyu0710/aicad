@@ -1,7 +1,7 @@
 import ApprovalPanel from "../ApprovalPanel";
 import ClarificationPanel from "../ClarificationPanel";
 import { useEffect, useRef } from "react";
-import { artifactUrl, type Approval, type DesignIntentDetails, type EvidenceItem, type ExecutionReport, type ProcessStep } from "../api";
+import { API_ROOT as apiRoot, artifactUrl, type Approval, type DesignIntentDetails, type EvidenceItem, type ExecutionReport, type ProcessStep } from "../api";
 import { useAppStore, type ChatEntry, type TaskTab } from "../store";
 import { useT } from "../i18n";
 
@@ -149,6 +149,11 @@ export default function TaskPane({
                             <span className="chat-tool-summary">{card.summary || card.message}</span>
                           )}
                         </div>
+                      ))}
+                      {entry.snapshots.map((url, index) => (
+                        <a key={`snap-${index}`} className="chat-snapshot-link" href={apiRoot + url} target="_blank" rel="noreferrer">
+                          <img className="chat-snapshot" src={apiRoot + url} alt={t("task.chat.snapshot")} loading="lazy" />
+                        </a>
                       ))}
                     </div>
                   )}

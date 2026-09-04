@@ -152,8 +152,31 @@ describe("agent chat stream store (v0.10)", () => {
   it("replaces the whole stream on session load", () => {
     useAppStore.getState().appendChatUser("旧的");
     useAppStore.getState().setChat([
-      { id: "h1", role: "user", text: "历史消息", hasImage: false, status: "done", tools: [] },
+      { id: "h1", role: "user", text: "历史消息", hasImage: false, status: "done", tools: [], snapshots: [] },
     ]);
     expect(useAppStore.getState().chat.map((entry) => entry.text)).toEqual(["历史消息"]);
+  });
+});
+
+describe("agent chat snapshots (v0.10)", () => {
+  beforeEach(() => {
+    useAppStore.setState({ chat: [] });
+  });
+
+  it("attaches snapshot urls to the streaming assistant entry", () => {
+    useAppStore.getState().appendChatAssistantDelta("拉伸完成");
+    useAppStore.getState().attachChatSnapshot("/api/artifacts/run1/snapshot_s3");
+    const chat = useAppStore.getState().chat;
+    expect(chat).toHaveLength(1);
+    expect(chat[0].snapshots).toEqual(["/api/artifacts/run1/snapshot_s3"]);
+  });
+
+  it("creates an assistant entry for snapshots after user turn", () => {
+    useAppStore.getState().appendChatUser("再改一下");
+    useAppStore.getState().attachChatSnapshot("/api/artifacts/run1/snapshot_s5");
+    const chat = useAppStore.getState().chat;
+    expect(chat).toHaveLength(2);
+    expect(chat[1].role).toBe("assistant");
+    expect(chat[1].snapshots).toHaveLength(1);
   });
 });
