@@ -17,6 +17,7 @@ loop 调 worker RPC 执行，把精简后的 StepResult 作为工具结果回喂
 
 from __future__ import annotations
 
+import inspect
 import json
 import threading
 from dataclasses import dataclass, field
@@ -219,6 +220,14 @@ class AgentLoop:
         self.step_count = 0
         self._round_no = 0
         self._last_volume: float | None = None
+        # 旧注入（测试 fake 只接受 (messages, tools)）不支持增量回调时自动降级
+        try:
+            params = inspect.signature(chat_with_tools).parameters
+            self._chat_supports_delta = "on_text_delta" in params or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+            )
+        except (TypeError, ValueError):
+            self._chat_supports_delta = False
 
     # ------------------------------------------------------------------ main
     def run(self) -> AgentLoopResult:
@@ -266,11 +275,21 @@ class AgentLoop:
                 return
             self._absorb_pending()
             self._round_no += 1
-            round = self.chat_with_tools(self.messages, self.tools)
+            streamed = {"active": False}
+
+            def on_delta(chunk: str) -> None:
+                streamed["active"] = True
+                self.emit("agent_text_delta", chunk, {"round": self._round_no})
+
+            if self._chat_supports_delta:
+                round = self.chat_with_tools(self.messages, self.tools, on_text_delta=on_delta)
+            else:
+                round = self.chat_with_tools(self.messages, self.tools)
             if round.text:
                 self.logs.append(f"模型输出: {round.text[:500]}")
-                # 轮次文字进会话流（Commit B 换成真流式分片；payload 结构一致）
-                self.emit("agent_text_delta", round.text, {"round": self._round_no, "done": not round.tool_calls})
+                if not streamed["active"]:
+                    # 非流式：整轮文字一次性播出（流式时已逐段回调，不重复）
+                    self.emit("agent_text_delta", round.text, {"round": self._round_no, "done": not round.tool_calls})
             if not round.tool_calls:
                 result.final_text = round.text
                 result.ok = True

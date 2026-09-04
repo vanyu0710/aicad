@@ -14,7 +14,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, Iterator
 
 import requests
 
@@ -432,11 +432,16 @@ def chat_completion_with_tools(
     temperature: float = 0.1,
     timeout: int | None = None,
     max_retries: int | None = None,
+    on_text_delta: Callable[[str], None] | None = None,
 ) -> ToolCallRound:
     """Send a chat request with native tool definitions and return the parsed round.
 
     ``tools`` uses the OpenAI wire shape ``{"type": "function", "function": {...}}``;
     the Anthropic branch converts it to ``input_schema`` form automatically.
+
+    ``on_text_delta`` 传入时走 SSE 流式路径：模型文字增量逐段回调（打字机），
+    返回值仍是聚合后的同一个 ``ToolCallRound``，循环逻辑不变。流开始后出错
+    不再重试（避免重复回调），仅首块到达前的失败可重试。
     """
     config = resolve_role_config(settings, role)
     if not config["api_key"]:
@@ -447,7 +452,11 @@ def chat_completion_with_tools(
     for attempt in range(max_retries + 1):
         try:
             if config["protocol"] == "anthropic":
+                if on_text_delta is not None:
+                    return _anthropic_tool_round_stream(config, messages, tools, tool_choice, max_tokens, temperature, timeout, on_text_delta)
                 return _anthropic_tool_round(config, messages, tools, tool_choice, max_tokens, temperature, timeout)
+            if on_text_delta is not None:
+                return _openai_tool_round_stream(config, messages, tools, tool_choice, max_tokens, temperature, timeout, on_text_delta)
             return _openai_tool_round(config, messages, tools, tool_choice, max_tokens, temperature, timeout)
         except ApiCallError as exc:
             last_error = exc
@@ -457,6 +466,213 @@ def chat_completion_with_tools(
                 raise ApiCallError(f"{role} tool call failed after {max_retries + 1} attempts: {last_error}", retryable=False) from exc
             time.sleep(0.5 * (attempt + 1))
     raise ApiCallError(f"{role} tool call failed after {max_retries + 1} attempts: {last_error}", retryable=False)
+
+
+def _sse_data_lines(response) -> Iterator[str]:
+    """逐行产出 SSE ``data:`` 载荷（跳过空行/event 行/注释）。"""
+    for raw in response.iter_lines(decode_unicode=True):
+        if not raw:
+            continue
+        line = raw.strip()
+        if line.startswith("data:"):
+            payload = line[5:].strip()
+            if payload:
+                yield payload
+
+
+def _parse_tool_args_json(raw: str) -> dict[str, Any]:
+    if not raw.strip():
+        return {}
+    try:
+        args = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return args if isinstance(args, dict) else {}
+
+
+def _openai_tool_round_stream(
+    config: dict[str, str],
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    tool_choice: str,
+    max_tokens: int,
+    temperature: float,
+    timeout: int,
+    on_text_delta,
+) -> ToolCallRound:
+    payload: dict[str, Any] = {
+        "model": config["model"],
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": True,
+        **_openai_tool_payload(tools, tool_choice),
+    }
+    headers = {"Authorization": f"Bearer {config['api_key']}", "Content-Type": "application/json"}
+    urls = [f"{config['base_url']}/chat/completions"]
+    if not config["base_url"].rstrip("/").endswith("/v1"):
+        urls.append(f"{config['base_url']}/v1/chat/completions")
+
+    last_error: Exception | None = None
+    for url in urls:
+        emitted = False
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=timeout, stream=True)
+        except requests.RequestException as exc:
+            last_error = ApiCallError(f"model call failed: {exc}", retryable=True)
+            continue
+        if not response.ok:
+            retryable = response.status_code in {429, 500, 502, 503, 504}
+            last_error = ApiCallError(f"HTTP {response.status_code} from {url}: {response.text[:500]}", retryable=retryable)
+            continue
+        try:
+            text_parts: list[str] = []
+            tool_acc: dict[int, dict[str, Any]] = {}
+            finish_reason: str | None = None
+            for data in _sse_data_lines(response):
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                choice = choices[0]
+                finish_reason = choice.get("finish_reason") or finish_reason
+                delta = choice.get("delta") or {}
+                content = delta.get("content")
+                if content:
+                    text_parts.append(str(content))
+                    emitted = True
+                    on_text_delta(str(content))
+                for raw_call in delta.get("tool_calls") or []:
+                    index = int(raw_call.get("index") or 0)
+                    acc = tool_acc.setdefault(index, {"id": None, "name": "", "arguments": ""})
+                    if raw_call.get("id"):
+                        acc["id"] = str(raw_call["id"])
+                    function = raw_call.get("function") or {}
+                    if function.get("name"):
+                        acc["name"] = str(function["name"])
+                    if function.get("arguments"):
+                        acc["arguments"] += str(function["arguments"])
+        except requests.RequestException as exc:
+            # 流中断：已经回调过就不重试（前端会看到半截），否则允许换 URL 重试
+            raise ApiCallError(f"stream interrupted: {exc}", retryable=not emitted) from exc
+        tool_calls: list[ToolCall] = []
+        for index in sorted(tool_acc):
+            acc = tool_acc[index]
+            tool_calls.append(ToolCall(
+                id=acc["id"] or f"call_{index}",
+                name=acc["name"],
+                arguments=_parse_tool_args_json(acc["arguments"]),
+            ))
+        text = "".join(text_parts)
+        raw_message: dict[str, Any] = {"role": "assistant", "content": text or None}
+        if tool_calls:
+            raw_message["tool_calls"] = [
+                {"id": call.id, "type": "function",
+                 "function": {"name": call.name, "arguments": json.dumps(call.arguments, ensure_ascii=False)}}
+                for call in tool_calls
+            ]
+        return ToolCallRound(text=text, tool_calls=tool_calls, raw_message=raw_message, finish_reason=finish_reason)
+    if last_error:
+        raise last_error
+    raise ApiCallError("model call failed: no response", retryable=True)
+
+
+def _anthropic_tool_round_stream(
+    config: dict[str, str],
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    tool_choice: str,
+    max_tokens: int,
+    temperature: float,
+    timeout: int,
+    on_text_delta,
+) -> ToolCallRound:
+    system_parts, chat_messages = _anthropic_chat_messages(messages)
+    payload: dict[str, Any] = {
+        "model": config["model"],
+        "messages": chat_messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": True,
+        **_anthropic_tool_payload(tools, tool_choice),
+    }
+    if system_parts:
+        payload["system"] = "\n\n".join(system_parts)
+    url = f"{config['base_url']}/v1/messages"
+    headers = {
+        "X-Api-Key": config["api_key"],
+        "Authorization": f"Bearer {config['api_key']}",
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=timeout, stream=True)
+    except requests.RequestException as exc:
+        raise ApiCallError(f"model call failed: {exc}", retryable=True) from exc
+    if not response.ok:
+        retryable = response.status_code in {429, 500, 502, 503, 504}
+        raise ApiCallError(f"HTTP {response.status_code} from {url}: {response.text[:500]}", retryable=retryable)
+
+    emitted = False
+    blocks: dict[int, dict[str, Any]] = {}
+    finish_reason: str | None = None
+    try:
+        for data in _sse_data_lines(response):
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            event_type = event.get("type")
+            if event_type == "content_block_start":
+                index = int(event.get("index") or 0)
+                block = event.get("content_block") or {}
+                if block.get("type") == "tool_use":
+                    blocks[index] = {"type": "tool_use", "id": str(block.get("id") or ""),
+                                     "name": str(block.get("name") or ""), "input_json": ""}
+                else:
+                    blocks[index] = {"type": "text", "text": ""}
+            elif event_type == "content_block_delta":
+                index = int(event.get("index") or 0)
+                delta = event.get("delta") or {}
+                block = blocks.setdefault(index, {"type": "text", "text": ""})
+                if delta.get("type") == "text_delta" and delta.get("text"):
+                    block["text"] += str(delta["text"])
+                    emitted = True
+                    on_text_delta(str(delta["text"]))
+                elif delta.get("type") == "input_json_delta" and delta.get("partial_json"):
+                    block.setdefault("input_json", "")
+                    block["input_json"] += str(delta["partial_json"])
+            elif event_type == "message_delta":
+                finish_reason = (event.get("delta") or {}).get("stop_reason") or finish_reason
+            elif event_type == "message_stop":
+                break
+    except requests.RequestException as exc:
+        raise ApiCallError(f"stream interrupted: {exc}", retryable=not emitted) from exc
+
+    content_blocks: list[dict[str, Any]] = []
+    texts: list[str] = []
+    tool_calls: list[ToolCall] = []
+    for index in sorted(blocks):
+        block = blocks[index]
+        if block["type"] == "tool_use":
+            args = _parse_tool_args_json(block.get("input_json", ""))
+            content_blocks.append({"type": "tool_use", "id": block["id"], "name": block["name"], "input": args})
+            tool_calls.append(ToolCall(id=block["id"] or f"toolu_{index}", name=block["name"], arguments=args))
+        else:
+            if block["text"]:
+                content_blocks.append({"type": "text", "text": block["text"]})
+                texts.append(block["text"])
+    return ToolCallRound(
+        text="\n".join(texts),
+        tool_calls=tool_calls,
+        raw_message={"role": "assistant", "content": content_blocks},
+        finish_reason=finish_reason,
+    )
 
 
 def _openai_tool_round(

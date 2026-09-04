@@ -633,8 +633,8 @@ def _run_agent_thread(
         run_id, run_dir = create_run_dir()
         config = resolve_role_config(settings, "planner")
 
-        def chat_with_tools(messages, tools):
-            return chat_completion_with_tools(settings, "planner", messages, tools, max_tokens=8192)
+        def chat_with_tools(messages, tools, on_text_delta=None):
+            return chat_completion_with_tools(settings, "planner", messages, tools, max_tokens=8192, on_text_delta=on_text_delta)
 
         task_message = build_task_message(text, worker, worker.capabilities(), image_data_url)
         result = run_agent_loop(
