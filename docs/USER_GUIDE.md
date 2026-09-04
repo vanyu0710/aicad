@@ -44,9 +44,13 @@ Windows 上最简单的方式：
 - 点击 3D 空白处或按 `Esc` 可以关闭抽屉。
 - 左右抽屉可以同时打开。
 
-## 4. 第一次生成模型
+主界面长这样（深蓝夜空主题，右侧是对话式 AI 助手）：
 
-按下面的顺序操作：
+![Varen CAD 主工作区与 AI 助手会话](images/varen-workspace-chat-snapshot.jpg)
+
+对话流会把 AI 的每一步留在里面——助手文字、每个内核工具卡片、以及几何变化时自动生成的可视化快照：
+
+![Varen CAD AI 助手对话流](images/varen-chat-stream.jpg)
 
 ## 4. 第一次生成模型（v0.10 对话式）
 

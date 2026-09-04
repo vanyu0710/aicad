@@ -65,6 +65,17 @@ Varen CAD 把 **MechKernel 参数化 CAD 内核**（真实 OCC 7.9.3 几何）�
 **不是"让 AI 写任意 Python"**。执行层被严格约束在 33 个经验证的公开 op 上，
 每步都有结构化反馈（`StepResult`）与几何验证，失败可自动修复或回退。
 
+## 界面预览（v0.10.0-alpha 实测截图）
+
+**启动页** —— 深蓝夜空品牌主页，后端连接状态、最近项目、新建入口一目了然：
+
+![Varen CAD 启动页](docs/images/varen-startup.jpg)
+
+**主工作区 + 对话式 AI 助手** —— 3D 视口实时渲染内核几何，右侧 AI 抽屉就是一条持久会话：
+用户消息、助手流式文字、每个内核工具的卡片，以及几何变化时自动内嵌的**可视化快照**都留在会话流里：
+
+![Varen CAD 工作台与 AI 助手会话](docs/images/varen-workspace-chat-snapshot.jpg)
+
 ---
 
 ## 怎么运行
