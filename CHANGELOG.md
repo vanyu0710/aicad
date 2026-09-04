@@ -1,3 +1,21 @@
+## v0.10.0-alpha - 对话式 Agent 会话（真 harness 交互形态）
+
+- **每项目一条持久会话（`backend/agent/session.py`）**：对话历史落盘 `work/agent_sessions/{id}.json`，
+  重开项目可回看；`SessionRegistry` 惰性恢复。
+- **统一对话入口 `POST /agent/message`**：agent 空闲 → 开新任务（消息自动携带最新特征上下文，可带草图图片）；
+  运行中 → 插话进入 pending 队列，loop 在轮间与审批结束后注入，下一轮模型可见（WS `agent_queued` 提示）。
+  `GET /agent/session`（展示视图）、`POST /agent/session/clear`；`/agent/start` 保留为兼容薄壳。
+- **审批契约修复（实锤 bug）**：`approval_required` WS 事件此前在 `approval_id` 生成前发出，前端永远无法渲染
+  审批卡。`ApprovalBroker` 拆 `create()`（生成 id）+ `wait()`（阻塞），事件先带 id 再等待。
+- **token 级流式（`backend/mechcad_ai/client.py`）**：`chat_completion_with_tools` 增 `on_text_delta`；
+  OpenAI（`delta.tool_calls` 按 index 拼装）与 Anthropic（`content_block_delta`/`input_json_delta`）双协议 SSE
+  聚合为同一 `ToolCallRound`，循环逻辑不变；流开始后不再重试。模型文字经 WS `agent_text_delta` 打字机显示。
+- **前端会话流（TaskPane AI 助手 tab）**：user/assistant 气泡 + 内嵌工具卡（op/参数预览/结果/自修复标记）+
+  流式光标 + 自动贴底；生成按钮/Ctrl+G/聊天框全部收敛为同一条发送路径；legacy `/chat` 从 UI 摘除（API 保留）。
+- **vision 进 agent**：任务消息支持草图图片（OpenAI `image_url` blocks；Anthropic 分支请求时转换为
+  `source.base64`）。UI 在会话首条消息自动携带左侧上传的草图。
+- 测试：后端 341/341（+17：会话流、插话注入、审批 id、SSE 双协议、端点）、前端 70/70（+6：会话流渲染、store 动作）。
+
 ## v0.9.0-alpha - Harness 主链路化 + P2 人机协作（弱化 FeaturePlanV3）
 
 - **主路径全面切 MechKernel harness**：前端主按钮/Ctrl+G、特征树、属性面板、undo/redo 全部走 kernel
