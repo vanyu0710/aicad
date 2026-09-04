@@ -1,4 +1,4 @@
-"""MechKernel agent loop（P1 垂直切片）。
+"""MechKernel agent loop（P1 垂直切片 → v0.10 对话式会话）。
 
 多轮原生 function-calling 循环：LLM 直接以 kernel op 名作为工具名调用，
 loop 调 worker RPC 执行，把精简后的 StepResult 作为工具结果回喂，直到模型
@@ -6,7 +6,10 @@ loop 调 worker RPC 执行，把精简后的 StepResult 作为工具结果回喂
 
 设计边界（对齐 docs/mechkernel-harness-roadmap.md）：
 - 执行层直接是 MechKernel op（D1），本模块不理解 FeaturePlanV3。
-- 人在回路确认点（P2）与改动清单（P3）尚未实现，只发 ``agent_step`` 事件。
+- 人在回路确认点（P2）：破坏性操作/破坏性修复/ask_user 经 ApprovalBroker，
+  WS 事件携带 approval_id（前端可回复）。
+- v0.10：可选接入 AgentSession——对话历史持久化、运行中用户插话在轮间注入；
+  每轮模型文字以 ``agent_text_delta`` 事件播出（流式接入见 Commit B）。
 - 自修复：RECOVERABLE + suggestion.fix 时按 schema 过滤后自动重试一次。
 
 本模块不 import CAD 库；几何只经 worker RPC 触达（D2）。
@@ -21,14 +24,16 @@ from pathlib import Path
 from typing import Any, Callable
 
 from backend.agent.approvals import ApprovalBroker
+from backend.agent.session import AgentSession, build_user_message
 from backend.agent.tools import build_llm_tools, filter_args_to_schema
 from backend.mechcad_ai.client import ApiCallError, ToolCall, ToolCallRound, tool_result_message
 
-ToolFn = Callable[[list[dict[str, Any]], list[dict[str, Any]]], ToolCallRound]
+ToolFn = Callable[..., ToolCallRound]
 EmitFn = Callable[[str, str, dict[str, Any]], None]
 
 _VALUE_CLIP = 800
 _NARRATIVE_CLIP = 40
+_ARGS_PREVIEW_CLIP = 240
 
 
 @dataclass
@@ -109,9 +114,9 @@ def _destructive_message(op: str, args: dict[str, Any]) -> str:
     return f"op {op} 是破坏性操作，是否继续？"
 
 
-def _opening_context(task_description: str, worker, capabilities: dict[str, Any]) -> str:
-    """首条用户消息：任务 + 当前特征图 + 可用公开展台 op。把"暂停→接管→交还"的连续性交给模型。"""
-    parts: list[str] = [f"任务：{task_description}"]
+def _context_body(worker, capabilities: dict[str, Any]) -> str:
+    """当前特征图 + 可用公开 op 的动态上下文（每次开新任务时取最新）。"""
+    parts: list[str] = []
     try:
         tree = worker.feature_tree()
         graph = tree.get("graph") or {}
@@ -130,7 +135,34 @@ def _opening_context(task_description: str, worker, capabilities: dict[str, Any]
         parts.append(f"可用 op：{public_ops}")
     except Exception as exc:  # noqa: BLE001 —— 上下文失败不阻断
         parts.append(f"（读取当前特征上下文失败: {exc}）")
-    return "\n\n".join(parts)
+    return "\n".join(parts)
+
+
+def _opening_context(task_description: str, worker, capabilities: dict[str, Any]) -> str:
+    """首条用户消息文本：任务 + 当前特征上下文。把"暂停→接管→交还"的连续性交给模型。"""
+    return f"任务：{task_description}\n{_context_body(worker, capabilities)}"
+
+
+def build_task_message(
+    task_description: str,
+    worker,
+    capabilities: dict[str, Any],
+    image_data_url: str | None = None,
+) -> dict[str, Any]:
+    """开新任务的用户消息：任务文本 + 最新内核上下文，可携带草图图片。"""
+    return build_user_message(
+        f"任务：{task_description}\n{_context_body(worker, capabilities)}",
+        image_data_url,
+    )
+
+
+def _args_preview(args: dict[str, Any], limit: int = _ARGS_PREVIEW_CLIP) -> str:
+    """工具调用卡片的参数预览（截断）。"""
+    try:
+        rendered = json.dumps(args, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        rendered = str(args)
+    return rendered if len(rendered) <= limit else rendered[:limit] + "…"
 
 
 class AgentLoop:
@@ -144,11 +176,13 @@ class AgentLoop:
         run_dir: Path,
         capabilities: dict[str, Any] | None = None,
         system_prompt: str,
-        task_description: str,
+        task_description: str = "",
         language: str = "zh",
         max_steps: int = 30,
         stop_event: threading.Event | None = None,
         approvals: ApprovalBroker | None = None,
+        session: AgentSession | None = None,
+        initial_user_message: dict[str, Any] | None = None,
     ) -> None:
         self.worker = worker
         self.chat_with_tools = chat_with_tools
@@ -161,18 +195,36 @@ class AgentLoop:
         self.max_steps = max_steps
         self.stop_event = stop_event
         self.language = language
+        self.session = session
         self._context_descriptors: list[str] = []
-        self.messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": _opening_context(task_description, worker, self.capabilities)},
-        ]
+        if session is not None:
+            # 会话模式：历史取自 session（不含 system），新任务消息写入 session
+            self.messages: list[dict[str, Any]] = [
+                {"role": "system", "content": system_prompt},
+                *session.llm_messages(),
+            ]
+            task_message = initial_user_message or build_task_message(
+                task_description, worker, self.capabilities,
+            )
+            self.messages.append(task_message)
+            session.append(task_message)
+        else:
+            self.messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": _opening_context(task_description, worker, self.capabilities)},
+            ]
+            if initial_user_message is not None:
+                self.messages.append(initial_user_message)
         self.logs: list[str] = []
         self.step_count = 0
+        self._round_no = 0
         self._last_volume: float | None = None
 
     # ------------------------------------------------------------------ main
     def run(self) -> AgentLoopResult:
         result = AgentLoopResult(logs=self.logs)
+        if self.session is not None:
+            self.session.set_status("running")
         try:
             self._run_inner(result)
         except ApiCallError as exc:
@@ -181,6 +233,9 @@ class AgentLoop:
         except Exception as exc:  # noqa: BLE001 —— 汇总为失败结果，交由端点上报
             result.error = f"{type(exc).__name__}: {exc}"
             self.logs.append(result.error)
+        finally:
+            if self.session is not None:
+                self.session.set_status("idle")
         try:
             self._finalize(result)
         except Exception as exc:  # noqa: BLE001
@@ -189,29 +244,49 @@ class AgentLoop:
             result.ok = False
         return result
 
+    def _absorb_pending(self) -> None:
+        """把用户在运行中插入的消息注入对话（轮间生效）。"""
+        if self.session is None:
+            return
+        for message in self.session.drain_pending():
+            self.messages.append(message)
+            self.logs.append("已注入用户插话。")
+
+    def _remember(self, message: dict[str, Any]) -> None:
+        """追加进 LLM 对话；会话模式下同步写入 session 持久化。"""
+        self.messages.append(message)
+        if self.session is not None:
+            self.session.append(message)
+
     def _run_inner(self, result: AgentLoopResult) -> None:
         while self.step_count < self.max_steps:
             if self.stop_event is not None and self.stop_event.is_set():
                 result.stopped = True
                 self.logs.append("收到停止请求，agent 退出。")
                 return
+            self._absorb_pending()
+            self._round_no += 1
             round = self.chat_with_tools(self.messages, self.tools)
             if round.text:
                 self.logs.append(f"模型输出: {round.text[:500]}")
+                # 轮次文字进会话流（Commit B 换成真流式分片；payload 结构一致）
+                self.emit("agent_text_delta", round.text, {"round": self._round_no, "done": not round.tool_calls})
             if not round.tool_calls:
                 result.final_text = round.text
                 result.ok = True
+                if round.text:
+                    self._remember({"role": "assistant", "content": round.text})
                 return
-            self.messages.append(round.raw_message)
+            self._remember(round.raw_message)
             for tool_call in round.tool_calls:
                 if self.step_count >= self.max_steps:
                     break
                 if self.stop_event is not None and self.stop_event.is_set():
                     break
                 if tool_call.name == "ask_user":
-                    self.messages.append(self._handle_ask_user(tool_call))
+                    self._remember(self._handle_ask_user(tool_call))
                 else:
-                    self.messages.append(self._execute_tool_call(tool_call, result))
+                    self._remember(self._execute_tool_call(tool_call, result))
         if self.step_count >= self.max_steps:
             result.stopped = True
             self.logs.append("达到步数上限，停止执行。")
@@ -226,7 +301,7 @@ class AgentLoop:
         op = tool_call.name
         args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
         data = self._call_op(op, args)
-        self._emit_step(step_no, op, data, autofix=False)
+        self._emit_step(step_no, op, data, autofix=False, args=args)
         result.steps = self.step_count
 
         # 自修复：RECOVERABLE + fix → 按 schema 过滤后合并重试一次。
@@ -379,13 +454,28 @@ class AgentLoop:
 
     # ------------------------------------------------------------- approvals
     def _request_approval(self, kind: str, op: str, args: dict[str, Any], message: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
-        """请求用户审批并阻塞等待；把审批请求以 WS 事件广播。"""
+        """请求用户审批并阻塞等待；先登记拿 approval_id 再广播（前端回复依赖 id）。"""
         if self.approvals is None:
             return {"action": "approve", "args": dict(args)}
-        request_info: dict[str, Any] = {"kind": kind, "op": op, "args": dict(args), "message": message, "options": options or {}}
+        request = self.approvals.create(kind=kind, op=op, args=args, message=message, options=options)
+        request_info: dict[str, Any] = {
+            "approval_id": request.approval_id,
+            "kind": kind,
+            "op": op,
+            "args": dict(args),
+            "message": message,
+            "options": options or {},
+        }
+        if self.session is not None:
+            self.session.set_status("waiting_approval")
         self.emit("approval_required", message, request_info)
         self.logs.append(f"审批等待: {message}")
-        return self.approvals.request(kind=kind, op=op, args=args, message=message, options=options)
+        decision = self.approvals.wait(request)
+        if self.session is not None:
+            self.session.set_status("running")
+            # 审批等待期间用户可能插话，答复后立即注入
+            self._absorb_pending()
+        return decision
 
     def _handle_ask_user(self, tool_call: ToolCall) -> dict[str, Any]:
         """合成工具 ask_user：向用户提问，等答复，以工具结果回喂模型。"""
@@ -406,12 +496,14 @@ class AgentLoop:
         return tool_result_message(tool_call, json.dumps(result, ensure_ascii=False), protocol=self.protocol)
 
     # ---------------------------------------------------------------- events
-    def _emit_step(self, step_no: int, op: str, data: dict[str, Any] | None, *, autofix: bool, message: str = "") -> None:
+    def _emit_step(self, step_no: int, op: str, data: dict[str, Any] | None, *, autofix: bool, message: str = "", args: dict[str, Any] | None = None) -> None:
         payload: dict[str, Any] = {
             "step": step_no,
             "op": op,
             "autofix": autofix,
         }
+        if args is not None:
+            payload["args_preview"] = _args_preview(args)
         if data is not None:
             payload["success"] = bool(data.get("success"))
             payload["error_kind"] = data.get("error_kind")
@@ -432,12 +524,14 @@ def run_agent_loop(
     emit: EmitFn,
     run_dir: Path,
     system_prompt: str,
-    task_description: str,
+    task_description: str = "",
     language: str = "zh",
     max_steps: int = 30,
     stop_event: threading.Event | None = None,
     capabilities: dict[str, Any] | None = None,
     approvals: ApprovalBroker | None = None,
+    session: AgentSession | None = None,
+    initial_user_message: dict[str, Any] | None = None,
 ) -> AgentLoopResult:
     """函数式入口（main.py 用）；类入口便于测试注入。"""
     loop = AgentLoop(
@@ -453,5 +547,7 @@ def run_agent_loop(
         max_steps=max_steps,
         stop_event=stop_event,
         approvals=approvals,
+        session=session,
+        initial_user_message=initial_user_message,
     )
     return loop.run()

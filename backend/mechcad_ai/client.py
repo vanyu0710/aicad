@@ -530,6 +530,43 @@ def _openai_tool_round(
     raise ApiCallError("model call failed: no response", retryable=True)
 
 
+def _anthropic_image_source(data_url: str) -> dict[str, Any] | None:
+    """把 ``data:image/png;base64,...`` 转成 Anthropic source block；解析失败返回 None。"""
+    header, _, b64 = data_url.partition(",")
+    if not b64:
+        return None
+    media_type = "image/png"
+    if header.startswith("data:") and ":" in header and ";" in header:
+        media_type = header[5:header.index(";")] or media_type
+    return {"type": "base64", "media_type": media_type, "data": b64.strip()}
+
+
+def _anthropic_chat_messages(messages: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, Any]]]:
+    """拆出 system 文本并把 OpenAI 风格 image_url block 转成 Anthropic image block。"""
+    system_parts: list[str] = []
+    chat_messages: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") == "system":
+            system_parts.append(str(message.get("content")))
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            blocks: list[dict[str, Any]] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "image_url":
+                    source = _anthropic_image_source(str((block.get("image_url") or {}).get("url") or ""))
+                    if source is not None:
+                        blocks.append({"type": "image", "source": source})
+                else:
+                    blocks.append(block)
+            chat_messages.append({**message, "content": blocks})
+        else:
+            chat_messages.append(message)
+    return system_parts, chat_messages
+
+
 def _anthropic_tool_round(
     config: dict[str, str],
     messages: list[dict[str, Any]],
@@ -539,13 +576,7 @@ def _anthropic_tool_round(
     temperature: float,
     timeout: int,
 ) -> ToolCallRound:
-    system_parts: list[str] = []
-    chat_messages: list[dict[str, Any]] = []
-    for message in messages:
-        if message.get("role") == "system":
-            system_parts.append(str(message.get("content")))
-        else:
-            chat_messages.append(message)
+    system_parts, chat_messages = _anthropic_chat_messages(messages)
 
     payload: dict[str, Any] = {
         "model": config["model"],

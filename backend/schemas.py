@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 OperationMode = Literal["strict", "smart"]
 SmartFillPolicy = Literal["suggest_only", "limited_fill", "aggressive_fill", "full_autonomous"]
 FeatureOperation = Literal["base", "add", "remove", "modify", "pattern"]
-StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error", "process_step_started", "process_step_done", "process_step_failed", "process_step_blocked", "agent_step", "agent_done", "approval_required"]
+StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error", "process_step_started", "process_step_done", "process_step_failed", "process_step_blocked", "agent_step", "agent_text_delta", "agent_queued", "agent_done", "approval_required"]
 
 
 def now_iso() -> str:
@@ -789,6 +789,32 @@ class AgentStartRequest(BaseModel):
     description: str
     language: Literal["zh", "en"] = "zh"
     max_steps: int = 30
+
+
+class AgentMessageRequest(BaseModel):
+    """v0.10 对话式会话：向 agent 发一条消息。
+
+    agent 空闲 → 开新任务（消息携带最新内核上下文，可带草图图片）；
+    agent 运行中 → 插话排队，loop 在轮间注入，下一轮模型可见。
+    """
+
+    text: str
+    image_data_url: str | None = None
+    language: Literal["zh", "en"] = "zh"
+    max_steps: int = 30
+
+
+class AgentSessionMessage(BaseModel):
+    """会话展示视图里的一条消息（图片不回传内容，只给标记）。"""
+
+    role: Literal["user", "assistant"]
+    text: str
+    has_image: bool = False
+
+
+class AgentSessionView(BaseModel):
+    status: Literal["idle", "running", "waiting_approval"] = "idle"
+    messages: list[AgentSessionMessage] = Field(default_factory=list)
 
 
 class AgentResolveRequest(BaseModel):

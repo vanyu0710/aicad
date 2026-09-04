@@ -23,6 +23,8 @@ from backend.ai import (
     questions_from_plan,
 )
 from backend.agent import AgentLoopResult, ApprovalBroker, run_agent_loop
+from backend.agent.loop import build_task_message
+from backend.agent.session import SessionRegistry
 from backend.cad import run_freecad_worker
 from backend.capabilities import CAPABILITIES, CapabilityValidationError
 from backend.evidence_gate import apply_evidence_gate_result, apply_evidence_resolutions, evaluate_evidence_gate
@@ -31,7 +33,9 @@ from backend.events import EventBus
 from backend.kernel_worker import get_worker_manager
 from backend.process import ProcessRecorder
 from backend.schemas import (
+    AgentMessageRequest,
     AgentResolveRequest,
+    AgentSessionView,
     AgentStartRequest,
     ArtifactSet,
     ChatEditRequest,
@@ -89,6 +93,15 @@ events = EventBus()
 # MechKernel agent loop（P1）：project_id → 运行状态。旧 FeaturePlanV3 链路完全不动。
 _agent_runs: dict[str, dict] = {}
 _agent_lock = threading.Lock()
+
+# v0.10 对话式会话：每个项目一条持久 agent 会话（历史落盘 work/agent_sessions/）。
+_agent_sessions = SessionRegistry(
+    os.getenv("MECHCAD_SESSION_DIR") or (Path(__file__).resolve().parent.parent / "work" / "agent_sessions")
+)
+
+
+def _get_session(project_id: str):
+    return _agent_sessions.get(project_id)
 
 
 def _schedule_publish(event: StageEvent) -> None:
@@ -483,8 +496,81 @@ def _stop_agent_run(project_id: str) -> bool:
     return True
 
 
+def _launch_agent_run(project_id: str, *, text: str, image_data_url: str | None, language: str, max_steps: int) -> None:
+    """共享启动器：起 agent 线程（会话模式）。调用方需确认当前无运行中 agent。"""
+    stop_event = threading.Event()
+    approvals = ApprovalBroker()
+    session = _get_session(project_id)
+    thread = threading.Thread(
+        target=_run_agent_thread,
+        args=(
+            project_id,
+            text,
+            image_data_url,
+            language,
+            max_steps,
+            deepcopy(_project_or_404(project_id).settings),
+            stop_event,
+            asyncio.get_running_loop(),
+            approvals,
+            session,
+        ),
+        daemon=True,
+    )
+    _agent_runs[project_id] = {"stop": stop_event, "thread": thread, "approvals": approvals}
+    thread.start()
+
+
+def _agent_is_running(project_id: str) -> bool:
+    with _agent_lock:
+        run = _agent_runs.get(project_id)
+        return run is not None and run["thread"].is_alive()
+
+
+@app.post("/api/projects/{project_id}/agent/message")
+async def agent_message(project_id: str, request: AgentMessageRequest):
+    """v0.10 对话式入口：空闲=开新任务；运行中=插话（轮间注入）。"""
+    _project_or_404(project_id)
+    if not request.text.strip():
+        raise HTTPException(status_code=422, detail="text is required")
+    if _agent_is_running(project_id):
+        session = _get_session(project_id)
+        session.enqueue_user(request.text, request.image_data_url)
+        await _emit(
+            project_id, "agent_queued", "agent",
+            _loc(request.language, "消息已加入队列，将在当前步骤结束后生效。", "Message queued; takes effect after the current step."),
+            {"queued": True},
+        )
+        return {"ok": True, "queued": True, "project_id": project_id}
+    _launch_agent_run(
+        project_id,
+        text=request.text,
+        image_data_url=request.image_data_url,
+        language=request.language,
+        max_steps=request.max_steps,
+    )
+    return {"ok": True, "started": True, "project_id": project_id}
+
+
+@app.get("/api/projects/{project_id}/agent/session")
+async def agent_session_view(project_id: str):
+    _project_or_404(project_id)
+    session = _get_session(project_id)
+    return AgentSessionView(status=session.status, messages=session.view()).model_dump()
+
+
+@app.post("/api/projects/{project_id}/agent/session/clear")
+async def agent_session_clear(project_id: str):
+    _project_or_404(project_id)
+    if _agent_is_running(project_id):
+        raise HTTPException(status_code=409, detail="Agent is running; stop it before clearing the session")
+    _get_session(project_id).clear()
+    return {"ok": True, "cleared": True}
+
+
 @app.post("/api/projects/{project_id}/agent/start")
 async def agent_start(project_id: str, request: AgentStartRequest):
+    """兼容薄壳：等价于 agent/message(description)（v0.10 前的入口）。"""
     _project_or_404(project_id)
     if not request.description.strip():
         raise HTTPException(status_code=422, detail="description is required")
@@ -492,15 +578,13 @@ async def agent_start(project_id: str, request: AgentStartRequest):
         existing = _agent_runs.get(project_id)
         if existing is not None and existing["thread"].is_alive():
             raise HTTPException(status_code=409, detail="Agent is already running for this project")
-        stop_event = threading.Event()
-        approvals = ApprovalBroker()
-        thread = threading.Thread(
-            target=_run_agent_thread,
-            args=(project_id, request, deepcopy(_project_or_404(project_id).settings), stop_event, asyncio.get_running_loop(), approvals),
-            daemon=True,
+        _launch_agent_run(
+            project_id,
+            text=request.description,
+            image_data_url=None,
+            language=request.language,
+            max_steps=request.max_steps,
         )
-        _agent_runs[project_id] = {"stop": stop_event, "thread": thread, "approvals": approvals}
-        thread.start()
     return {"ok": True, "started": True, "project_id": project_id}
 
 
@@ -529,14 +613,17 @@ async def agent_resolve(project_id: str, request: AgentResolveRequest):
 
 def _run_agent_thread(
     project_id: str,
-    request: AgentStartRequest,
+    text: str,
+    image_data_url: str | None,
+    language: str,
+    max_steps: int,
     settings,
     stop_event: threading.Event,
     loop: asyncio.AbstractEventLoop,
     approvals: ApprovalBroker,
+    session,
 ) -> None:
     """后台线程：worker RPC + agent loop + 快照提交。事件经 EventBus 回主循环。"""
-    language = request.language
     emit = _emit_from_thread_factory(project_id, loop)
     try:
         if not has_configured_model(settings, "planner"):
@@ -549,6 +636,7 @@ def _run_agent_thread(
         def chat_with_tools(messages, tools):
             return chat_completion_with_tools(settings, "planner", messages, tools, max_tokens=8192)
 
+        task_message = build_task_message(text, worker, worker.capabilities(), image_data_url)
         result = run_agent_loop(
             worker=worker,
             chat_with_tools=chat_with_tools,
@@ -556,11 +644,12 @@ def _run_agent_thread(
             emit=emit,
             run_dir=run_dir,
             system_prompt=get_prompt("agent_modeling", language),
-            task_description=request.description,
             language=language,
-            max_steps=max(1, int(request.max_steps)),
+            max_steps=max(1, int(max_steps)),
             stop_event=stop_event,
             approvals=approvals,
+            session=session,
+            initial_user_message=task_message,
         )
         artifacts = ArtifactSet(
             run_id=run_id,
@@ -570,7 +659,7 @@ def _run_agent_thread(
         )
         snapshot = DesignSnapshot(
             feature_plan=FeaturePlanV3(
-                design_intent=request.description,
+                design_intent=text,
                 part_family="agent_modeled",
                 self_checks={"planning_source": "mechkernel_agent"},
             ),

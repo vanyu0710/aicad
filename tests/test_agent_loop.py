@@ -103,14 +103,14 @@ def _round_with_call(name: str, arguments: dict) -> ToolCallRound:
     )
 
 
-def _run(worker, chat, *, max_steps=10, stop_event=None, emit=None, run_dir=None, approvals=None):
+def _run(worker, chat, *, max_steps=10, stop_event=None, emit=None, run_dir=None, approvals=None, session=None):
     if run_dir is None:
         with tempfile.TemporaryDirectory() as td:
-            return _run_in_dir(worker, chat, Path(td), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals)
-    return _run_in_dir(worker, chat, Path(run_dir), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals)
+            return _run_in_dir(worker, chat, Path(td), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals, session=session)
+    return _run_in_dir(worker, chat, Path(run_dir), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals, session=session)
 
 
-def _run_in_dir(worker, chat, run_dir: Path, *, max_steps, stop_event, emit, approvals=None):
+def _run_in_dir(worker, chat, run_dir: Path, *, max_steps, stop_event, emit, approvals=None, session=None):
     return run_agent_loop(
         worker=worker,
         chat_with_tools=chat,
@@ -122,6 +122,7 @@ def _run_in_dir(worker, chat, run_dir: Path, *, max_steps, stop_event, emit, app
         max_steps=max_steps,
         stop_event=stop_event,
         approvals=approvals,
+        session=session,
     )
 
 
@@ -437,6 +438,103 @@ class AgentLoopApprovalTests(unittest.TestCase):
         user_messages = chat.calls[0][0]
         opening = [m for m in user_messages if m["role"] == "user"]
         self.assertTrue(any("F_0001" in str(m["content"]) or "op" in str(m["content"]) for m in opening))
+
+
+class AgentLoopSessionTests(unittest.TestCase):
+    """v0.10 会话模式：历史持久化、运行中插话、审批事件带 id、final_text 入会话。"""
+
+    def _session(self, td: Path) -> "AgentSession":
+        from backend.agent.session import AgentSession
+
+        return AgentSession(project_id="p1", path=td / "agent_session.json")
+
+    def test_session_messages_flow_through_llm_and_persist(self) -> None:
+        worker = FakeWorker([_success()])
+        chat = FakeChat([
+            _round_with_call("create_workplane", {"name": "base"}),
+            ToolCallRound(text="做完了", tool_calls=[]),
+        ])
+        with tempfile.TemporaryDirectory() as td:
+            session = self._session(Path(td))
+            result = _run(worker, chat, session=session, run_dir=Path(td))
+            self.assertTrue(result.ok)
+            # LLM 首轮消息 = system + 任务消息（含内核上下文）
+            first_roles = [m["role"] for m in chat.calls[0][0]]
+            self.assertEqual(first_roles[0], "system")
+            self.assertEqual(first_roles[1], "user")
+            # 收尾后 session 持久化：user 任务消息 + assistant 工具轮 + tool 结果 + 最终 assistant
+            roles = [m["role"] for m in session.llm_messages()]
+            self.assertEqual(roles[0], "user")
+            self.assertIn("assistant", roles)
+            self.assertIn("tool", roles)
+            self.assertEqual(roles[-1], "assistant")
+            # 落盘可恢复
+            from backend.agent.session import AgentSession as AS
+
+            restored = AS(project_id="p1", path=session.path)
+            data = json.loads(session.path.read_text(encoding="utf-8"))
+            restored.messages = list(data["messages"])
+            self.assertEqual(len(restored.llm_messages()), len(session.llm_messages()))
+
+    def test_pending_user_message_injected_next_round(self) -> None:
+        worker = FakeWorker([_success()])
+        chat = FakeChat([
+            _round_with_call("create_workplane", {"name": "base"}),
+            ToolCallRound(text="完成", tool_calls=[]),
+        ])
+        with tempfile.TemporaryDirectory() as td:
+            session = self._session(Path(td))
+
+            def chat_with_injection(messages, tools):
+                round_result = chat(messages, tools)
+                if len(chat.calls) == 1:
+                    # 第一轮进行中用户插话 → 第二轮应看到
+                    session.enqueue_user("把尺寸改大一点")
+                return round_result
+
+            result = _run(worker, chat_with_injection, session=session, run_dir=Path(td))
+            self.assertTrue(result.ok)
+            second_round_messages = chat.calls[1][0]
+            injected = [m for m in second_round_messages if m["role"] == "user" and "改大" in str(m["content"])]
+            self.assertEqual(len(injected), 1)
+
+    def test_approval_event_carries_approval_id(self) -> None:
+        from backend.agent.approvals import ApprovalBroker
+
+        broker = ApprovalBroker(timeout=5)
+        worker = FakeWorker([_success()])
+        events: list[tuple] = []
+
+        def chat(messages, tools):
+            if not any(m.get("role") == "tool" for m in messages):
+                return _round_with_call("delete_feature", {"feature_id": "F_0001"})
+            return ToolCallRound(text="好的", tool_calls=[])
+
+        def resolve_after_time():
+            import time as _t
+
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "reject")
+
+        t = threading.Thread(target=resolve_after_time)
+        t.start()
+        result = _run(worker, chat, approvals=broker,
+                      emit=lambda ev, m, p: events.append((ev, m, p)))
+        t.join(timeout=2)
+        approval_events = [e for e in events if e[0] == "approval_required"]
+        self.assertEqual(len(approval_events), 1)
+        payload = approval_events[0][2]
+        self.assertTrue(payload.get("approval_id"), "审批事件必须带 approval_id（前端回复依赖它）")
+
+    def test_session_status_transitions(self) -> None:
+        worker = FakeWorker([_success()])
+        chat = FakeChat([ToolCallRound(text="done", tool_calls=[])])
+        with tempfile.TemporaryDirectory() as td:
+            session = self._session(Path(td))
+            _run(worker, chat, session=session, run_dir=Path(td))
+            self.assertEqual(session.status, "idle")
 
 
 if __name__ == "__main__":

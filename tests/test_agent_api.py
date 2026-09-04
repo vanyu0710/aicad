@@ -38,7 +38,7 @@ class AgentEndpointTests(unittest.TestCase):
     def _blocking_runner(self, release: threading.Event):
         """把 agent 线程执行体替换为阻塞函数，模拟运行中的 agent。"""
 
-        def runner(project_id, request, settings, stop_event, loop, approvals=None):
+        def runner(project_id, text, image_data_url, language, max_steps, settings, stop_event, loop=None, approvals=None, session=None):
             release.wait(timeout=5)
 
         return runner
@@ -93,7 +93,6 @@ class AgentEndpointTests(unittest.TestCase):
             def call_soon_threadsafe(self, fn, *args):
                 events.append(args)
 
-        request = main_module.AgentStartRequest(description="测试", language="zh")
         settings = main_module._project_or_404(self.project_id).settings
         stop_event = threading.Event()
         approvals = main_module.ApprovalBroker(timeout=0.2)
@@ -103,8 +102,118 @@ class AgentEndpointTests(unittest.TestCase):
             "MECHCAD_PLANNER_BASE_URL": "",
             "MECHCAD_PLANNER_MODEL": "",
         }):
-            main_module._run_agent_thread(self.project_id, request, settings, stop_event, FakeLoop(), approvals)
+            main_module._run_agent_thread(
+                self.project_id, "测试", None, "zh", 30,
+                settings, stop_event, FakeLoop(), approvals, session=None,
+            )
         self.assertTrue(events, "应发布 agent_done 事件")
+
+
+class AgentMessageSessionTests(unittest.TestCase):
+    """v0.10 对话式会话端点：/agent/message、/agent/session、/agent/session/clear。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.client = TestClient(main_module.app)
+
+    def setUp(self) -> None:
+        # 会话注册表指向临时目录，避免污染仓库 work/
+        self._registry_patch = patch.object(
+            main_module, "_agent_sessions",
+            main_module.SessionRegistry(Path(tempfile.mkdtemp(prefix="mechcad-sess-test-"))),
+        )
+        self._registry_patch.start()
+        self.project_id = self.client.post("/api/projects", json={"name": "msg test"}).json()["project_id"]
+        with main_module._agent_lock:
+            main_module._agent_runs.clear()
+
+    def tearDown(self) -> None:
+        with main_module._agent_lock:
+            runs = list(main_module._agent_runs.items())
+            main_module._agent_runs.clear()
+        for _, run in runs:
+            run["stop"].set()
+            run["thread"].join(timeout=2)
+        self._registry_patch.stop()
+
+    def _start_blocking_agent(self, release: threading.Event) -> None:
+        with patch.object(main_module, "_run_agent_thread", side_effect=self._blocking_runner_pub(release)):
+            resp = self.client.post(
+                f"/api/projects/{self.project_id}/agent/message",
+                json={"text": "做一个法兰"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.json()["started"])
+
+    def _blocking_runner_pub(self, release: threading.Event):
+        def runner(project_id, text, image_data_url, language, max_steps, settings, stop_event, loop=None, approvals=None, session=None):
+            release.wait(timeout=5)
+
+        return runner
+
+    def test_message_starts_when_idle_and_queues_when_running(self) -> None:
+        release = threading.Event()
+        try:
+            self._start_blocking_agent(release)
+            # 运行中再发消息 → 排队而非 409
+            queued = self.client.post(
+                f"/api/projects/{self.project_id}/agent/message",
+                json={"text": "把孔改成 12mm"},
+            )
+            self.assertEqual(queued.status_code, 200)
+            self.assertTrue(queued.json()["queued"])
+            # 插话进入会话 pending 队列
+            session = main_module._get_session(self.project_id)
+            pending = session.drain_pending()
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0]["role"], "user")
+            self.assertIn("12mm", str(pending[0]["content"]))
+        finally:
+            release.set()
+
+    def test_message_without_text_422(self) -> None:
+        resp = self.client.post(f"/api/projects/{self.project_id}/agent/message", json={"text": "  "})
+        self.assertEqual(resp.status_code, 422)
+
+    def test_session_view_and_clear(self) -> None:
+        session = main_module._get_session(self.project_id)
+        session.append({"role": "user", "content": "做一个方块"})
+        session.append({"role": "assistant", "content": "好的，开始建模。"})
+        view = self.client.get(f"/api/projects/{self.project_id}/agent/session")
+        self.assertEqual(view.status_code, 200)
+        data = view.json()
+        self.assertEqual(data["status"], "idle")
+        self.assertEqual(len(data["messages"]), 2)
+        self.assertEqual(data["messages"][0]["role"], "user")
+
+        cleared = self.client.post(f"/api/projects/{self.project_id}/agent/session/clear")
+        self.assertEqual(cleared.status_code, 200)
+        self.assertEqual(main_module._get_session(self.project_id).llm_messages(), [])
+
+    def test_session_clear_conflict_when_running(self) -> None:
+        release = threading.Event()
+        try:
+            self._start_blocking_agent(release)
+            resp = self.client.post(f"/api/projects/{self.project_id}/agent/session/clear")
+            self.assertEqual(resp.status_code, 409)
+        finally:
+            release.set()
+
+    def test_session_view_hides_tool_messages_and_marks_image(self) -> None:
+        session = main_module._get_session(self.project_id)
+        session.append({"role": "user", "content": [
+            {"type": "text", "text": "按这张图做"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ]})
+        session.append({"role": "assistant", "content": None})
+        session.append({"role": "tool", "tool_call_id": "call-1", "content": "{}"})
+        view = self.client.get(f"/api/projects/{self.project_id}/agent/session")
+        messages = view.json()["messages"]
+        # tool 消息与空文字 assistant 轮不进展示视图；user 消息带图片标记
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["role"], "user")
+        self.assertTrue(messages[0]["has_image"])
+        self.assertIn("按这张图做", messages[0]["text"])
 
 
 class AgentResolveTests(unittest.TestCase):
@@ -136,7 +245,7 @@ class AgentResolveTests(unittest.TestCase):
         broker = main_module.ApprovalBroker(timeout=30)
         release = threading.Event()
 
-        def blocking(project_id, request, settings, stop_event, loop, approvals=None):
+        def blocking(project_id, text, image_data_url, language, max_steps, settings, stop_event, loop=None, approvals=None, session=None):
             release.wait(timeout=30)
 
         with patch.object(main_module, "_run_agent_thread", side_effect=blocking):

@@ -60,6 +60,41 @@ class ApprovalBroker:
         self._seq += 1
         return f"approval-{int(time.time() * 1000)}-{self._seq}"
 
+    def create(
+        self,
+        *,
+        kind: str,
+        op: str,
+        args: dict[str, Any],
+        message: str,
+        options: dict[str, Any] | None = None,
+    ) -> ApprovalRequest:
+        """登记一次审批请求并立即返回（带 approval_id），不阻塞。
+
+        拆出 create/wait 两步：调用方先用 approval_id 广播 WS 事件，再阻塞等待，
+        否则前端收到的审批事件没有 id、无法回复（v0.9 契约断裂的根因）。
+        """
+        request = ApprovalRequest(
+            approval_id=self._next_id(),
+            kind=kind,
+            op=op,
+            args=dict(args or {}),
+            message=message,
+            options=dict(options or {}),
+        )
+        with self._lock:
+            self._requests[request.approval_id] = request
+        return request
+
+    def wait(self, request: ApprovalRequest) -> dict[str, Any]:
+        """阻塞等待一次已登记审批的答复；超时语义与 request() 一致。"""
+        timed_out = not request._event.wait(timeout=self._timeout)
+        with self._lock:
+            self._requests.pop(request.approval_id, None)
+        if timed_out:
+            return {"action": "timeout", "message": f"用户未在 {self._timeout:.0f}s 内响应，已跳过该步骤"}
+        return dict(request._result or {"action": "reject", "message": "无结果"})
+
     def request(
         self,
         *,
@@ -77,22 +112,8 @@ class ApprovalBroker:
         - {"action": "reject", "message": ...}  —— 用户拒绝，agent 应跳过
         - {"action": "timeout", "message": ...} —— 用户未在超时内响应
         """
-        request = ApprovalRequest(
-            approval_id=self._next_id(),
-            kind=kind,
-            op=op,
-            args=dict(args or {}),
-            message=message,
-            options=dict(options or {}),
-        )
-        with self._lock:
-            self._requests[request.approval_id] = request
-        timed_out = not request._event.wait(timeout=self._timeout)
-        with self._lock:
-            self._requests.pop(request.approval_id, None)
-        if timed_out:
-            return {"action": "timeout", "message": f"用户未在 {self._timeout:.0f}s 内响应，已跳过该步骤"}
-        return dict(request._result or {"action": "reject", "message": "无结果"})
+        request = self.create(kind=kind, op=op, args=args, message=message, options=options)
+        return self.wait(request)
 
     def resolve(self, approval_id: str, action: str, args_override: dict[str, Any] | None = None) -> dict[str, Any]:
         """用户答复。返回与决议一致的确认信息；审批不存在时抛 KeyError。"""
