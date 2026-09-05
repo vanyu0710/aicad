@@ -179,6 +179,97 @@ def _format_ask_user_transcript(questions: list[dict[str, Any]], answers: dict[s
     return "\n".join(lines)
 
 
+def _normalize_plan_steps(raw: Any) -> list[dict[str, Any]]:
+    """规范化计划步骤：补 id、剔除无标题项、初始状态 pending。"""
+    items = raw if isinstance(raw, list) else []
+    steps: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        steps.append({
+            "id": str(item.get("id") or f"s{index + 1}"),
+            "title": title,
+            "op": str(item.get("op") or "") or None,
+            "rationale": str(item.get("rationale") or "") or None,
+            "status": str(item.get("status") or "pending"),
+        })
+    return steps
+
+
+def _propose_plan_tool() -> dict[str, Any]:
+    """合成工具：计划模式下先产出建模计划，等待用户批准后才允许改几何。"""
+    return {
+        "type": "function",
+        "function": {
+            "name": "propose_plan",
+            "description": (
+                "计划模式：先只读研究（query/select/measure/render）并用 ask_user 澄清关键尺寸，"
+                "然后调用本工具产出分步建模计划等待用户批准。批准前不得调用任何改变几何的 op。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string", "description": "一句话总体方案"},
+                    "steps": {
+                        "type": "array",
+                        "description": "有序建模步骤",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string", "description": "步骤标识（s1、s2…）"},
+                                "title": {"type": "string", "description": "人话描述这步做什么"},
+                                "op": {"type": "string", "description": "预计调用的 kernel op，可选"},
+                                "rationale": {"type": "string", "description": "为什么这样安排，可选"},
+                            },
+                            "required": ["id", "title"],
+                        },
+                    },
+                },
+                "required": ["summary", "steps"],
+            },
+        },
+    }
+
+
+def _update_plan_tool() -> dict[str, Any]:
+    """合成工具：执行期更新计划进度（整表替换），前端渲染为实时清单。"""
+    return {
+        "type": "function",
+        "function": {
+            "name": "update_plan",
+            "description": (
+                "执行计划时更新各步骤状态：开始某步前置 in_progress，成功后置 completed，"
+                "整表一次提交。每轮至多调用一次。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+                            },
+                            "required": ["id", "status"],
+                        },
+                    },
+                },
+                "required": ["todos"],
+            },
+        },
+    }
+
+
+# 计划模式下、计划获批前允许调用的只读 op（研究用）；其余建模 op 一律拦截。
+READONLY_OPS = frozenset({"query", "select", "measure", "render", "validate_geometry"})
+_SYNTHETIC_TOOLS = frozenset({"ask_user", "propose_plan", "update_plan"})
+
+
 def _is_destructive(op: str, args: dict[str, Any]) -> bool:
     """判断某 op 是否为破坏性操作，需在确认点征求用户。"""
     if op == "delete_feature":
@@ -269,6 +360,7 @@ class AgentLoop:
         approvals: ApprovalBroker | None = None,
         session: AgentSession | None = None,
         initial_user_message: dict[str, Any] | None = None,
+        mode: str = "auto",
     ) -> None:
         self.worker = worker
         self.chat_with_tools = chat_with_tools
@@ -277,12 +369,21 @@ class AgentLoop:
         # 绝对路径：kernel 子进程 cwd 在内核仓，相对路径会在那边解析失败
         self.run_dir = Path(run_dir).resolve()
         self.capabilities = capabilities or worker.capabilities()
-        self.tools = [*build_llm_tools(self.capabilities), _ask_user_tool()]
         self.approvals = approvals
         self.max_steps = max_steps
         self.stop_event = stop_event
         self.language = language
         self.session = session
+        # 计划模式：auto=直接建模；plan=先出计划待批准，批准前只允许只读 op
+        self.mode = mode if mode in ("auto", "plan") else "auto"
+        self._plan_approved = self.mode != "plan"
+        self._all_tools = [
+            *build_llm_tools(self.capabilities),
+            _ask_user_tool(),
+            _propose_plan_tool(),
+            _update_plan_tool(),
+        ]
+        self.tools = self._plan_mode_tools()
         self._context_descriptors: list[str] = []
         if session is not None:
             # 会话模式：历史取自 session（不含 system），新任务消息写入 session
@@ -305,6 +406,7 @@ class AgentLoop:
         self.logs: list[str] = []
         self.step_count = 0
         self._round_no = 0
+        self._update_plan_this_round = False
         self._last_volume: float | None = None
         # 旧注入（测试 fake 只接受 (messages, tools)）不支持增量回调时自动降级
         try:
@@ -353,6 +455,77 @@ class AgentLoop:
         if self.session is not None:
             self.session.append(message)
 
+    def _plan_mode_tools(self) -> list[dict[str, Any]]:
+        """计划未批准时只暴露只读 op + 合成工具；批准后放开全量工具表。"""
+        if self._plan_approved:
+            return self._all_tools
+        public_names = {cap["name"] for cap in self.capabilities.get("public", [])}
+        allowed = (READONLY_OPS & public_names) | _SYNTHETIC_TOOLS
+        return [t for t in self._all_tools if t["function"]["name"] in allowed]
+
+    def _handle_propose_plan(self, tool_call: ToolCall) -> dict[str, Any]:
+        """计划审批：approve/edit 批准后进入执行；reject 留在计划模式并回喂反馈。"""
+        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+        summary = str(args.get("summary") or "（未提供方案摘要）")
+        steps = _normalize_plan_steps(args.get("steps"))
+        decision = self._request_approval(
+            "plan_review", "propose_plan", {"summary": summary, "steps": steps},
+            summary, options={"plan": {"summary": summary, "steps": steps}},
+        )
+        action = str(decision.get("action"))
+        if action in ("approve", "edit"):
+            if action == "edit":
+                revised = _normalize_plan_steps(decision.get("args", {}).get("steps"))
+                if revised:
+                    steps = revised
+            self._plan_approved = True
+            self.tools = self._plan_mode_tools()
+            if self.session is not None:
+                self.session.set_plan(summary, steps, approved=True)
+            self.emit("plan_updated", "计划已批准", {"summary": summary, "steps": steps})
+            result = {
+                "success": True,
+                "approved": True,
+                "note": "计划已批准。开始逐步执行：每步开始前用 update_plan 置 in_progress，成功后置 completed。",
+                "steps": steps,
+            }
+        else:
+            feedback = str(decision.get("message") or decision.get("args", {}).get("feedback") or "用户要求修改计划")
+            result = {
+                "success": True,
+                "approved": False,
+                "note": f"用户未批准计划：{feedback}。请据此调整后再次调用 propose_plan，期间仍只能只读研究或 ask_user。",
+            }
+        return tool_result_message(tool_call, json.dumps(result, ensure_ascii=False), protocol=self.protocol)
+
+    def _handle_update_plan(self, tool_call: ToolCall) -> dict[str, Any]:
+        """执行期更新计划进度（整表替换，每轮至多一次）。"""
+        if self._update_plan_this_round:
+            return tool_result_message(
+                tool_call,
+                json.dumps({"success": False, "error": "本轮已调用过 update_plan，整表替换语义下每轮至多一次"}, ensure_ascii=False),
+                protocol=self.protocol,
+            )
+        self._update_plan_this_round = True
+        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+        todos = args.get("todos") if isinstance(args.get("todos"), list) else []
+        statuses = {
+            str(t.get("id")): str(t.get("status"))
+            for t in todos
+            if isinstance(t, dict) and t.get("id")
+        }
+        if self.session is not None:
+            self.session.update_plan_status(statuses)
+            plan = self.session.plan_dict()
+        else:
+            plan = {"summary": "", "steps": [{"id": k, "status": v} for k, v in statuses.items()]}
+        self.emit("plan_updated", "计划进度更新", plan)
+        return tool_result_message(
+            tool_call,
+            json.dumps({"success": True, "note": "计划进度已更新。"}, ensure_ascii=False),
+            protocol=self.protocol,
+        )
+
     def _run_inner(self, result: AgentLoopResult) -> None:
         while self.step_count < self.max_steps:
             if self.stop_event is not None and self.stop_event.is_set():
@@ -361,6 +534,7 @@ class AgentLoop:
                 return
             self._absorb_pending()
             self._round_no += 1
+            self._update_plan_this_round = False
             streamed = {"active": False}
 
             def on_delta(chunk: str) -> None:
@@ -390,6 +564,10 @@ class AgentLoop:
                     break
                 if tool_call.name == "ask_user":
                     self._remember(self._handle_ask_user(tool_call))
+                elif tool_call.name == "propose_plan":
+                    self._remember(self._handle_propose_plan(tool_call))
+                elif tool_call.name == "update_plan":
+                    self._remember(self._handle_update_plan(tool_call))
                 else:
                     self._remember(self._execute_tool_call(tool_call, result))
         if self.step_count >= self.max_steps:
@@ -468,6 +646,13 @@ class AgentLoop:
                 "success": False,
                 "error_kind": "INVALID_REQUEST",
                 "error": f"未知 op: {op}（只允许 capabilities 里列出的公开 op）",
+            }
+        # 计划模式：计划获批前只允许只读 op，建模 op 一律拦下（工具表已过滤，此为兜底）。
+        if not self._plan_approved and op not in READONLY_OPS:
+            return {
+                "success": False,
+                "error_kind": "PLAN_REQUIRED",
+                "error": "计划模式：请先调用 propose_plan 产出建模计划并获用户批准，再执行改变几何的 op。",
             }
         # 破坏性操作在执行前征求用户（P2 确认点）。skip_approval：该步已在审批流程内确认过。
         if self.approvals is not None and not skip_approval and _is_destructive(op, args):
@@ -674,6 +859,7 @@ def run_agent_loop(
     approvals: ApprovalBroker | None = None,
     session: AgentSession | None = None,
     initial_user_message: dict[str, Any] | None = None,
+    mode: str = "auto",
 ) -> AgentLoopResult:
     """函数式入口（main.py 用）；类入口便于测试注入。"""
     loop = AgentLoop(
@@ -691,5 +877,6 @@ def run_agent_loop(
         approvals=approvals,
         session=session,
         initial_user_message=initial_user_message,
+        mode=mode,
     )
     return loop.run()

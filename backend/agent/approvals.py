@@ -130,7 +130,8 @@ class ApprovalBroker:
         elif action == "approve":
             result = {"action": "approve", "args": dict(request.args)}
         else:
-            result = {"action": "reject", "message": "用户拒绝该步骤"}
+            feedback = str((args_override or {}).get("feedback") or (args_override or {}).get("message") or "").strip()
+            result = {"action": "reject", "message": feedback or "用户拒绝该步骤", "args": dict(args_override or {})}
         request._result = result
         request._event.set()
         return result

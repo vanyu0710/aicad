@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 OperationMode = Literal["strict", "smart"]
 SmartFillPolicy = Literal["suggest_only", "limited_fill", "aggressive_fill", "full_autonomous"]
 FeatureOperation = Literal["base", "add", "remove", "modify", "pattern"]
-StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error", "process_step_started", "process_step_done", "process_step_failed", "process_step_blocked", "agent_step", "agent_text_delta", "agent_queued", "agent_snapshot", "agent_done", "approval_required"]
+StageEventType = Literal["stage_started", "stage_progress", "stage_done", "question_required", "artifact_ready", "error", "process_step_started", "process_step_done", "process_step_failed", "process_step_blocked", "agent_step", "agent_text_delta", "agent_queued", "agent_snapshot", "plan_updated", "agent_done", "approval_required"]
 
 
 def now_iso() -> str:
@@ -802,6 +802,7 @@ class AgentMessageRequest(BaseModel):
     image_data_url: str | None = None
     language: Literal["zh", "en"] = "zh"
     max_steps: int = 30
+    mode: Literal["auto", "plan"] = "auto"  # plan=计划模式，先出计划待批准再执行
 
 
 class AgentSessionMessage(BaseModel):
@@ -815,6 +816,7 @@ class AgentSessionMessage(BaseModel):
 class AgentSessionView(BaseModel):
     status: Literal["idle", "running", "waiting_approval"] = "idle"
     messages: list[AgentSessionMessage] = Field(default_factory=list)
+    plan: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentResolveRequest(BaseModel):

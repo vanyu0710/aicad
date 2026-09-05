@@ -109,14 +109,14 @@ def _round_with_call(name: str, arguments: dict) -> ToolCallRound:
     )
 
 
-def _run(worker, chat, *, max_steps=10, stop_event=None, emit=None, run_dir=None, approvals=None, session=None):
+def _run(worker, chat, *, max_steps=10, stop_event=None, emit=None, run_dir=None, approvals=None, session=None, mode="auto"):
     if run_dir is None:
         with tempfile.TemporaryDirectory() as td:
-            return _run_in_dir(worker, chat, Path(td), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals, session=session)
-    return _run_in_dir(worker, chat, Path(run_dir), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals, session=session)
+            return _run_in_dir(worker, chat, Path(td), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals, session=session, mode=mode)
+    return _run_in_dir(worker, chat, Path(run_dir), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals, session=session, mode=mode)
 
 
-def _run_in_dir(worker, chat, run_dir: Path, *, max_steps, stop_event, emit, approvals=None, session=None):
+def _run_in_dir(worker, chat, run_dir: Path, *, max_steps, stop_event, emit, approvals=None, session=None, mode="auto"):
     return run_agent_loop(
         worker=worker,
         chat_with_tools=chat,
@@ -129,6 +129,7 @@ def _run_in_dir(worker, chat, run_dir: Path, *, max_steps, stop_event, emit, app
         stop_event=stop_event,
         approvals=approvals,
         session=session,
+        mode=mode,
     )
 
 
@@ -640,6 +641,115 @@ class AgentLoopSessionTests(unittest.TestCase):
             session = self._session(Path(td))
             _run(worker, chat, session=session, run_dir=Path(td))
             self.assertEqual(session.status, "idle")
+
+
+class AgentLoopPlanModeTests(unittest.TestCase):
+    """v0.11 计划模式：工具门控、propose_plan 审批、update_plan 进度、每轮一次。"""
+
+    def test_plan_mode_gates_tools_then_approve_unlocks(self) -> None:
+        from backend.agent.approvals import ApprovalBroker
+
+        broker = ApprovalBroker(timeout=5)
+        worker = FakeWorker([_success()])
+        events: list = []
+        tools_by_round: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            tools_by_round.append([t["function"]["name"] for t in tools])
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("propose_plan", {"summary": "底板+孔", "steps": [{"id": "s1", "title": "建底板", "op": "create_workplane"}]})
+            if calls["n"] == 2:
+                return _round_with_call("create_workplane", {"name": "base"})
+            return ToolCallRound(text="完成", tool_calls=[])
+
+        def resolve_after_time():
+            import time as _t
+
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "approve")
+
+        t = threading.Thread(target=resolve_after_time)
+        t.start()
+        result = _run(worker, chat, approvals=broker, mode="plan", emit=lambda ev, m, p: events.append((ev, m, p)))
+        t.join(timeout=2)
+        # 批准前：工具表含 propose_plan 但不含建模 op create_workplane
+        self.assertIn("propose_plan", tools_by_round[0])
+        self.assertNotIn("create_workplane", tools_by_round[0])
+        # 批准后：建模 op 解锁并真正执行
+        self.assertIn("create_workplane", tools_by_round[1])
+        self.assertIn(("create_workplane", {"name": "base"}), worker.executed)
+        self.assertTrue(any(e[0] == "approval_required" and e[2].get("kind") == "plan_review" for e in events))
+        self.assertTrue(any(e[0] == "plan_updated" for e in events))
+        self.assertTrue(result.ok)
+
+    def test_plan_mode_reject_keeps_planning(self) -> None:
+        from backend.agent.approvals import ApprovalBroker
+
+        broker = ApprovalBroker(timeout=5)
+        worker = FakeWorker()
+        tools_by_round: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            tools_by_round.append([t["function"]["name"] for t in tools])
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("propose_plan", {"summary": "方案", "steps": [{"id": "s1", "title": "建底板"}]})
+            return ToolCallRound(text="好，我重新规划", tool_calls=[])
+
+        def resolve_after_time():
+            import time as _t
+
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "reject", {"feedback": "先加个圆角"})
+
+        t = threading.Thread(target=resolve_after_time)
+        t.start()
+        result = _run(worker, chat, approvals=broker, mode="plan", emit=lambda *_: None)
+        t.join(timeout=2)
+        # 拒绝后仍留在计划模式：第二轮工具表依旧不含建模 op，且从未执行建模
+        self.assertNotIn("create_workplane", tools_by_round[1])
+        self.assertEqual(worker.executed, [])
+        self.assertTrue(result.ok)
+
+    def test_update_plan_emits_progress_and_once_per_round(self) -> None:
+        worker = FakeWorker()
+        events: list = []
+        calls = {"n": 0}
+
+        def two_update_round() -> ToolCallRound:
+            return ToolCallRound(
+                text="",
+                tool_calls=[
+                    ToolCall(id="c1", name="update_plan", arguments={"todos": [{"id": "s1", "status": "in_progress"}]}),
+                    ToolCall(id="c2", name="update_plan", arguments={"todos": [{"id": "s1", "status": "completed"}]}),
+                ],
+                raw_message={"role": "assistant", "content": None, "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "update_plan", "arguments": json.dumps({"todos": [{"id": "s1", "status": "in_progress"}]})}},
+                    {"id": "c2", "type": "function", "function": {"name": "update_plan", "arguments": json.dumps({"todos": [{"id": "s1", "status": "completed"}]})}},
+                ]},
+            )
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return two_update_round()
+            # 第二轮检查回喂：应有一条 error（每轮至多一次）
+            err = [m for m in messages if m.get("role") == "tool" and "每轮至多一次" in str(m.get("content"))]
+            self.assertTrue(err, "同轮第二次 update_plan 应被拒")
+            return ToolCallRound(text="完成", tool_calls=[])
+
+        result = _run(worker, chat, emit=lambda ev, m, p: events.append((ev, m, p)))
+        plan_events = [e for e in events if e[0] == "plan_updated"]
+        self.assertEqual(len(plan_events), 1)  # 只有第一次成功
+        self.assertEqual(plan_events[0][2]["steps"][0]["status"], "in_progress")
+        self.assertTrue(result.ok)
 
 
 if __name__ == "__main__":

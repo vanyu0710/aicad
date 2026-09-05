@@ -355,14 +355,29 @@ export type AgentSessionMessage = {
   has_image: boolean;
 };
 
+export type PlanStep = {
+  id: string;
+  title: string;
+  op?: string | null;
+  rationale?: string | null;
+  status: "pending" | "in_progress" | "completed";
+};
+
+export type PlanState = {
+  summary?: string;
+  steps: PlanStep[];
+  approved?: boolean;
+};
+
 export type AgentSessionView = {
   status: "idle" | "running" | "waiting_approval";
   messages: AgentSessionMessage[];
+  plan?: PlanState;
 };
 
 export async function sendAgentMessage(
   projectId: string,
-  payload: { text: string; image_data_url?: string | null; language: string; max_steps?: number },
+  payload: { text: string; image_data_url?: string | null; language: string; max_steps?: number; mode?: "auto" | "plan" },
 ) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}/agent/message`, {
     method: "POST",

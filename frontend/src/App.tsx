@@ -21,6 +21,7 @@ import {
   type Approval,
   type KernelFeatureTree,
   type ModelConfig,
+  type PlanStep,
   type ProcessStep,
   type ProjectState,
 } from "./api";
@@ -95,10 +96,12 @@ export default function App() {
     agentLastOp,
     pendingApprovals,
     chat,
+    plan: agentPlan,
     setAgentRunning,
     setAgentSteps,
     setAgentLastOp,
     setPendingApprovals,
+    setPlan,
     setChat,
     appendChatUser,
     appendChatAssistantDelta,
@@ -108,6 +111,7 @@ export default function App() {
   } = useAppStore();
   const bootRef = useRef(false);
   const chatInputRef = useRef<HTMLInputElement>(null);
+  const [planMode, setPlanMode] = useState(false);
   const language = useAppStore((state) => state.language);
 
   /** 统一发送入口：空闲=开新任务；运行中=插话。首条消息携带草图图片。 */
@@ -127,6 +131,7 @@ export default function App() {
         text: text.trim(),
         image_data_url: attachImage,
         language,
+        mode: planMode ? "plan" : "auto",
       });
     } catch (err) {
       setAgentRunning(false);
@@ -252,6 +257,7 @@ export default function App() {
       clearEvents();
       setProcessSteps([]);
       setChat([]);
+      setPlan(null);
       enterWorkspace();
       setBackendState("connected");
       await refreshProjects();
@@ -290,8 +296,10 @@ export default function App() {
           tools: [],
           snapshots: [],
         })));
+        setPlan(sessionView.plan?.steps?.length ? sessionView.plan : null);
       } catch {
         setChat([]);
+        setPlan(null);
       }
     } catch (err) {
       setError(t("app.open.failed", { err: String(err) }));
@@ -399,6 +407,13 @@ export default function App() {
         if (url) {
           attachChatSnapshot(url);
         }
+      }
+      if (event.type === "plan_updated") {
+        setPlan({
+          summary: event.payload?.summary ? String(event.payload.summary) : undefined,
+          steps: Array.isArray(event.payload?.steps) ? (event.payload.steps as PlanStep[]) : [],
+          approved: Boolean(event.payload?.approved),
+        });
       }
       if (event.type === "approval_required") {
         const approval: Approval = {
@@ -740,6 +755,9 @@ export default function App() {
           pendingApprovals={pendingApprovals}
           questions={questions}
           imageFile={imageFile}
+          plan={agentPlan}
+          planMode={planMode}
+          onPlanModeChange={setPlanMode}
           onResolveApproval={(approval, action, argsOverride) => void handleAgentResolve(approval, action, argsOverride)}
           onClarificationContinue={(answers) => void onClarificationContinue(answers)}
           onChatMessageChange={setChatMessage}

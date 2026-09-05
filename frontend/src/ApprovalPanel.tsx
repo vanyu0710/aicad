@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Approval, AskQuestion } from "./api";
+import type { Approval, AskQuestion, PlanStep } from "./api";
 import { useT } from "./i18n";
 
 type Props = {
@@ -34,12 +34,13 @@ export default function ApprovalPanel({ approvals, busy, onResolve }: Props) {
         if (approval.kind === "ask_user") {
           return <AskUserCard key={approval.approval_id} approval={approval} busy={busy} onResolve={onResolve} />;
         }
+        if (approval.kind === "plan_review") {
+          return <PlanReviewCard key={approval.approval_id} approval={approval} busy={busy} onResolve={onResolve} />;
+        }
         const kindLabel =
-          approval.kind === "plan_review"
-            ? t("approval.kind.plan")
-            : approval.kind === "destructive_fix"
-              ? t("approval.kind.fix")
-              : t("approval.kind.destructive");
+          approval.kind === "destructive_fix"
+            ? t("approval.kind.fix")
+            : t("approval.kind.destructive");
         const draft = drafts[approval.approval_id];
         const isEditing = Boolean(draft);
         const argText = JSON.stringify(approval.args ?? {}, null, 0);
@@ -249,6 +250,58 @@ function AskUserCard({
         </button>
         <button type="button" className="approval-reject" disabled={busy} onClick={() => onResolve(approval, "reject")}>
           {t("approval.question.skip")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PlanReviewCard({
+  approval,
+  busy,
+  onResolve,
+}: {
+  approval: Approval;
+  busy: boolean;
+  onResolve: Props["onResolve"];
+}) {
+  const t = useT();
+  const [feedback, setFeedback] = useState("");
+  const plan = (approval.options?.plan ?? { steps: [] }) as { summary?: string; steps?: PlanStep[] };
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  return (
+    <div className="approval-card plan-card-review">
+      <div className="approval-head">
+        <span className="approval-kind">{t("approval.kind.plan")}</span>
+      </div>
+      {plan.summary && <div className="approval-message">{plan.summary}</div>}
+      <ol className="plan-steps">
+        {steps.map((step) => (
+          <li key={step.id} className="plan-step pending">
+            <span className="plan-step-mark" aria-hidden="true">○</span>
+            <span className="plan-step-title">{step.title}</span>
+            {step.op && <code className="plan-step-op">{step.op}</code>}
+          </li>
+        ))}
+      </ol>
+      <textarea
+        className="ask-text"
+        rows={2}
+        placeholder={t("approval.plan.feedback_placeholder")}
+        value={feedback}
+        onChange={(e) => setFeedback(e.target.value)}
+      />
+      <div className="approval-actions">
+        <button type="button" className="approval-approve" disabled={busy} onClick={() => onResolve(approval, "approve")}>
+          {t("approval.approve")}
+        </button>
+        <button
+          type="button"
+          className="approval-reject"
+          disabled={busy}
+          onClick={() => onResolve(approval, "reject", { feedback: feedback.trim() || undefined })}
+        >
+          {t("approval.plan.request_changes")}
         </button>
       </div>
     </div>

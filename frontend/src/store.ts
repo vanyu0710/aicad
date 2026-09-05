@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Approval, ModelConfig, ProcessStep, ProjectState } from "./api";
+import type { Approval, ModelConfig, PlanState, ProcessStep, ProjectState } from "./api";
 
 export type Lang = "zh" | "en";
 export type ManagerTab = "feature" | "property" | "configuration";
@@ -116,6 +116,7 @@ type AppState = {
   agentLastOp: string;
   pendingApprovals: Approval[];
   chat: ChatEntry[];
+  plan: PlanState | null;
   setProject: (project: ProjectState | null) => void;
   setDescription: (value: string) => void;
   setImageFile: (file: File | null) => void;
@@ -141,6 +142,7 @@ type AppState = {
   setAgentSteps: (steps: number) => void;
   setAgentLastOp: (op: string) => void;
   setPendingApprovals: (approvals: Approval[]) => void;
+  setPlan: (plan: PlanState | null) => void;
   setChat: (entries: ChatEntry[]) => void;
   appendChatUser: (text: string, hasImage?: boolean) => void;
   appendChatAssistantDelta: (chunk: string) => void;
@@ -215,6 +217,7 @@ export const useAppStore = create<AppState>((set) => ({
   agentLastOp: "",
   pendingApprovals: [],
   chat: [],
+  plan: null,
   ui: {
     leftTab: "feature",
     rightTab: "assistant",
@@ -272,6 +275,7 @@ export const useAppStore = create<AppState>((set) => ({
   setAgentSteps: (agentSteps) => set({ agentSteps }),
   setAgentLastOp: (agentLastOp) => set({ agentLastOp }),
   setPendingApprovals: (pendingApprovals) => set({ pendingApprovals }),
+  setPlan: (plan) => set({ plan }),
   setChat: (chat) => set({ chat }),
   appendChatUser: (text, hasImage = false) =>
     set((state) => ({

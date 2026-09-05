@@ -38,7 +38,7 @@ class AgentEndpointTests(unittest.TestCase):
     def _blocking_runner(self, release: threading.Event):
         """把 agent 线程执行体替换为阻塞函数，模拟运行中的 agent。"""
 
-        def runner(project_id, text, image_data_url, language, max_steps, settings, stop_event, loop=None, approvals=None, session=None):
+        def runner(project_id, text, image_data_url, language, max_steps, settings, stop_event, loop=None, approvals=None, session=None, mode=None):
             release.wait(timeout=5)
 
         return runner
@@ -146,7 +146,7 @@ class AgentMessageSessionTests(unittest.TestCase):
             self.assertTrue(resp.json()["started"])
 
     def _blocking_runner_pub(self, release: threading.Event):
-        def runner(project_id, text, image_data_url, language, max_steps, settings, stop_event, loop=None, approvals=None, session=None):
+        def runner(project_id, text, image_data_url, language, max_steps, settings, stop_event, loop=None, approvals=None, session=None, mode=None):
             release.wait(timeout=5)
 
         return runner
@@ -253,7 +253,7 @@ class AgentResolveTests(unittest.TestCase):
         broker = main_module.ApprovalBroker(timeout=30)
         release = threading.Event()
 
-        def blocking(project_id, text, image_data_url, language, max_steps, settings, stop_event, loop=None, approvals=None, session=None):
+        def blocking(project_id, text, image_data_url, language, max_steps, settings, stop_event, loop=None, approvals=None, session=None, mode=None):
             release.wait(timeout=30)
 
         with patch.object(main_module, "_run_agent_thread", side_effect=blocking):

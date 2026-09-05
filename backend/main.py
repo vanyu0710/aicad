@@ -496,7 +496,7 @@ def _stop_agent_run(project_id: str) -> bool:
     return True
 
 
-def _launch_agent_run(project_id: str, *, text: str, image_data_url: str | None, language: str, max_steps: int) -> None:
+def _launch_agent_run(project_id: str, *, text: str, image_data_url: str | None, language: str, max_steps: int, mode: str = "auto") -> None:
     """共享启动器：起 agent 线程（会话模式）。调用方需确认当前无运行中 agent。"""
     stop_event = threading.Event()
     approvals = ApprovalBroker()
@@ -514,6 +514,7 @@ def _launch_agent_run(project_id: str, *, text: str, image_data_url: str | None,
             asyncio.get_running_loop(),
             approvals,
             session,
+            mode,
         ),
         daemon=True,
     )
@@ -548,6 +549,7 @@ async def agent_message(project_id: str, request: AgentMessageRequest):
         image_data_url=request.image_data_url,
         language=request.language,
         max_steps=request.max_steps,
+        mode=request.mode,
     )
     return {"ok": True, "started": True, "project_id": project_id}
 
@@ -556,7 +558,7 @@ async def agent_message(project_id: str, request: AgentMessageRequest):
 async def agent_session_view(project_id: str):
     _project_or_404(project_id)
     session = _get_session(project_id)
-    return AgentSessionView(status=session.status, messages=session.view()).model_dump()
+    return AgentSessionView(status=session.status, messages=session.view(), plan=session.plan_dict()).model_dump()
 
 
 @app.post("/api/projects/{project_id}/agent/session/clear")
@@ -622,6 +624,7 @@ def _run_agent_thread(
     loop: asyncio.AbstractEventLoop,
     approvals: ApprovalBroker,
     session,
+    mode: str = "auto",
 ) -> None:
     """后台线程：worker RPC + agent loop + 快照提交。事件经 EventBus 回主循环。"""
     emit = _emit_from_thread_factory(project_id, loop)
@@ -650,6 +653,7 @@ def _run_agent_thread(
             approvals=approvals,
             session=session,
             initial_user_message=task_message,
+            mode=mode,
         )
         artifacts = ArtifactSet(
             run_id=run_id,

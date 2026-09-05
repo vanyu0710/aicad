@@ -124,6 +124,12 @@ agent_modeling:
     - 用户跳过/未回答时，基于合理假设继续并在总结标注，不要反复追问同一问题。
     - delete_feature / confirm_replace / shell 等破坏性操作系统会自动征求用户，你不用额外确认；但在请求审批前，先想清楚是否确实需要破坏性操作。
 
+    计划模式（当用户开启"计划模式"时）：
+    - 先用只读 op（query/select/measure/render）研究、必要时 ask_user 澄清关键尺寸，然后调用 propose_plan 产出分步建模计划（每步 id/title/op/rationale），等待用户批准。
+    - 计划获批准前，禁止调用任何改变几何的 op（系统会拦截）。用户拒绝时按反馈调整计划再次 propose_plan。
+    - 批准后进入执行：每步开始前调用 update_plan 置 in_progress，该 op 成功后置 completed（整表一次提交，每轮至多一次）。
+    - 简单任务（改一个尺寸等）可直接建模，不必强行出计划。
+
     自检与收尾：
     - 建模中关注工具结果里的 geometry_summary.volume 与 bounding_box，发现异常（体积 0、突然清空、bbox 不合理）立即修正。
     - 全部特征完成后调用 validate_geometry(level="standard")，根据失败原因修复。

@@ -186,6 +186,19 @@ agent_modeling:
       auto-approved by the system; you don't confirm them yourself, but
       reconsider whether a destructive op is truly needed before requesting it.
 
+    Plan mode (when the user enables "plan mode"):
+    - First research with read-only ops (query/select/measure/render) and, if
+      needed, ask_user to clarify key dimensions; then call propose_plan with
+      ordered steps (id/title/op/rationale) and wait for the user's approval.
+    - Before the plan is approved, do not call any geometry-changing op (the
+      system blocks them). If the user rejects, revise per their feedback and
+      propose_plan again.
+    - After approval, execute: call update_plan to mark a step in_progress
+      before starting it and completed after its op succeeds (whole-list replace,
+      at most once per turn).
+    - For simple tasks (e.g. change one dimension), model directly; no need to
+      force a plan.
+
     Self-check and wrap-up:
     - Watch geometry_summary.volume and bounding_box in tool results; fix
       anomalies immediately (zero volume, wiped part, implausible bbox).

@@ -73,6 +73,7 @@ class AgentSession:
     messages: list[dict[str, Any]] = field(default_factory=list)
     pending: list[dict[str, Any]] = field(default_factory=list)
     status: str = "idle"  # idle | running | waiting_approval
+    plan: dict[str, Any] = field(default_factory=dict)  # {summary, steps:[{id,title,op?,status}], approved}
     updated_at: float = field(default_factory=_now)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -109,6 +110,28 @@ class AgentSession:
             self.status = status
             self.updated_at = _now()
             self.save()
+
+    # ------------------------------------------------------------ 计划模式
+    def set_plan(self, summary: str, steps: list[dict[str, Any]], *, approved: bool) -> None:
+        """记录/更新计划（propose_plan 批准后写入，含批准标记）。"""
+        with self._lock:
+            self.plan = {"summary": summary, "steps": [dict(s) for s in steps], "approved": approved}
+            self.updated_at = _now()
+            self.save()
+
+    def update_plan_status(self, statuses: dict[str, str]) -> None:
+        """按 id 更新计划步骤状态（update_plan 整表进度）。"""
+        with self._lock:
+            steps = self.plan.get("steps") or []
+            for step in steps:
+                if step.get("id") in statuses:
+                    step["status"] = statuses[step["id"]]
+            self.updated_at = _now()
+            self.save()
+
+    def plan_dict(self) -> dict[str, Any]:
+        with self._lock:
+            return json.loads(json.dumps(self.plan, ensure_ascii=False))
 
     # ------------------------------------------------------------ 视图与持久化
     def view(self, limit: int = 200) -> list[dict[str, Any]]:
@@ -157,6 +180,7 @@ class AgentSession:
             "updated_at": self.updated_at,
             "messages": self.messages,
             "pending": self.pending,
+            "plan": self.plan,
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -193,6 +217,7 @@ class SessionRegistry:
                     data = json.loads(path.read_text(encoding="utf-8"))
                     session.messages = list(data.get("messages") or [])
                     session.pending = list(data.get("pending") or [])
+                    session.plan = dict(data.get("plan") or {})
                     session.status = "idle"  # 进程重启后运行态一律复位
                 except (ValueError, OSError):
                     session.messages = []

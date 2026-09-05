@@ -2086,3 +2086,91 @@
   font: inherit;
   font-size: 12px;
 }
+
+/* ===== plan mode: checklist + toggle + review card ===== */
+.plan-card {
+  flex: none;
+  margin: 10px 12px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(56, 195, 232, 0.28);
+  border-radius: 8px;
+  background: rgba(10, 22, 42, 0.72);
+}
+
+.plan-summary {
+  font-size: 12.5px;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+
+.plan-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.plan-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.plan-step-mark {
+  width: 14px;
+  text-align: center;
+  color: var(--ink-muted);
+}
+
+.plan-step.in_progress {
+  color: var(--ink);
+}
+
+.plan-step.in_progress .plan-step-mark {
+  color: var(--jade);
+}
+
+.plan-step.completed {
+  color: var(--ink-muted);
+  text-decoration: line-through;
+}
+
+.plan-step.completed .plan-step-mark {
+  color: #5fe0a8;
+  text-decoration: none;
+}
+
+.plan-step-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.plan-step-op {
+  font-size: 10px;
+  color: var(--jade);
+  background: rgba(56, 195, 232, 0.12);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+.chat-plan-toggle {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.chat-plan-toggle.active {
+  color: #0a1626;
+  background: var(--jade);
+  border-color: var(--jade);
+}
+
+.plan-card-review .plan-steps {
+  margin: 8px 0;
+}

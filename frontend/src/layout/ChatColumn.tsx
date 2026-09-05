@@ -1,7 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import ApprovalPanel from "../ApprovalPanel";
 import ClarificationPanel from "../ClarificationPanel";
-import { API_ROOT as apiRoot, type Approval } from "../api";
+import { API_ROOT as apiRoot, type Approval, type PlanState } from "../api";
 import { useAppStore, type ChatEntry } from "../store";
 import { useT } from "../i18n";
 
@@ -13,6 +13,9 @@ type Props = {
   pendingApprovals?: Approval[];
   questions: any[];
   imageFile: File | null;
+  plan?: PlanState | null;
+  planMode: boolean;
+  onPlanModeChange: (value: boolean) => void;
   onResolveApproval?: (approval: Approval, action: "approve" | "reject" | "edit", argsOverride?: Record<string, unknown>) => void;
   onClarificationContinue: (answers: string) => void;
   onChatMessageChange: (value: string) => void;
@@ -29,6 +32,9 @@ export default function ChatColumn({
   pendingApprovals,
   questions,
   imageFile,
+  plan,
+  planMode,
+  onPlanModeChange,
   onResolveApproval,
   onClarificationContinue,
   onChatMessageChange,
@@ -52,6 +58,23 @@ export default function ChatColumn({
         <strong>{t("task.assistant")}</strong>
         <span className="workspace-chip">{engineLabel}</span>
       </div>
+
+      {plan && plan.steps.length > 0 && (
+        <div className="plan-card">
+          {plan.summary && <div className="plan-summary">{plan.summary}</div>}
+          <ol className="plan-steps">
+            {plan.steps.map((step) => (
+              <li key={step.id} className={`plan-step ${step.status}`}>
+                <span className="plan-step-mark" aria-hidden="true">
+                  {step.status === "completed" ? "✓" : step.status === "in_progress" ? "▸" : "○"}
+                </span>
+                <span className="plan-step-title">{step.title}</span>
+                {step.op && <code className="plan-step-op">{step.op}</code>}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
 
       {pendingApprovals && pendingApprovals.length > 0 && onResolveApproval && (
         <div className="chat-column-approvals">
@@ -126,6 +149,15 @@ export default function ChatColumn({
               }
             }}
           />
+          <button
+            type="button"
+            className={`chat-plan-toggle${planMode ? " active" : ""}`}
+            title={t("chat.plan_mode.title")}
+            aria-pressed={planMode}
+            onClick={() => onPlanModeChange(!planMode)}
+          >
+            {t("chat.plan_mode")}
+          </button>
           <button
             type="button"
             className="chat-attach"

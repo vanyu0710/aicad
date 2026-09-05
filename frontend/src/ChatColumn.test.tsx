@@ -16,6 +16,8 @@ function renderColumn(chat: any[] = []) {
       engineLabel="Build123d Worker（受控执行）"
       questions={[]}
       imageFile={null}
+      planMode={false}
+      onPlanModeChange={vi.fn()}
       onClarificationContinue={vi.fn()}
       onChatMessageChange={vi.fn()}
       onSendChat={vi.fn()}
@@ -61,5 +63,32 @@ describe("ChatColumn", () => {
     useAppStore.setState({ agentRunning: true });
     renderColumn();
     expect(screen.getByText(/将在当前步骤结束后生效/)).toBeInTheDocument();
+  });
+
+  it("renders the plan checklist with step statuses", () => {
+    render(
+      <ChatColumn
+        chat={[]}
+        chatMessage=""
+        busy={false}
+        engineLabel="Build123d Worker"
+        questions={[]}
+        imageFile={null}
+        planMode={false}
+        onPlanModeChange={vi.fn()}
+        onClarificationContinue={vi.fn()}
+        onChatMessageChange={vi.fn()}
+        onSendChat={vi.fn()}
+        onImageChange={vi.fn()}
+        plan={{ summary: "底板+中心孔", steps: [
+          { id: "s1", title: "建底板", status: "completed" },
+          { id: "s2", title: "开中心孔", op: "hole", status: "in_progress" },
+        ] }}
+      />,
+    );
+    expect(screen.getByText("底板+中心孔")).toBeInTheDocument();
+    expect(screen.getByText("建底板")).toBeInTheDocument();
+    expect(screen.getByText("开中心孔")).toBeInTheDocument();
+    expect(screen.getByText("hole")).toBeInTheDocument();
   });
 });
