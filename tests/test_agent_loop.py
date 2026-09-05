@@ -413,12 +413,17 @@ class AgentLoopApprovalTests(unittest.TestCase):
 
         broker = ApprovalBroker(timeout=5)
         worker = FakeWorker([_success()])
+        questions = [{"id": "q1", "question": "孔直径多少？", "type": "single",
+                      "options": [{"label": "6mm"}, {"label": "8mm"}]}]
+
+        calls: list = []
 
         def chat(messages, tools):
+            calls.append(list(messages))
             tool_names = [t["function"]["name"] for t in tools]
             self.assertIn("ask_user", tool_names)  # 工具表含 ask_user
             if not any(m.get("role") == "tool" for m in messages):
-                return _round_with_call("ask_user", {"question": "孔直径多少？", "options": ["6", "8"]})
+                return _round_with_call("ask_user", {"questions": questions})
             return ToolCallRound(text="收到", tool_calls=[])
 
         def resolve_after_time():
@@ -427,17 +432,89 @@ class AgentLoopApprovalTests(unittest.TestCase):
             _t.sleep(0.15)
             with broker._lock:
                 aid = next(iter(broker._requests))
-            broker.resolve(aid, "edit", {"answer": "8mm"})
+            broker.resolve(aid, "edit", {"answers": {"q1": "8mm"}})
 
         t = threading.Thread(target=resolve_after_time)
         t.start()
-        final_messages = []
-        result = _run(worker, chat, approvals=broker,
-                      emit=lambda ev, m, p: None)
+        result = _run(worker, chat, approvals=broker, emit=lambda ev, m, p: None)
         t.join(timeout=2)
-        # ask_user 不执行 kernel op（worker.executed 为空），答案经 tool result 回喂模型
+        # ask_user 不执行 kernel op（worker.executed 为空）
         self.assertEqual(worker.executed, [])
         self.assertTrue(result.ok)
+        # 答案以 Q/A 转录回喂模型
+        tool_message = next(m for m in calls[-1] if m.get("role") == "tool")
+        payload = json.loads(tool_message["content"])
+        self.assertEqual(payload["answers"], {"q1": "8mm"})
+        self.assertIn("Q: 孔直径多少？", payload["transcript"])
+        self.assertIn("A: 8mm", payload["transcript"])
+
+    def test_ask_user_multi_questions_transcript(self) -> None:
+        from backend.agent.approvals import ApprovalBroker
+
+        broker = ApprovalBroker(timeout=5)
+        worker = FakeWorker()
+        questions = [
+            {"id": "thick", "question": "底板厚度？", "type": "single", "options": [{"label": "10mm"}, {"label": "12mm"}]},
+            {"id": "holes", "question": "需要哪些孔？", "type": "multi", "options": [{"label": "中心孔"}, {"label": "螺栓孔"}]},
+        ]
+
+        calls: list = []
+
+        def chat(messages, tools):
+            calls.append(list(messages))
+            if not any(m.get("role") == "tool" for m in messages):
+                return _round_with_call("ask_user", {"questions": questions})
+            return ToolCallRound(text="好", tool_calls=[])
+
+        def resolve_after_time():
+            import time as _t
+
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "edit", {"answers": {"thick": "12mm", "holes": ["中心孔", "螺栓孔"]}})
+
+        t = threading.Thread(target=resolve_after_time)
+        t.start()
+        result = _run(worker, chat, approvals=broker, emit=lambda *_: None)
+        t.join(timeout=2)
+        self.assertTrue(result.ok)
+        tool_message = next(m for m in calls[-1] if m.get("role") == "tool")
+        transcript = json.loads(tool_message["content"])["transcript"]
+        self.assertIn("A: 12mm", transcript)
+        self.assertIn("中心孔、螺栓孔", transcript)  # multi 列表拼接
+
+    def test_ask_user_reject_marks_declined(self) -> None:
+        from backend.agent.approvals import ApprovalBroker
+
+        broker = ApprovalBroker(timeout=5)
+        worker = FakeWorker()
+
+        calls: list = []
+
+        def chat(messages, tools):
+            calls.append(list(messages))
+            if not any(m.get("role") == "tool" for m in messages):
+                return _round_with_call("ask_user", {"questions": [{"id": "q1", "question": "孔径？", "type": "text"}]})
+            return ToolCallRound(text="继续", tool_calls=[])
+
+        def resolve_after_time():
+            import time as _t
+
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "reject")
+
+        t = threading.Thread(target=resolve_after_time)
+        t.start()
+        result = _run(worker, chat, approvals=broker, emit=lambda *_: None)
+        t.join(timeout=2)
+        self.assertTrue(result.ok)
+        tool_message = next(m for m in calls[-1] if m.get("role") == "tool")
+        payload = json.loads(tool_message["content"])
+        self.assertTrue(payload["declined"])
+        self.assertIn("跳过", payload["transcript"])
 
     def test_approval_timeout_returns_skipped(self) -> None:
         from backend.agent.approvals import ApprovalBroker

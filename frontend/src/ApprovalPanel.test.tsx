@@ -62,8 +62,60 @@ describe("ApprovalPanel", () => {
   });
 
   it("marks ask_user kind label", () => {
-    const ask: Approval = { ...base, kind: "ask_user", op: "ask_user", args: { question: "孔径？" } };
+    const ask: Approval = { ...base, kind: "ask_user", op: "ask_user", message: "孔径？", options: { questions: [{ id: "q1", question: "孔径？", type: "text" }] } };
     renderPanel([ask]);
     expect(screen.getByText("提问")).toBeInTheDocument();
+  });
+
+  it("ask_user single choice submits answers via edit", async () => {
+    const user = userEvent.setup();
+    const onResolve = vi.fn();
+    const ask: Approval = {
+      ...base,
+      kind: "ask_user",
+      op: "ask_user",
+      message: "孔直径多少？",
+      options: { questions: [{ id: "q1", question: "孔直径多少？", type: "single", options: [{ label: "6mm" }, { label: "8mm" }], required: true }] },
+    };
+    renderPanel([ask], onResolve);
+    const submit = screen.getByRole("button", { name: "提交答案" });
+    expect(submit).toBeDisabled(); // 必答未答
+    await user.click(screen.getByText("8mm"));
+    expect(submit).toBeEnabled();
+    await user.click(submit);
+    expect(onResolve).toHaveBeenCalledWith(ask, "edit", { answers: { q1: "8mm" } });
+  });
+
+  it("ask_user multi + other free text merges into array", async () => {
+    const user = userEvent.setup();
+    const onResolve = vi.fn();
+    const ask: Approval = {
+      ...base,
+      kind: "ask_user",
+      op: "ask_user",
+      message: "需要哪些孔？",
+      options: { questions: [{ id: "holes", question: "需要哪些孔？", type: "multi", options: [{ label: "中心孔" }, { label: "螺栓孔" }], required: false, allowFreeText: true }] },
+    };
+    renderPanel([ask], onResolve);
+    await user.click(screen.getByText("中心孔"));
+    await user.type(screen.getByLabelText("其他（自定义）"), "定位销孔");
+    await user.click(screen.getByRole("button", { name: "提交答案" }));
+    const answers = onResolve.mock.calls[0][2].answers;
+    expect(answers.holes).toEqual(["中心孔", "定位销孔"]);
+  });
+
+  it("ask_user skip resolves reject", async () => {
+    const user = userEvent.setup();
+    const onResolve = vi.fn();
+    const ask: Approval = {
+      ...base,
+      kind: "ask_user",
+      op: "ask_user",
+      message: "厚度？",
+      options: { questions: [{ id: "t", question: "厚度？", type: "single", options: [{ label: "10" }, { label: "12" }] }] },
+    };
+    renderPanel([ask], onResolve);
+    await user.click(screen.getByRole("button", { name: "跳过" }));
+    expect(onResolve).toHaveBeenCalledWith(ask, "reject");
   });
 });

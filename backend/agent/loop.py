@@ -76,23 +76,107 @@ def _compact_step_result(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _ask_user_tool() -> dict[str, Any]:
-    """合成工具：agent 在关键信息不明确时向用户提问。"""
+    """合成工具：agent 在关键信息不明确时向用户提结构化问题（可多问、带选项）。"""
     return {
         "type": "function",
         "function": {
             "name": "ask_user",
-            "description": "当关键尺寸/特征需要用户确认且无法从描述合理推断时，先调用它向用户提问。问题要具体、给出建议值，供用户选择或修正。",
+            "description": (
+                "需要向用户澄清关键信息时调用。一次可合并 1-4 个相关问题（不要连开多次）。"
+                "每个问题 type：single=单选、multi=多选、text=自由输入；single/multi 必须给 2-4 个 options。"
+                "UI 会自动追加“其他/自定义”输入，你不要自己写 Other 选项。"
+                "不要用它问能从上下文推断的问题、或无关紧要的 trivial yes/no。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "question": {"type": "string", "description": "清楚的具体问题，包括上下文"},
-                    "options": {"type": "array", "items": {"type": "string"}, "description": "建议的选项（如尺寸候选），可为空"},
-                    "context": {"type": "string", "description": "为什么需要这一信息（如涉及主基体/孔位影响）"},
+                    "questions": {
+                        "type": "array",
+                        "description": "1-4 个待澄清问题",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string", "description": "问题短标识，用于答案配对（如 q1、thickness）"},
+                                "question": {"type": "string", "description": "清楚具体的问题文本"},
+                                "header": {"type": "string", "description": "≤12 字短标签（chip），可选"},
+                                "type": {"type": "string", "enum": ["single", "multi", "text"], "description": "单选/多选/自由文本"},
+                                "options": {
+                                    "type": "array",
+                                    "description": "single/multi 必填 2-4 项；text 不要提供",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "label": {"type": "string", "description": "选项文本"},
+                                            "description": {"type": "string", "description": "选项补充说明，可选"},
+                                        },
+                                        "required": ["label"],
+                                    },
+                                },
+                                "required": {"type": "boolean", "description": "是否必答，默认 true"},
+                                "allowFreeText": {"type": "boolean", "description": "是否允许自由输入补充，默认 true"},
+                            },
+                            "required": ["id", "question", "type"],
+                        },
+                    },
                 },
-                "required": ["question"],
+                "required": ["questions"],
             },
         },
     }
+
+
+_QUESTION_TYPES = {"single", "multi", "text"}
+
+
+def _normalize_questions(raw: Any) -> list[dict[str, Any]]:
+    """校验并规范化 ask_user 的 questions（补默认、剔除非法项、限 1-4 问）。"""
+    items = raw if isinstance(raw, list) else []
+    cleaned: list[dict[str, Any]] = []
+    for index, item in enumerate(items[:4]):
+        if not isinstance(item, dict):
+            continue
+        qtype = str(item.get("type") or "text")
+        if qtype not in _QUESTION_TYPES:
+            qtype = "text"
+        options: list[dict[str, str]] = []
+        if qtype in ("single", "multi"):
+            for opt in (item.get("options") or [])[:4]:
+                if isinstance(opt, dict) and str(opt.get("label", "")).strip():
+                    options.append({"label": str(opt["label"]).strip(), "description": str(opt.get("description", "") or "")})
+            if len(options) < 2:
+                qtype = "text"  # 选项不足退化为自由输入
+        question = str(item.get("question") or "").strip()
+        if not question:
+            continue
+        cleaned.append({
+            "id": str(item.get("id") or f"q{index + 1}"),
+            "question": question,
+            "header": str(item.get("header") or "")[:12],
+            "type": qtype,
+            "options": options,
+            "required": bool(item.get("required", True)),
+            "allowFreeText": bool(item.get("allowFreeText", True)),
+        })
+    return cleaned
+
+
+def _format_ask_user_transcript(questions: list[dict[str, Any]], answers: dict[str, Any], action: str) -> str:
+    """把用户答案拼成 Q/A 转录，作为 ask_user 工具结果回喂模型。"""
+    if action == "reject":
+        return "用户跳过了本次提问（未给出答案）。请基于合理工程假设继续，并在最终总结里标注这些假设。"
+    if action == "timeout":
+        return "用户未在时限内响应本次提问，视为未回答。请基于合理工程假设继续，并在最终总结里标注这些假设。"
+    lines: list[str] = []
+    for question in questions:
+        value = answers.get(question["id"])
+        if isinstance(value, list):
+            answer = "、".join(str(v) for v in value) if value else "（未回答）"
+        elif value is None or str(value).strip() == "":
+            answer = "（未回答）"
+        else:
+            answer = str(value).strip()
+        lines.append(f"Q: {question['question']}\nA: {answer}")
+    return "\n".join(lines)
 
 
 def _is_destructive(op: str, args: dict[str, Any]) -> bool:
@@ -528,21 +612,29 @@ class AgentLoop:
         return decision
 
     def _handle_ask_user(self, tool_call: ToolCall) -> dict[str, Any]:
-        """合成工具 ask_user：向用户提问，等答复，以工具结果回喂模型。"""
+        """合成工具 ask_user：向用户提结构化问题，等答复，以 Q/A 转录回喂模型。"""
         self.step_count += 1
         self.emit("agent_step", "ask_user", {"step": self.step_count, "op": "ask_user"})
         args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-        question = str(args.get("question") or args.get("context") or "（无问题文本）")
+        questions = _normalize_questions(args.get("questions"))
+        if not questions:
+            # 兼容旧单问形状（question/context）
+            questions = _normalize_questions([
+                {"id": "q1", "question": args.get("question") or args.get("context") or "（无问题文本）", "type": "text"},
+            ])
+        first = questions[0]["question"]
+        message = first if len(questions) == 1 else f"{first}（共 {len(questions)} 个问题）"
         decision = self._request_approval(
-            "ask_user", "ask_user", args, question, options={"question": question, "context": args.get("context", "")},
+            "ask_user", "ask_user", {"questions": questions}, message, options={"questions": questions},
         )
-        if decision["action"] == "timeout":
-            answer = decision.get("message", "用户未响应")
-        elif decision["action"] == "reject":
-            answer = decision.get("message", "用户拒绝回答")
-        else:
-            answer = str(decision.get("args", {}).get("answer") or "（用户未给出答案）")
-        result = {"success": True, "user_answer": answer, "question": question}
+        action = str(decision.get("action"))
+        answers: dict[str, Any] = {}
+        if action in ("approve", "edit"):
+            raw_answers = decision.get("args", {}).get("answers")
+            if isinstance(raw_answers, dict):
+                answers = raw_answers
+        transcript = _format_ask_user_transcript(questions, answers, action)
+        result = {"success": True, "declined": action in ("reject", "timeout"), "answers": answers, "transcript": transcript}
         return tool_result_message(tool_call, json.dumps(result, ensure_ascii=False), protocol=self.protocol)
 
     # ---------------------------------------------------------------- events

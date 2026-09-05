@@ -19,9 +19,24 @@ export type ModelConfig = {
 
 export type ModelRole = "vision" | "planner";
 
+export type AskOption = {
+  label: string;
+  description?: string;
+};
+
+export type AskQuestion = {
+  id: string;
+  question: string;
+  header?: string;
+  type: "single" | "multi" | "text";
+  options?: AskOption[];
+  required?: boolean;
+  allowFreeText?: boolean;
+};
+
 export type Approval = {
   approval_id: string;
-  kind: "destructive_op" | "destructive_fix" | "ask_user";
+  kind: "destructive_op" | "destructive_fix" | "ask_user" | "plan_review";
   op: string;
   args: Record<string, unknown>;
   message: string;

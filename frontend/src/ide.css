@@ -795,10 +795,12 @@
 }
 
 .startup-hero-logo {
-  width: min(330px, 70%);
+  width: min(172px, 52%);
+  aspect-ratio: 1 / 1;
   height: auto;
   display: block;
-  filter: drop-shadow(0 8px 24px rgba(3, 9, 26, 0.55));
+  border-radius: 22px;
+  box-shadow: 0 14px 34px rgba(3, 9, 26, 0.6), 0 0 0 1px rgba(56, 195, 232, 0.12);
 }
 
 .startup-create {
@@ -1970,4 +1972,117 @@
   .chat-column {
     width: 320px;
   }
+}
+
+/* ===== ask_user question cards ===== */
+.ask-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ask-question {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ask-question-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ask-chip {
+  padding: 1px 8px;
+  border: 1px solid rgba(56, 195, 232, 0.4);
+  border-radius: 999px;
+  color: var(--jade);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.ask-question-text {
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.ask-required-tag {
+  margin-left: auto;
+  color: var(--ink-muted);
+  font-size: 10px;
+}
+
+.ask-text {
+  min-height: 40px;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--ink);
+  background: rgba(6, 18, 36, 0.9);
+  font: inherit;
+  font-size: 12.5px;
+  resize: vertical;
+}
+
+.ask-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ask-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(10, 22, 42, 0.6);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.ask-option:hover {
+  border-color: rgba(56, 195, 232, 0.4);
+}
+
+.ask-option.checked {
+  border-color: rgba(56, 195, 232, 0.6);
+  background: rgba(56, 195, 232, 0.12);
+}
+
+.ask-option input {
+  margin-top: 2px;
+  accent-color: var(--jade);
+}
+
+.ask-option-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--ink);
+}
+
+.ask-option-desc {
+  color: var(--ink-muted);
+  font-style: normal;
+  font-size: 11px;
+}
+
+.ask-other {
+  align-items: center;
+}
+
+.ask-other-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink);
+  background: rgba(6, 18, 36, 0.9);
+  font: inherit;
+  font-size: 12px;
 }

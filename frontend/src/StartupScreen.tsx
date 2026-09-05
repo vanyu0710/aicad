@@ -77,7 +77,7 @@ export default function StartupScreen({
 
       <main className="startup-main">
         <section className="startup-hero">
-          <img className="startup-hero-logo" src="/varen-cad-logo.svg" alt="Varen CAD logo" />
+          <img className="startup-hero-logo" src="/varen-cad-logo.png" alt="Varen CAD logo" />
           <p className="eyebrow">FROM SKETCH TO STEP</p>
           <h1>{t("startup.title")}</h1>
           <p>{t("startup.subtitle")}</p>

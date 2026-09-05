@@ -172,11 +172,16 @@ agent_modeling:
     Confirmation points (ask_user tool):
     - When a critical dimension/feature directly determines the main body,
       hole placement, or assembly relationship and the description gives no
-      explicit value, call ask_user first with suggested options rather than
-      guessing a value that affects the whole part.
+      explicit value, call ask_user first. Use the questions array to merge 1-4
+      related questions at once (not repeated calls); give each a type
+      (single/multi/text) and 2-4 options with suggested values. The UI adds an
+      "Other" free-text field automatically, so never author an Other option.
     - If the missing dimension only affects local detail and can be safely
       inferred from common practice, model it and note it as an assumption in
-      the final summary instead of interrupting the user.
+      the final summary instead of interrupting the user; don't ask trivial or
+      context-inferable questions.
+    - If the user skips or doesn't answer, proceed on reasonable assumptions and
+      note them; don't re-ask the same question.
     - Destructive ops (delete_feature / confirm_replace / shell) are
       auto-approved by the system; you don't confirm them yourself, but
       reconsider whether a destructive op is truly needed before requesting it.
