@@ -46,6 +46,8 @@ class FakeWorker:
         self.executed: list[tuple[str, dict]] = []
         self.exported_mesh: list[str] = []
         self.exported_step: list[str] = []
+        self.render_calls: list[dict] = []
+        self.render_png = "iVBORw0KGgo="  # 最小假 base64 PNG
 
     def capabilities(self) -> dict:
         return self.capabilities_result
@@ -73,6 +75,10 @@ class FakeWorker:
         self.exported_step.append(path)
         Path(path).write_text("ISO-10303-21;")
         return {"success": True}
+
+    def render_snapshot(self, *, views=None, size=480) -> dict:
+        self.render_calls.append({"views": views, "size": size})
+        return {"success": True, "render_base64": self.render_png}
 
 
 def _success(volume=1000.0) -> dict:
@@ -192,6 +198,28 @@ class AgentLoopHappyPathTests(unittest.TestCase):
         self.assertEqual(len(step_events), 1)
         self.assertEqual(step_events[0][2]["op"], "create_workplane")
         self.assertTrue(step_events[0][2]["success"])
+
+    def test_volume_change_renders_snapshot_and_emits_url(self) -> None:
+        # 体积变化触发 STL 导出的同时渲染可视化快照
+        worker = FakeWorker([_success(5000.0)])
+        chat = FakeChat([
+            _round_with_call("create_workplane", {"name": "base"}),
+            ToolCallRound(text="好了", tool_calls=[]),
+        ])
+        events: list[tuple] = []
+        with tempfile.TemporaryDirectory() as td:
+            result = _run(worker, chat, run_dir=Path(td),
+                          emit=lambda t, m, p: events.append((t, m, p)))
+            self.assertEqual(len(worker.render_calls), 1)
+            self.assertEqual(worker.render_calls[0]["size"], 480)
+            snap_events = [e for e in events if e[0] == "agent_snapshot"]
+            self.assertEqual(len(snap_events), 1)
+            payload = snap_events[0][2]
+            self.assertTrue(payload["url"].startswith("/api/artifacts/"))
+            self.assertIn("snapshot_s", payload["url"])
+            # PNG 已落盘且记录在 artifacts
+            self.assertTrue(Path(payload["path"]).exists())
+            self.assertTrue(any("snapshot_s" in key for key in result.artifacts))
 
 
 class AgentLoopErrorPathTests(unittest.TestCase):
