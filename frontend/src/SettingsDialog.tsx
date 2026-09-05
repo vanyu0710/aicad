@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import ModelConfigPanel from "./ModelConfigPanel";
 import type { ModelConfig } from "./api";
 import type { StartupMode } from "./store";
@@ -32,6 +33,23 @@ export default function SettingsDialog({
   const t = useT();
   const language = useAppStore((state) => state.language);
   const setLanguage = useAppStore((state) => state.setLanguage);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    // 打开时聚焦关闭按钮；Escape 关闭
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
 
   if (!open) {
     return null;
@@ -47,7 +65,7 @@ export default function SettingsDialog({
             <p className="eyebrow">SETTINGS</p>
             <h2>{t("settings.title")}</h2>
           </div>
-          <button type="button" className="icon-button" onClick={onClose} title={t("settings.close.title")}>
+          <button type="button" ref={closeRef} className="icon-button" onClick={onClose} title={t("settings.close.title")}>
             {t("settings.close")}
           </button>
         </header>

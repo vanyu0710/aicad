@@ -268,9 +268,28 @@ a.disabled {
 }
 
 .status-banner.error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   border-color: rgba(163, 52, 40, 0.35);
   color: var(--seal);
   background: rgba(12, 26, 48, 0.76);
+}
+
+.status-banner-close {
+  min-height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  color: var(--seal);
+  background: transparent;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.status-banner-close:hover {
+  background: rgba(163, 52, 40, 0.2);
 }
 
 .workspace-grid {

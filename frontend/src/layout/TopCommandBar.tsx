@@ -5,6 +5,7 @@ import { useT } from "../i18n";
 type Props = {
   backendState: "connected" | "offline";
   busy: boolean;
+  agentRunning: boolean;
   canRedo: boolean;
   canUndo: boolean;
   engineLabel: string;
@@ -23,6 +24,7 @@ type Props = {
 export default function TopCommandBar({
   backendState,
   busy,
+  agentRunning,
   canRedo,
   canUndo,
   engineLabel,
@@ -71,9 +73,7 @@ export default function TopCommandBar({
       { labelKey: "menu.export", action: () => openRight("export") },
     ],
     tools: [{ labelKey: "menu.settings", action: onOpenSettings }],
-    help: [
-      { labelKey: "menu.about", action: () => setUi({ commandTab: "ai", rightDrawerOpen: true, rightTab: "assistant" }) },
-    ],
+    help: [{ labelKey: "menu.about", action: onOpenSettings }],
   };
 
   const commands = [
@@ -154,6 +154,8 @@ export default function TopCommandBar({
               <button
                 type="button"
                 key={command.id}
+                role="tab"
+                aria-selected={command.active}
                 className={command.active ? "command-tab active" : "command-tab"}
                 onClick={command.action}
               >
@@ -187,8 +189,14 @@ export default function TopCommandBar({
           <button type="button" title={t("top.redo.title")} onClick={onRedo} disabled={busy || !canRedo}>
             {t("menu.redo")}
           </button>
-          <button type="button" className="primary" title={t("top.generate.title")} onClick={onGenerate} disabled={busy}>
-            {busy ? t("top.busy") : t("top.generate")}
+          <button
+            type="button"
+            className="primary"
+            title={t("top.generate.title")}
+            onClick={onGenerate}
+            disabled={busy || agentRunning}
+          >
+            {busy ? t("top.busy") : agentRunning ? t("agent.running") : t("top.generate")}
           </button>
         </div>
       </div>

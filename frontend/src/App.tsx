@@ -251,6 +251,10 @@ export default function App() {
   };
 
   const handleNewProject = async () => {
+    // 已有未提交工作（会话或特征）时先确认，避免误清当前项目
+    if (project && !window.confirm(t("app.new.confirm"))) {
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -311,6 +315,10 @@ export default function App() {
   };
 
   const handleDeleteProject = async (projectId: string) => {
+    const name = project?.project_id === projectId ? project.name : projectId;
+    if (!window.confirm(t("app.delete.confirm", { name }))) {
+      return;
+    }
     try {
       await deleteProject(projectId);
       if (project?.project_id === projectId) {
@@ -698,14 +706,18 @@ export default function App() {
         event.preventDefault();
         setUi({ settingsOpen: true });
       } else if (event.key === "Escape") {
-        setUi({ leftDrawerOpen: false, rightDrawerOpen: false });
+        if (ui.settingsOpen) {
+          setUi({ settingsOpen: false });
+        } else {
+          setUi({ leftDrawerOpen: false, rightDrawerOpen: false });
+        }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // Re-register whenever capabilities change so shortcuts stay accurate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.project_id, canUndo, canRedo, settingsDirty, settings]);
+  }, [project?.project_id, canUndo, canRedo, settingsDirty, settings, ui.settingsOpen]);
 
   if (showStartup || !project) {
     return (
@@ -736,6 +748,7 @@ export default function App() {
       <TopCommandBar
         backendState={backendState}
         busy={busy}
+        agentRunning={agentRunning}
         canRedo={canRedo}
         canUndo={canUndo}
         engineLabel={engineLabel}
@@ -751,7 +764,14 @@ export default function App() {
         onOpenSettings={() => setUi({ settingsOpen: true })}
       />
 
-      {error && <div className="status-banner error">{error}</div>}
+      {error && (
+        <div className="status-banner error" role="alert">
+          <span>{error}</span>
+          <button type="button" className="status-banner-close" onClick={() => setError("")} aria-label={t("app.error.dismiss")}>
+            ×
+          </button>
+        </div>
+      )}
 
       <section
         className="workspace-grid"
