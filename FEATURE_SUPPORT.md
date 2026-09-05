@@ -44,15 +44,19 @@ Legend: `Yes` = implemented and exercised, `Partial` = simplified implementation
 - All other feature types remain registered with an explicit `UNSUPPORTED` verification capability.
 - `UNKNOWN` is never promoted to `PASS`; missing or unreliable measurements are reported as not proven.
 
-## MechKernel Agent Path（v0.10.0，默认主路径）
+## MechKernel Agent Path（v0.11.0，默认主路径）
 
-- **主路径**：前端主按钮/Ctrl+G、特征树（`KernelFeatureTree`）、属性面板（`KernelFeatureForm`）、
-  undo/redo 全部走 MechKernel worker RPC。FeaturePlanV3 → 受控 build123d worker 链路**冻结保留**
+- **主路径**：右侧常驻 AI 会话列为唯一主输入（`Ctrl+G` 聚焦），特征树/属性/评审/过程/导出在底部结构抽屉，
+  undo/redo 走 MechKernel worker RPC。FeaturePlanV3 → 受控 build123d worker 链路**冻结保留**
   （UI 不再展示旧入口，/generate、/chat、PATCH features 仍可用）。
-- **对话式会话（v0.10）**：所有建模入口（生成按钮 / Ctrl+G / 聊天框）收敛为 `POST /agent/message`；
-  每项目一条持久会话（`work/agent_sessions/{id}.json`，`GET /agent/session` 回看）；运行中插话经
-  pending 队列在轮间注入。模型文字 token 级流式（`agent_text_delta`）；工具调用以卡片形式内嵌会话流。
-- **vision 输入**：任务消息可携带草图图片（会话首条消息自动附带左侧上传的草图）。
+- **对话式会话（v0.10）**：所有建模入口收敛为 `POST /agent/message`；每项目一条持久会话
+  （`work/agent_sessions/{id}.json`，`GET /agent/session` 回看）；运行中插话经 pending 队列在轮间注入。
+  模型文字 token 级流式（`agent_text_delta`）；工具调用以卡片内嵌会话流；几何变化时内嵌可视化快照。
+- **结构化提问卡片（v0.11）**：`ask_user` 支持 1–4 问，每问 single/multi/text + options + 自动"其他"，
+  答案以 Q/A 转录回喂模型。
+- **计划模式（v0.11）**：聊天框开关；`propose_plan` 出分步计划 → `plan_review` 审批（批准/要求修改），
+  批准前 harness 只暴露只读 op；执行期 `update_plan` 逐项更新进度（`plan_updated` 事件 → 会话流清单）。
+- **vision 输入**：任务消息可携带草图图片（会话首条消息自动附带上传的草图）。
 - 执行层是 MechKernel（mechcad-kernel 仓）的 33 个公开 op，经 `mech_kernel/server.py` stdio RPC 由 `backend/agent/` 逐步驱动。
 - 支持的建模能力以 MechKernel capability registry 为准（workplane/sketch/extrude/revolve/sweep/boolean/hole/fillet/chamfer/shell/pattern/select/undo 等）；fillet/chamfer/任意方向 hole 在 agent 路径可用，与本文件上方 FeaturePlanV3 特征矩阵无关。
 - 自修复：RECOVERABLE + suggestion.fix 按 schema 过滤后自动重试一次（含 `confirm_replace` 的 fix 走审批）；其余失败原样回喂模型。

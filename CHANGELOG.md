@@ -1,3 +1,13 @@
+## v0.11.0-alpha - Harness 能力升级：提问卡片 + 计划模式 + 进度清单
+
+参考 deepagents / Claude Code plan mode / LangGraph HITL，复用现有 `ApprovalBroker` + `pendingApprovals` + `/agent/resolve` + `options` 广播通道。
+
+- **结构化提问卡片（`ask_user` 升级）**：工具 schema 改为 `questions[]`（1–4 问，每问 `single|multi|text` + `options[{label,description}]` + `required` + `allowFreeText`）；UI 渲染单选/多选/文本并自动追加"其他"（模型不得自建 Other）；答案以 **Q/A 转录**回喂模型。修复了 v0.10 中 ask_user 回答链路实际断裂的问题（旧 edit 表单无 answer 字段）。
+- **计划模式（开关式，聊天框可开）**：`propose_plan` 合成工具产出分步计划 → `plan_review` 审批卡（批准 / 要求修改并反馈）；harness 层门控——计划获批前模型只看到只读 op + `ask_user/propose_plan/update_plan`，建模 op 被拦（`PLAN_REQUIRED`）；批准后解锁全量工具表。
+- **实时进度清单**：`update_plan`（write_todos 式，整表替换、每轮至多一次）更新步骤状态 `pending/in_progress/completed`，经 `plan_updated` WS 事件推前端会话流清单；计划持久化进 `session.plan`，重开可恢复。
+- **HITL 加固**：破坏性操作/修复的 reject 回喂统一加"除非用户明确要求否则不要重试"；timeout 不再静默 SKIPPED，而是回喂为"视为拒绝、不要重试、可换方案"，让模型知情。
+- 测试：后端 337（+提问转录/多问/跳过、计划门控/批准/拒绝/每轮一次 update_plan）、前端 55（+问题卡片 single/multi/Other/skip、计划清单渲染）。
+
 ## v0.10.0-alpha - 对话式 Agent 会话（真 harness 交互形态）
 
 - **每项目一条持久会话（`backend/agent/session.py`）**：对话历史落盘 `work/agent_sessions/{id}.json`，

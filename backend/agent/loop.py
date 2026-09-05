@@ -606,12 +606,12 @@ class AgentLoop:
                 )
                 if decision["action"] == "reject":
                     data = {"success": False, "error_kind": "REJECTED",
-                            "error": "用户拒绝了破坏性替换", "suggestion": decision.get("message", "")}
+                            "error": "用户拒绝了破坏性替换。除非用户明确要求，否则不要重试。", "suggestion": decision.get("message", "")}
                     self._emit_step(self.step_count, op, data, autofix=True, message="破坏性修复被用户拒绝")
                 elif decision["action"] == "timeout":
-                    data = {"success": False, "error_kind": "SKIPPED",
-                            "error": decision.get("message", "用户未响应，已跳过破坏性修复")}
-                    self._emit_step(self.step_count, op, data, autofix=True, message="破坏性修复超时，已跳过")
+                    data = {"success": False, "error_kind": "REJECTED",
+                            "error": decision.get("message", "用户未在时限内响应，视为拒绝破坏性替换。不要重试，可换方案或继续。")}
+                    self._emit_step(self.step_count, op, data, autofix=True, message="破坏性修复超时，视为拒绝")
                 else:
                     merged = filter_args_to_schema(op, dict(decision.get("args") or proposed_args), self.capabilities)
                     self.step_count += 1
@@ -659,10 +659,11 @@ class AgentLoop:
             decision = self._request_approval("destructive_op", op, args, _destructive_message(op, args))
             if decision["action"] == "reject":
                 return {"success": False, "error_kind": "REJECTED",
-                        "error": "用户拒绝了该步骤", "suggestion": decision.get("message", "")}
+                        "error": "用户拒绝了该步骤。除非用户明确要求，否则不要重试该操作；可改用其它方案或跳过。",
+                        "suggestion": decision.get("message", "")}
             if decision["action"] == "timeout":
-                return {"success": False, "error_kind": "SKIPPED",
-                        "error": decision.get("message", "用户未响应，已跳过")}
+                return {"success": False, "error_kind": "REJECTED",
+                        "error": decision.get("message", "用户未在时限内响应，视为拒绝。不要重试该操作，可换方案或继续。")}
             if decision["action"] in ("approve", "edit"):
                 args = dict(decision.get("args") or args)  # 用户可改参
         try:
