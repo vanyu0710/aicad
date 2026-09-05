@@ -88,6 +88,7 @@ button {
   color: var(--ink);
   background: rgba(20, 38, 62, 0.86);
   cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease, opacity 120ms ease;
 }
 
 button:hover:not(:disabled) {
@@ -435,7 +436,7 @@ a.disabled {
 
 .mode-segment button.active {
   border-color: var(--jade);
-  color: #fffaf4;
+  color: #0a1626;
   background: var(--jade);
 }
 
@@ -1479,13 +1480,13 @@ a.disabled {
 }
 
 .role-state.anthropic {
-  color: #7c4a34;
-  background: rgba(16, 34, 58, 0.48);
+  color: #f0c46a;
+  background: rgba(90, 66, 22, 0.5);
 }
 
 .role-state.openai {
-  color: #47705f;
-  background: rgba(16, 34, 58, 0.62);
+  color: #5fe0a8;
+  background: rgba(20, 66, 48, 0.55);
 }
 
 .config-grid {
@@ -1655,15 +1656,18 @@ a.disabled {
 }
 
 .feature-state.modeled {
-  color: #276749;
+  color: #5fe0a8;
+  border-color: rgba(95, 224, 168, 0.3);
 }
 
 .feature-state.skipped {
-  color: #8a6d1d;
+  color: #f0c46a;
+  border-color: rgba(240, 196, 106, 0.3);
 }
 
 .feature-state.failed {
-  color: #b23a2e;
+  color: #ff8a7c;
+  border-color: rgba(255, 138, 124, 0.3);
 }
 
 .feature-state.unresolved {
@@ -1693,15 +1697,15 @@ a.disabled {
 }
 
 .summary-modeled {
-  color: #276749;
+  color: #5fe0a8;
 }
 
 .summary-skipped {
-  color: #8a6d1d;
+  color: #f0c46a;
 }
 
 .summary-failed {
-  color: #b23a2e;
+  color: #ff8a7c;
 }
 
 .summary-unresolved,
@@ -1891,11 +1895,11 @@ a.disabled {
   word-break: break-all;
 }
 
-/* v0.6 generic acceptance report */
+/* v0.6 generic acceptance report (dark theme) */
 .evidence-strip,
 .execution-report-box,
 .intent-box {
-  background: #fbfcfb;
+  background: rgba(10, 22, 42, 0.72);
   border: 1px solid rgba(120, 180, 215, 0.22);
   border-radius: 6px;
   padding: 10px 12px;
@@ -1906,7 +1910,7 @@ a.disabled {
 .execution-report-box > strong,
 .intent-box > strong {
   display: block;
-  color: #dce6f0;
+  color: var(--ink);
   font-size: 12px;
   margin-bottom: 8px;
 }
@@ -1922,23 +1926,23 @@ a.disabled {
   font-size: 12px;
   padding: 4px 8px;
   border-radius: 4px;
-  background: #eef4f1;
-  color: #b6c8d8;
+  background: rgba(20, 38, 62, 0.86);
+  color: var(--ink-soft);
 }
 
 .evidence-item b {
   margin-right: 4px;
-  color: #dce6f0;
+  color: var(--ink);
 }
 
 .evidence-item.assumption {
-  border: 1px dashed #c9a45a;
-  background: #fbf6e9;
+  border: 1px dashed rgba(201, 164, 90, 0.55);
+  background: rgba(63, 52, 20, 0.5);
 }
 
 .evidence-conflict {
-  background: #f8e9e6;
-  color: #9b3b32;
+  background: rgba(163, 52, 40, 0.16);
+  color: #ff8a7c;
   width: 100%;
 }
 
@@ -1963,7 +1967,7 @@ a.disabled {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: rgba(20, 38, 62, 0.92);
+  background: rgba(120, 180, 215, 0.3);
 }
 
 .report-chip.ok .report-dot {
@@ -2021,9 +2025,9 @@ a.disabled {
   list-style: none;
   margin: 8px 0 0;
   padding: 6px 8px;
-  background: #f8e9e6;
+  background: rgba(163, 52, 40, 0.16);
   border-radius: 4px;
-  color: #9b3b32;
+  color: #ff8a7c;
   font-size: 12px;
 }
 .tree-pipeline-strip {
@@ -2032,16 +2036,16 @@ a.disabled {
   gap: 6px;
   margin-bottom: 10px;
   padding: 8px 10px;
-  background: #f4f8f6;
+  background: rgba(10, 22, 42, 0.72);
   border: 1px solid rgba(120, 180, 215, 0.22);
   border-radius: 6px;
   font-size: 11px;
-  color: #b6c8d8;
+  color: var(--ink-soft);
 }
 
 .tree-pipeline-intent {
   flex-basis: 100%;
-  color: #dce6f0;
+  color: var(--ink);
 }
 /* === MechKernel feature graph tree / form (harness path) === */
 .kernel-tree {
@@ -2053,11 +2057,11 @@ a.disabled {
 .kernel-tree-row {
   display: flex;
   align-items: center;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid rgba(120, 180, 215, 0.1);
 }
 
 .kernel-tree-row.selected {
-  background: rgba(16, 34, 58, 0.45);
+  background: rgba(56, 195, 232, 0.14);
 }
 
 .kernel-tree-select {
@@ -2073,6 +2077,10 @@ a.disabled {
   cursor: pointer;
   font-size: 13px;
   color: inherit;
+}
+
+.kernel-tree-select:hover {
+  background: rgba(120, 180, 215, 0.08);
 }
 
 .kernel-tree-label {
@@ -2098,31 +2106,33 @@ a.disabled {
   letter-spacing: 0.5px;
   padding: 1px 6px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.05);
-  color: #9fb4c8;
+  background: rgba(120, 180, 215, 0.14);
+  color: var(--ink-soft);
 }
 
 .kernel-tree-row.state-pending .kernel-tree-state {
-  background: rgba(244, 180, 0, 0.15);
-  color: #9a6b00;
+  background: rgba(244, 180, 0, 0.18);
+  color: #f0c46a;
 }
 
 .kernel-tree-row.state-failed .kernel-tree-state {
-  background: rgba(200, 60, 60, 0.12);
-  color: #a33;
+  background: rgba(200, 60, 60, 0.22);
+  color: #ff8a7c;
 }
 
 .kernel-tree-delete {
   border: none;
   background: none;
-  color: #999;
+  color: var(--ink-soft);
   cursor: pointer;
   padding: 4px 8px;
   font-size: 15px;
 }
 
 .kernel-tree-delete:hover {
-  color: #a33;
+  color: #ff8a7c;
+  background: rgba(163, 52, 40, 0.18);
+  border-radius: 4px;
 }
 
 .kernel-tree-empty {
@@ -2315,11 +2325,13 @@ a.disabled {
 }
 
 .approval-approve {
-  background: #e6f2e9 !important;
+  border-color: rgba(56, 195, 232, 0.5);
+  background: rgba(56, 195, 232, 0.16);
+  color: var(--jade);
 }
 
 .approval-reject {
-  color: #a33;
+  color: #ff8a7c;
 }
 
 .approval-edit {

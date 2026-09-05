@@ -104,8 +104,13 @@
   font-size: 12px;
 }
 
+.menu-button:hover {
+  background: rgba(120, 180, 215, 0.1);
+}
+
 .menu-button.active {
-  background: rgba(56, 195, 232, 0.12);
+  background: rgba(56, 195, 232, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(56, 195, 232, 0.35);
 }
 
 .menu-dropdown {
@@ -229,6 +234,13 @@
   font-size: 12px;
 }
 
+.icon-button {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
 .manager-tabs,
 .task-tabs {
   display: flex;
@@ -246,6 +258,12 @@
   border-radius: 6px;
   background: transparent;
   font-size: 12px;
+}
+
+.manager-tab:hover,
+.task-tab:hover {
+  border-color: rgba(120, 180, 215, 0.25);
+  background: rgba(120, 180, 215, 0.08);
 }
 
 .manager-tab.active,
@@ -713,6 +731,11 @@
   padding: 22px 34px 0;
 }
 
+.startup-header-status {
+  display: flex;
+  align-items: center;
+}
+
 .startup-brand {
   display: grid;
   gap: 3px;
@@ -828,6 +851,12 @@
   border: 1px solid rgba(165, 243, 252, 0.12);
   border-radius: 8px;
   background: rgba(13, 44, 66, 0.5);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.recent-item:hover {
+  border-color: rgba(165, 243, 252, 0.28);
+  background: rgba(13, 44, 66, 0.75);
 }
 
 .recent-item-main {
@@ -957,8 +986,8 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(120, 180, 215, 0.28);
-  backdrop-filter: blur(3px);
+  background: rgba(4, 10, 22, 0.55);
+  backdrop-filter: blur(4px);
 }
 
 .settings-dialog {
