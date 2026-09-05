@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   artifactUrl,
   createProject,
@@ -25,8 +25,8 @@ import {
   type ProjectState,
 } from "./api";
 import ApprovalPanel from "./ApprovalPanel";
-import LeftManager from "./layout/LeftManager";
-import TaskPane from "./layout/TaskPane";
+import ChatColumn from "./layout/ChatColumn";
+import StructurePanel from "./layout/StructurePanel";
 import TopCommandBar from "./layout/TopCommandBar";
 import SettingsDialog from "./SettingsDialog";
 import StartupScreen from "./StartupScreen";
@@ -34,14 +34,11 @@ import Viewport from "./Viewport";
 import { useT } from "./i18n";
 import {
   DEFAULT_SETTINGS,
-  clampDrawerWidth,
   markStartupSeen,
   readStartupMode,
   shouldShowStartup,
   useAppStore,
   writeStartupMode,
-  type ManagerTab,
-  type TaskTab,
 } from "./store";
 
 const statusLabelKeys: Record<string, string> = {
@@ -75,7 +72,6 @@ export default function App() {
     settingsNotice,
     ui,
     setProject,
-    setDescription,
     setImageFile,
     setSettings,
     setSelectedFeatureId,
@@ -111,6 +107,7 @@ export default function App() {
     finalizeChatAssistant,
   } = useAppStore();
   const bootRef = useRef(false);
+  const chatInputRef = useRef<HTMLInputElement>(null);
   const language = useAppStore((state) => state.language);
 
   /** 统一发送入口：空闲=开新任务；运行中=插话。首条消息携带草图图片。 */
@@ -135,13 +132,6 @@ export default function App() {
       setAgentRunning(false);
       setError(t("app.agent.start_failed", { err: String(err) }));
     }
-  };
-
-  const handleAgentStart = async () => {
-    if (!description.trim()) {
-      return;
-    }
-    await handleSendAgentMessage(description);
   };
 
   const handleAgentStop = async () => {
@@ -351,40 +341,6 @@ export default function App() {
     if (mode === "off" && !project) {
       void handleNewProject();
     }
-  };
-
-  const toggleLeftDrawer = (tab: ManagerTab) => {
-    setUi({
-      leftTab: tab,
-      leftDrawerOpen: ui.leftDrawerOpen && ui.leftTab === tab ? false : true,
-    });
-  };
-
-  const toggleRightDrawer = (tab: TaskTab) => {
-    setUi({
-      rightTab: tab,
-      rightDrawerOpen: ui.rightDrawerOpen && ui.rightTab === tab ? false : true,
-    });
-  };
-
-  const startResize = (side: "left" | "right", event: ReactMouseEvent) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = side === "left" ? ui.leftWidth : ui.rightWidth;
-    const onMove = (move: MouseEvent) => {
-      const delta = move.clientX - startX;
-      if (side === "left") {
-        setUi({ leftWidth: clampDrawerWidth(startWidth + delta) });
-      } else {
-        setUi({ rightWidth: clampDrawerWidth(startWidth - delta) });
-      }
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
   };
 
   useEffect(() => {
@@ -652,7 +608,7 @@ export default function App() {
         if (project && settingsDirty) void onApplySettings();
       } else if (mod && key === "g") {
         event.preventDefault();
-        if (project && !agentRunning) void handleAgentStart();
+        chatInputRef.current?.focus();
       } else if (mod && key === ",") {
         event.preventDefault();
         setUi({ settingsOpen: true });
@@ -699,14 +655,11 @@ export default function App() {
       <TopCommandBar
         backendState={backendState}
         busy={busy}
-        agentRunning={agentRunning}
         canRedo={canRedo}
         canUndo={canUndo}
         engineLabel={engineLabel}
-        modeLabel={modeLabel}
         projectName={project.name || "Varen CAD IDE"}
         statusLabel={t(statusLabelKeys[status])}
-        onGenerate={() => void handleAgentStart()}
         onRedo={onRedo}
         onUndo={onUndo}
         onNewProject={() => void handleNewProject()}
@@ -724,36 +677,18 @@ export default function App() {
         </div>
       )}
 
-      <section
-        className="workspace-grid"
-        onMouseDown={(event) => {
-          const target = event.target as HTMLElement;
-          if (target.closest(".edge-drawer") || target.closest(".edge-rail")) {
-            return;
-          }
-          setUi({ leftDrawerOpen: false, rightDrawerOpen: false });
-        }}
-      >
-        <section className="workspace-center" aria-label={t("app.viewport.aria")}>
-          <div className="agent-strip">
-            <button
-              type="button"
-              className="agent-strip-start"
-              disabled={agentRunning || busy || !description.trim()}
-              onClick={() => void handleAgentStart()}
-            >
-              {agentRunning ? t("agent.running") : t("agent.start")}
-            </button>
+      <section className="workspace-shell">
+        <div className="workspace-main">
+          <section className="workspace-center" aria-label={t("app.viewport.aria")}>
             {agentRunning && (
-              <>
+              <div className="agent-runbar">
                 <span className="agent-strip-step">{t("agent.step", { step: agentSteps })}</span>
                 <span className="agent-strip-op" title={agentLastOp}>{agentLastOp}</span>
                 <button type="button" className="agent-strip-stop" onClick={() => void handleAgentStop()}>
                   {t("agent.stop")}
                 </button>
-              </>
+              </div>
             )}
-          </div>
           <Viewport
             objUrl={artifactUrl(runId, "obj")}
             stlUrl={artifactUrl(runId, "stl")}
@@ -771,139 +706,47 @@ export default function App() {
             )}
             <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "execution_report")}>{t("app.artifact.report")}</a>
           </div>
-        </section>
+          </section>
 
-        <aside className="edge-rail edge-rail-left" aria-label={t("rail.left.label")}>
-          <button
-            type="button"
-            className={ui.leftDrawerOpen && ui.leftTab === "feature" ? "edge-rail-button active" : "edge-rail-button"}
-            title={t("manager.feature_tree")}
-            onClick={() => toggleLeftDrawer("feature")}
-          >
-            <span className="rail-label">{t("rail.features")}</span>
-          </button>
-          <button
-            type="button"
-            className={ui.leftDrawerOpen && ui.leftTab === "property" ? "edge-rail-button active" : "edge-rail-button"}
-            title={t("manager.property")}
-            onClick={() => toggleLeftDrawer("property")}
-          >
-            <span className="rail-label">{t("rail.property")}</span>
-          </button>
-          <button
-            type="button"
-            className={ui.leftDrawerOpen && ui.leftTab === "configuration" ? "edge-rail-button active" : "edge-rail-button"}
-            title={t("manager.configuration")}
-            onClick={() => toggleLeftDrawer("configuration")}
-          >
-            <span className="rail-label">{t("rail.config")}</span>
-          </button>
-        </aside>
+          <StructurePanel
+            busy={busy}
+            kernelTree={kernelTree}
+            kernelSelectedFeature={kernelNodes[selectedFeatureId] ?? null}
+            selectedFeatureId={selectedFeatureId}
+            partFamily={plan?.part_family}
+            modeLabel={modeLabel}
+            processSteps={processSteps}
+            featurePlan={project.current.feature_plan}
+            executionReport={executionReport}
+            evidence={evidence}
+            evidenceConflicts={evidenceConflicts}
+            designIntent={designIntent}
+            review={review}
+            unresolved={unresolved}
+            runId={runId}
+            engineLabel={engineLabel}
+            onSelectKernelFeature={setSelectedFeatureId}
+            onSaveKernelFeature={(fid, params) => void onSaveKernelFeature(fid, params)}
+            onDeleteKernelFeature={(fid) => void onDeleteKernelFeature(fid)}
+            onSelectProcessStep={(featureId) => setSelectedFeatureId(featureId)}
+          />
+        </div>
 
-        <aside className="edge-rail edge-rail-right" aria-label={t("rail.right.label")}>
-          <button
-            type="button"
-            className={ui.rightDrawerOpen && ui.rightTab === "assistant" ? "edge-rail-button active" : "edge-rail-button"}
-            title={t("task.assistant")}
-            onClick={() => toggleRightDrawer("assistant")}
-          >
-            <span className="rail-label">{t("rail.assistant")}</span>
-          </button>
-          <button
-            type="button"
-            className={ui.rightDrawerOpen && ui.rightTab === "review" ? "edge-rail-button active" : "edge-rail-button"}
-            title={t("task.review")}
-            onClick={() => toggleRightDrawer("review")}
-          >
-            <span className="rail-label">{t("rail.review")}</span>
-          </button>
-          <button
-            type="button"
-            className={ui.rightDrawerOpen && ui.rightTab === "process" ? "edge-rail-button active" : "edge-rail-button"}
-            title={t("task.process")}
-            onClick={() => toggleRightDrawer("process")}
-          >
-            <span className="rail-label">{t("rail.process")}</span>
-          </button>
-          <button
-            type="button"
-            className={ui.rightDrawerOpen && ui.rightTab === "logs" ? "edge-rail-button active" : "edge-rail-button"}
-            title={t("task.logs")}
-            onClick={() => toggleRightDrawer("logs")}
-          >
-            <span className="rail-label">{t("rail.logs")}</span>
-          </button>
-          <button
-            type="button"
-            className={ui.rightDrawerOpen && ui.rightTab === "export" ? "edge-rail-button active" : "edge-rail-button"}
-            title={t("task.export")}
-            onClick={() => toggleRightDrawer("export")}
-          >
-            <span className="rail-label">{t("rail.export")}</span>
-          </button>
-        </aside>
-
-        {ui.leftDrawerOpen && (
-          <div className="edge-drawer left-drawer" style={{ width: `${ui.leftWidth}px` }}>
-            <div className="drawer-resizer drawer-resizer-left" title={t("app.left.resize")} onMouseDown={(event) => startResize("left", event)} />
-            <LeftManager
-              busy={busy}
-              description={description}
-              imageFile={imageFile}
-              modeLabel={modeLabel}
-              partFamily={plan?.part_family}
-              projectName={project.name || t("app.project.untitled")}
-              selectedFeatureId={selectedFeatureId}
-              statusLabel={t(statusLabelKeys[status])}
-              settings={settings}
-              kernelTree={kernelTree}
-              kernelSelectedFeature={kernelNodes[selectedFeatureId] ?? null}
-              onSelectKernelFeature={setSelectedFeatureId}
-              onSaveKernelFeature={(fid, params) => void onSaveKernelFeature(fid, params)}
-              onDeleteKernelFeature={(fid) => void onDeleteKernelFeature(fid)}
-              onSettingsChange={onSettingsChange}
-              onApplySettings={(next) => void onApplySettings(next)}
-              onDescriptionChange={setDescription}
-              onImageChange={setImageFile}
-              onOpenSettings={() => setUi({ settingsOpen: true })}
-              onClose={() => setUi({ leftDrawerOpen: false })}
-            />
-          </div>
-        )}
-
-        {ui.rightDrawerOpen && (
-          <div className="edge-drawer right-drawer" style={{ width: `${ui.rightWidth}px` }}>
-            <div className="drawer-resizer drawer-resizer-right" title={t("app.right.resize")} onMouseDown={(event) => startResize("right", event)} />
-            <TaskPane
-              busy={busy}
-              chatMessage={chatMessage}
-              chat={chat}
-              events={events}
-              processSteps={processSteps}
-              featurePlan={project.current.feature_plan}
-              questions={questions}
-              reportMarkdown={project.current.report_markdown}
-              executionReport={executionReport}
-              evidence={evidence}
-              evidenceConflicts={evidenceConflicts}
-              designIntent={designIntent}
-              review={review}
-              unresolved={unresolved}
-              runId={runId}
-              engineLabel={engineLabel}
-              pendingApprovals={pendingApprovals}
-              onResolveApproval={(approval, action, argsOverride) => void handleAgentResolve(approval, action, argsOverride)}
-              onChatMessageChange={setChatMessage}
-              onClarificationContinue={(answers) => void onClarificationContinue(answers)}
-              onSendChat={() => void onChat()}
-              onSelectProcessStep={(featureId) => {
-                setSelectedFeatureId(featureId);
-                setUi({ leftDrawerOpen: true, leftTab: "feature" });
-              }}
-              onClose={() => setUi({ rightDrawerOpen: false })}
-            />
-          </div>
-        )}
+        <ChatColumn
+          chat={chat}
+          chatMessage={chatMessage}
+          busy={busy}
+          engineLabel={engineLabel}
+          pendingApprovals={pendingApprovals}
+          questions={questions}
+          imageFile={imageFile}
+          onResolveApproval={(approval, action, argsOverride) => void handleAgentResolve(approval, action, argsOverride)}
+          onClarificationContinue={(answers) => void onClarificationContinue(answers)}
+          onChatMessageChange={setChatMessage}
+          onSendChat={() => void onChat()}
+          onImageChange={setImageFile}
+          inputRef={chatInputRef}
+        />
       </section>
 
       <footer className="bottom-statusbar">

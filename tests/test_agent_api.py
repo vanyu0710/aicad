@@ -199,6 +199,14 @@ class AgentMessageSessionTests(unittest.TestCase):
         finally:
             release.set()
 
+    def test_session_view_strips_injected_context(self) -> None:
+        session = main_module._get_session(self.project_id)
+        session.append({"role": "user", "content": "任务：做一个法兰\n当前没有特征（全新零件）。\n可用 op：create_workplane, extrude"})
+        view = self.client.get(f"/api/projects/{self.project_id}/agent/session")
+        messages = view.json()["messages"]
+        self.assertEqual(messages[0]["text"], "任务：做一个法兰")
+        self.assertNotIn("可用 op", messages[0]["text"])
+
     def test_session_view_hides_tool_messages_and_marks_image(self) -> None:
         session = main_module._get_session(self.project_id)
         session.append({"role": "user", "content": [

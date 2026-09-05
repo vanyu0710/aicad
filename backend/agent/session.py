@@ -36,6 +36,20 @@ def _clip_text(text: str, limit: int = 800) -> str:
     return text if len(text) <= limit else text[:limit] + "…(截断)"
 
 
+# 任务消息里注入的内核上下文起始标记（展示时从此处截断，只留用户原话）
+_CONTEXT_MARKERS = ("\n当前特征历史", "\n当前没有特征", "\n可用 op", "\n（读取当前特征上下文失败")
+
+
+def _strip_task_context(text: str) -> str:
+    """裁掉用户任务消息中注入的内核上下文，只保留用户真正输入的指令文本。"""
+    cut = len(text)
+    for marker in _CONTEXT_MARKERS:
+        idx = text.find(marker)
+        if idx != -1:
+            cut = min(cut, idx)
+    return text[:cut].strip()
+
+
 def build_user_message(text: str, image_data_url: str | None = None) -> dict[str, Any]:
     """构造一条 user 消息；带图片时使用 OpenAI content-blocks 形式。"""
     clipped = _clip_text(text or "")
@@ -98,10 +112,13 @@ class AgentSession:
 
     # ------------------------------------------------------------ 视图与持久化
     def view(self, limit: int = 200) -> list[dict[str, Any]]:
-        """给前端的展示视图：只保留 user/assistant 轮次，图片以标记表示。"""
+        """给前端的展示视图：只保留 user/assistant 轮次，图片以标记表示。
+
+        用户任务消息里注入了内核上下文（特征历史 / 可用 op 清单），那是给模型
+        看的，展示时裁掉，只留用户真正说的话。
+        """
         with self._lock:
             items = list(self.messages[-limit:])
-            status = self.status
         out: list[dict[str, Any]] = []
         for message in items:
             role = message.get("role")
@@ -120,6 +137,8 @@ class AgentSession:
                     elif block.get("type") == "image_url":
                         has_image = True
                 text = "\n".join(parts)
+            if role == "user":
+                text = _strip_task_context(text)
             if role == "assistant" and not text:
                 continue  # 纯工具调用轮：文字为空，工具卡由 WS 事件承载
             out.append({"role": role, "text": text, "has_image": has_image})

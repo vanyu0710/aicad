@@ -1740,3 +1740,234 @@
   background: rgba(10, 22, 42, 0.9);
   border-radius: 4px;
 }
+
+/* ===== v0.11 layout A: chat as right spine, structure as bottom drawer ===== */
+
+.workspace-shell {
+  flex: 1;
+  display: flex;
+  gap: 10px;
+  min-height: 0;
+}
+
+.workspace-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-shell .workspace-center {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(10, 22, 42, 0.32);
+  box-shadow: var(--shadow);
+}
+
+.workspace-shell .viewport-shell {
+  flex: 1;
+  min-height: 0;
+}
+
+.agent-runbar {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(10, 22, 42, 0.9);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+}
+
+/* bottom structure drawer */
+.structure-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  height: 210px;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(10, 22, 42, 0.72);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.structure-panel.collapsed {
+  height: auto;
+}
+
+.structure-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.structure-tab {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.structure-tab:hover {
+  border-color: rgba(120, 180, 215, 0.25);
+  background: rgba(120, 180, 215, 0.08);
+}
+
+.structure-tab.active {
+  border-color: rgba(56, 195, 232, 0.4);
+  color: var(--ink);
+  background: rgba(56, 195, 232, 0.12);
+}
+
+.structure-collapse {
+  min-height: 28px;
+  margin-left: auto;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.structure-collapse:hover {
+  color: var(--jade);
+  border-color: rgba(56, 195, 232, 0.4);
+}
+
+.structure-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+}
+
+.structure-tree-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+.structure-review,
+.structure-export,
+.structure-process {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+/* right chat column (always visible) */
+.chat-column {
+  width: 380px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(8, 18, 34, 0.6);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.chat-column-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chat-column-header strong {
+  font-size: 14px;
+}
+
+.chat-column-header .workspace-chip {
+  margin-left: auto;
+}
+
+.chat-column-approvals {
+  flex: none;
+  max-height: 40%;
+  overflow: auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chat-column .chat-stream {
+  flex: 1;
+}
+
+.chat-column .chat-box {
+  flex: none;
+  border: none;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.chat-attach-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.chat-attach-remove {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.chat-attach-remove:hover {
+  color: var(--seal);
+  border-color: rgba(163, 52, 40, 0.4);
+}
+
+.chat-attach {
+  min-height: 30px;
+  width: 34px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--jade);
+  font-size: 16px;
+}
+
+@media (max-width: 1100px) {
+  .chat-column {
+    width: 320px;
+  }
+}
