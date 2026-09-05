@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
-  API_ROOT,
   artifactUrl,
   createProject,
   deleteProject,
@@ -9,10 +8,7 @@ import {
   fetchKernelFeatureTree,
   fetchProject,
   generateProject,
-  kernelRedo,
-  kernelUndo,
   listProjects,
-  patchFeature,
   redo,
   renameProject,
   resolveAgent,
@@ -590,34 +586,6 @@ export default function App() {
     }
   };
 
-  const onGenerate = async () => {
-    if (!project) {
-      return;
-    }
-    setBusy(true);
-    setError("");
-    addEvents([t("app.generate.submitted")]);
-    try {
-      const imageDataUrl = imageFile ? await fileToDataUrl(imageFile) : null;
-      const next = await generateProject(project.project_id, {
-        description,
-        operation_mode: settings.operation_mode,
-        smart_fill_policy: settings.smart_fill_policy,
-        model_config: settings,
-        image_data_url: imageDataUrl,
-        image_name: imageFile?.name,
-        language,
-      });
-      replaceProject(next);
-      setSettingsDirty(false);
-      await refreshProjects();
-    } catch (err) {
-      setError(t("app.generate.failed", { err: String(err) }));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const onChat = async () => {
     if (!project || !chatMessage.trim()) {
       return;
@@ -626,23 +594,6 @@ export default function App() {
     setChatMessage("");
     setError("");
     await handleSendAgentMessage(text);
-  };
-
-  const onSaveFeature = async (payload: any) => {
-    if (!project || !selectedFeature) {
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      const next = await patchFeature(project.project_id, selectedFeature.id, payload, language);
-      replaceProject(next);
-      await refreshProjects();
-    } catch (err) {
-      setError(t("app.feature.failed", { err: String(err) }));
-    } finally {
-      setBusy(false);
-    }
   };
 
   const onClarificationContinue = async (answers: string) => {
@@ -898,18 +849,12 @@ export default function App() {
             <LeftManager
               busy={busy}
               description={description}
-              features={features}
               imageFile={imageFile}
               modeLabel={modeLabel}
               partFamily={plan?.part_family}
               projectName={project.name || t("app.project.untitled")}
-              selectedFeature={selectedFeature}
               selectedFeatureId={selectedFeatureId}
               statusLabel={t(statusLabelKeys[status])}
-              unresolvedCount={unresolved.length}
-              evidenceCount={evidence.length}
-              intentSummary={designIntent?.summary}
-              completenessScore={typeof plan?.completeness?.score === "number" ? plan.completeness.score : undefined}
               settings={settings}
               kernelTree={kernelTree}
               kernelSelectedFeature={kernelNodes[selectedFeatureId] ?? null}
@@ -920,8 +865,6 @@ export default function App() {
               onApplySettings={(next) => void onApplySettings(next)}
               onDescriptionChange={setDescription}
               onImageChange={setImageFile}
-              onSelectFeature={setSelectedFeatureId}
-              onSaveFeature={(payload) => void onSaveFeature(payload)}
               onOpenSettings={() => setUi({ settingsOpen: true })}
               onClose={() => setUi({ leftDrawerOpen: false })}
             />

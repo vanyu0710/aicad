@@ -298,15 +298,6 @@ export async function generateProject(projectId: string, payload: any) {
   return parseResponse<ProjectState>(response);
 }
 
-export async function chatProject(projectId: string, message: string, language: string) {
-  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, language }),
-  });
-  return parseResponse<ProjectState>(response);
-}
-
 export async function patchFeature(projectId: string, featureId: string, payload: any, language: string) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}/features/${featureId}`, {
     method: "PATCH",
@@ -324,18 +315,6 @@ export async function undo(projectId: string) {
 export async function redo(projectId: string) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}/redo`, { method: "POST" });
   return parseResponse<ProjectState>(response);
-}
-
-export async function startAgent(
-  projectId: string,
-  payload: { description: string; language: string; max_steps?: number },
-) {
-  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/agent/start`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return parseResponse<{ ok: boolean; started: boolean; project_id: string }>(response);
 }
 
 export async function stopAgent(projectId: string) {
@@ -383,11 +362,6 @@ export async function fetchAgentSession(projectId: string) {
   return parseResponse<AgentSessionView>(response);
 }
 
-export async function clearAgentSession(projectId: string) {
-  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/agent/session/clear`, { method: "POST" });
-  return parseResponse<{ ok: boolean; cleared: boolean }>(response);
-}
-
 export async function fetchKernelFeatureTree(projectId: string) {
   const response = await fetch(`${API_ROOT}/api/projects/${projectId}/kernel/feature_tree`);
   return parseResponse<KernelFeatureTree>(response);
@@ -408,16 +382,6 @@ export async function deleteKernelFeature(projectId: string, featureId: string) 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ feature_id: featureId }),
   });
-  return parseResponse<{ ok: boolean; project: ProjectState }>(response);
-}
-
-export async function kernelUndo(projectId: string) {
-  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/kernel/undo`, { method: "POST" });
-  return parseResponse<{ ok: boolean; project: ProjectState }>(response);
-}
-
-export async function kernelRedo(projectId: string) {
-  const response = await fetch(`${API_ROOT}/api/projects/${projectId}/kernel/redo`, { method: "POST" });
   return parseResponse<{ ok: boolean; project: ProjectState }>(response);
 }
 

@@ -407,18 +407,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     "rail.process": "过程",
     "rail.logs": "日志",
     "rail.export": "导出",
-
-    "legacy.property_manager": "属性管理器",
-    "legacy.task_pane": "任务面板",
-    "legacy.chat.placeholder": "例如：把中心孔改成 12mm；删除顶部槽；新增 4 个 M6 孔，分布在半径 30mm 的圆上。",
-    "legacy.chat.hint": "AI 修改会生成新的设计快照；可以用顶部撤销 / 重做回到旧版本。",
-    "legacy.no_feature": "未选择特征",
-    "legacy.design_check": "设计检查",
-    "legacy.requires_confirmation": "需确认",
-    "legacy.review.empty": "生成后这里会显示设计警告、制造建议和标准化提示。",
-    "legacy.pending": "待确认",
-    "legacy.chat": "AI 修改",
-    "legacy.blockers": "当前阻塞原因",
   },
   en: {
     "status.empty": "Waiting for input",
@@ -826,18 +814,6 @@ export const translations: Record<Lang, Record<string, string>> = {
     "rail.process": "Process",
     "rail.logs": "Logs",
     "rail.export": "Export",
-
-    "legacy.property_manager": "Property Manager",
-    "legacy.task_pane": "Task Panel",
-    "legacy.chat.placeholder": "e.g. Change the center hole to 12mm; delete the top slot; add 4 M6 holes on a 30mm radius circle.",
-    "legacy.chat.hint": "AI edits create a new design snapshot; use Undo / Redo to go back.",
-    "legacy.no_feature": "No feature selected",
-    "legacy.design_check": "Design Check",
-    "legacy.requires_confirmation": "Needs confirmation",
-    "legacy.review.empty": "Design warnings, manufacturing suggestions, and standardization notes appear here after generation.",
-    "legacy.pending": "Pending",
-    "legacy.chat": "AI Modify",
-    "legacy.blockers": "Current blockers",
   },
 };
 

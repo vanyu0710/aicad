@@ -89,7 +89,6 @@ export type UiState = {
   rightWidth: number;
   focusMode: boolean;
   settingsOpen: boolean;
-  commandTab: string;
 };
 
 type AppState = {
@@ -223,7 +222,6 @@ export const useAppStore = create<AppState>((set) => ({
     rightDrawerOpen: false,
     ...readStoredUi(),
     settingsOpen: false,
-    commandTab: "features",
   },
   setProject: (project) => set({ project }),
   setDescription: (description) => set({ description }),

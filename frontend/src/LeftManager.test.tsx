@@ -21,19 +21,14 @@ function renderManager() {
     <LeftManager
       busy={false}
       description="测试描述"
-      features={[feature]}
       imageFile={null}
       modeLabel="严格模式"
       partFamily="plate"
       projectName="测试项目"
-      selectedFeature={feature}
       selectedFeatureId="base_plate"
       statusLabel="可以生成"
-      unresolvedCount={0}
       onDescriptionChange={vi.fn()}
       onImageChange={vi.fn()}
-      onSelectFeature={vi.fn()}
-      onSaveFeature={vi.fn()}
       onOpenSettings={vi.fn()}
     />,
   );
@@ -50,7 +45,6 @@ beforeEach(() => {
       rightWidth: 360,
       focusMode: false,
       settingsOpen: false,
-      commandTab: "features",
     },
   });
 });
@@ -77,19 +71,14 @@ describe("LeftManager", () => {
       <LeftManager
         busy={false}
         description="测试描述"
-        features={[feature]}
         imageFile={null}
         modeLabel="严格模式"
         partFamily="plate"
         projectName="测试项目"
-        selectedFeature={feature}
         selectedFeatureId="base_plate"
         statusLabel="可以生成"
-        unresolvedCount={0}
         onDescriptionChange={vi.fn()}
         onImageChange={vi.fn()}
-        onSelectFeature={vi.fn()}
-        onSaveFeature={vi.fn()}
         onOpenSettings={vi.fn()}
         onClose={onClose}
       />,
@@ -105,19 +94,14 @@ describe("LeftManager", () => {
       <LeftManager
         busy={false}
         description="测试描述"
-        features={[feature]}
         imageFile={null}
         modeLabel="严格模式"
         partFamily="plate"
         projectName="测试项目"
-        selectedFeature={feature}
         selectedFeatureId="base_plate"
         statusLabel="可以生成"
-        unresolvedCount={0}
         onDescriptionChange={vi.fn()}
         onImageChange={vi.fn()}
-        onSelectFeature={vi.fn()}
-        onSaveFeature={vi.fn()}
         onOpenSettings={onOpenSettings}
       />,
     );
@@ -135,22 +119,17 @@ describe("LeftManager", () => {
       <LeftManager
         busy={false}
         description="????"
-        features={[feature]}
         imageFile={null}
         modeLabel="????"
         partFamily="plate"
         projectName="????"
-        selectedFeature={feature}
         selectedFeatureId="base_plate"
         statusLabel="????"
-        unresolvedCount={0}
         settings={{ ...DEFAULT_SETTINGS, operation_mode: "smart", smart_fill_policy: "aggressive_fill" }}
         onSettingsChange={onSettingsChange}
         onApplySettings={onApplySettings}
         onDescriptionChange={vi.fn()}
         onImageChange={vi.fn()}
-        onSelectFeature={vi.fn()}
-        onSaveFeature={vi.fn()}
         onOpenSettings={vi.fn()}
       />,
     );

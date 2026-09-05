@@ -29,7 +29,6 @@ beforeEach(() => {
       rightWidth: 360,
       focusMode: false,
       settingsOpen: false,
-      commandTab: "features",
     },
   });
 });

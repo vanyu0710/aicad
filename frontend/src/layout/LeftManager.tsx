@@ -1,6 +1,4 @@
 import { useState } from "react";
-import FeatureForm from "../FeatureForm";
-import FeatureTree from "../FeatureTree";
 import KernelFeatureForm from "../KernelFeatureForm";
 import KernelFeatureTree from "../KernelFeatureTree";
 import type { KernelFeatureData, KernelFeatureTree as KernelFeatureTreeType, ModelConfig } from "../api";
@@ -10,18 +8,12 @@ import { useT } from "../i18n";
 type Props = {
   busy: boolean;
   description: string;
-  features: any[];
   imageFile: File | null;
   modeLabel: string;
   partFamily?: string;
   projectName: string;
-  selectedFeature: any;
   selectedFeatureId: string;
   statusLabel: string;
-  unresolvedCount: number;
-  evidenceCount?: number;
-  intentSummary?: string;
-  completenessScore?: number;
   settings?: ModelConfig;
   kernelTree?: KernelFeatureTreeType;
   kernelSelectedFeature?: KernelFeatureData | null;
@@ -32,8 +24,6 @@ type Props = {
   onApplySettings?: (value: ModelConfig) => void;
   onDescriptionChange: (value: string) => void;
   onImageChange: (file: File | null) => void;
-  onSelectFeature: (featureId: string) => void;
-  onSaveFeature: (payload: any) => void;
   onOpenSettings: () => void;
   onClose?: () => void;
 };
@@ -47,18 +37,12 @@ const tabs: { id: ManagerTab; labelKey: string }[] = [
 export default function LeftManager({
   busy,
   description,
-  features,
   imageFile,
   modeLabel,
   partFamily,
   projectName,
-  selectedFeature,
   selectedFeatureId,
   statusLabel,
-  unresolvedCount,
-  evidenceCount,
-  intentSummary,
-  completenessScore,
   settings = DEFAULT_SETTINGS,
   kernelTree = { graph: { nodes: {}, edges: {} }, op_history: [], narrative: [], node_count: 0 },
   kernelSelectedFeature = null,
@@ -69,8 +53,6 @@ export default function LeftManager({
   onApplySettings,
   onDescriptionChange,
   onImageChange,
-  onSelectFeature,
-  onSaveFeature,
   onOpenSettings,
   onClose,
 }: Props) {
