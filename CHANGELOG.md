@@ -1,3 +1,12 @@
+## v0.13.1-alpha - 重推理模型适配 + 调研防打转（真实 LLM 全流程验收驱动）
+
+换用 `deepseek-v4.1-flash-expires-on-0910`（重推理模型）跑"1:100 变速箱"全流程时暴露两处适配缺口，均已修复：
+
+- **输出预算不足**：重推理模型 reasoning token 挤占 `max_tokens`，原 8192 在"出 BOM 计划"这类长输出时被 reasoning 吃光（`finish_reason=length`、正文为空、agent 静默结束）。planner `max_tokens` 改为可配置（`MECHCAD_PLANNER_MAX_TOKENS`，默认 32768）；实测该模型支持至 65536。
+- **调研打转硬门控**：模型可能反复调用 `design_calculate` 同类计算而不推进。提示词加"调研 ≤6 次、必须一轮内合并、凑齐即停"，harness 层加 `RESEARCH_BUDGET_EXCEEDED` 硬门（计划批准前累计超 8 次即拒绝并强制推进到提问/计划）——不只靠提示词。
+
+**真实 LLM 全流程验收（deepseek-v4.1-flash，670s/85 步）PASS**：7 步调研 → `ask_user` → **BOM 计划（11 项零件 / 15 步）** → 批准 → 逐件建模归档 **11 件全部成功**（6 齿轮 via=ops 真渐开线 + 4 阶梯轴 via=script + 1 箱体 via=script）。独立核验箱体 STEP：单实体、473×230×162mm、8 种半径圆柱面各 2 个（4 轴两端轴承孔）。36 张四视角快照。脚本 `scripts/real_llm_gearbox.py` 可复跑。
+
 ## v0.13.0-alpha - 代码通道 run_build_script：模型写脚本、几何走内核（对标 DSH）
 
 同一模型在真实 coding harness 里能建复杂壳体、在 varen 里却打转——根因是表达力：op 菜单逐调用、坐标全手算、无循环变量。本版给 agent 开**建模脚本通道**（借鉴 DeepSeek Harness：原始 traceback 反馈、跑前检查点/跑败回滚、提交后自动复检），同时守住"几何主权归内核"：**脚本命名空间不提供裸 build123d，只注入 `k`（kernel 公开 op 门面）+ `math`**，脚本里每个 op 照常进 `_op_history`/`feature_graph` → 代码件与 op 件一样可参数重放、可特征树编辑。

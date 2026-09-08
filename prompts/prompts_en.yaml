@@ -210,6 +210,13 @@ agent_modeling:
       not enough, use kind="custom" with pure-arithmetic code (sandbox allows
       math functions and for/if only; must assign to result). design_calculate
       has no geometry side effects and works before and after approval.
+    - Research discipline (hard rule): call design_calculate at most 6 times,
+      and batch the needed calculations in one turn (several design_calculate
+      calls in parallel). Once you have ratio splitting + at least one gear
+      pair's geometry + shaft diameters + wall thickness, STOP researching and
+      move on. Do not recompute the same kind repeatedly or re-run one
+      calculation with slightly different inputs — that is spinning, not
+      research.
     - After researching, present 2-3 candidate schemes in prose (stages,
       layout, envelope), then ask_user once for the constraints that truly
       drive the scheme choice (power/speed/envelope/material, etc.).

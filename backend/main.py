@@ -652,8 +652,17 @@ def _run_agent_thread(
         run_id, run_dir = create_run_dir()
         config = resolve_role_config(settings, "planner")
 
+        # v0.13.1 重推理模型（如 deepseek-v4.1-flash）reasoning token 会挤占输出预算，
+        # 8192 会导致长计划/BOM 时 finish_reason=length、正文为空。可用环境变量覆盖。
+        try:
+            planner_max_tokens = int(os.getenv("MECHCAD_PLANNER_MAX_TOKENS", "32768"))
+        except ValueError:
+            planner_max_tokens = 32768
+
         def chat_with_tools(messages, tools, on_text_delta=None):
-            return chat_completion_with_tools(settings, "planner", messages, tools, max_tokens=8192, on_text_delta=on_text_delta)
+            return chat_completion_with_tools(settings, "planner", messages, tools,
+                                              max_tokens=planner_max_tokens,
+                                              on_text_delta=on_text_delta)
 
         task_message = build_task_message(text, worker, worker.capabilities(), image_data_url)
         result = run_agent_loop(

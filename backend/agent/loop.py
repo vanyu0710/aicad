@@ -600,6 +600,9 @@ class AgentLoop:
         self._approved_plan: dict[str, Any] | None = None
         # v0.13 当前零件的来源标记：ops | script（finish_part 记账后复位 ops）
         self._part_built_via = "ops"
+        # v0.13.1 调研防打转：计划批准前 design_calculate 调用次数硬上限
+        self._calc_calls = 0
+        self._calc_budget = 8
         # 旧注入（测试 fake 只接受 (messages, tools)）不支持增量回调时自动降级
         try:
             params = inspect.signature(chat_with_tools).parameters
@@ -1071,6 +1074,21 @@ class AgentLoop:
             "op": "design_calculate",
             "args_preview": _args_preview(preview),
         })
+        # v0.13.1 调研防打转硬门控：计划批准前累计超过预算即拒绝，强制推进到提问/计划。
+        if not self._plan_approved:
+            self._calc_calls += 1
+            if self._calc_calls > self._calc_budget:
+                return tool_result_message(
+                    tool_call,
+                    json.dumps({
+                        "success": False,
+                        "error_kind": "RESEARCH_BUDGET_EXCEEDED",
+                        "error": f"调研预算已用完（{self._calc_budget} 次 design_calculate）。"
+                                 "请立即停止计算：用已有结果写 2-3 个候选方案，"
+                                 "然后 ask_user 澄清关键约束或直接 propose_plan 出 BOM 计划。",
+                    }, ensure_ascii=False),
+                    protocol=self.protocol,
+                )
         entry: dict[str, Any] = {"step": self.step_count, "kind": kind}
         if reason:
             entry["reason"] = reason[:200]

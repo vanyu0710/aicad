@@ -41,7 +41,7 @@ def main() -> int:
             pass
     def chat(messages, tools, on_text_delta=None):
         return chat_completion_with_tools(ModelConfig(), "planner", messages, tools,
-                                          max_tokens=8192, on_text_delta=on_text_delta)
+                                          max_tokens=int(__import__("os").getenv("MECHCAD_PLANNER_MAX_TOKENS","32768")), on_text_delta=on_text_delta)
     t0 = time.time()
     result = run_agent_loop(
         worker=worker, chat_with_tools=chat, protocol=cfg["protocol"], emit=emit,
