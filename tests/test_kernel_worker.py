@@ -236,6 +236,24 @@ class KernelWorkerEditCommandsTests(unittest.TestCase):
         self.assertEqual(sent1["cmd"], "redo")
         self.assertEqual(sent1["payload"], {"steps": 2})
 
+    def test_run_script_rpc(self) -> None:
+        """v0.13 代码通道 RPC：cmd=run_script，payload 带 code/name。"""
+        client, proc = _make_client([self._echo_payload("run_script")])
+        data = client.run_script("k.extrude(sketch_name='s', depth=10)", name="housing")
+        self.assertTrue(data["success"])
+        sent = json.loads(proc.written_lines[0])
+        self.assertEqual(sent["payload"],
+                         {"code": "k.extrude(sketch_name='s', depth=10)", "name": "housing"})
+
+    def test_reset_rpc(self) -> None:
+        """v0.12 逐件建模 RPC：cmd=reset，空 payload。"""
+        client, proc = _make_client([self._echo_payload("reset")])
+        data = client.reset()
+        self.assertTrue(data["success"])
+        sent = json.loads(proc.written_lines[0])
+        self.assertEqual(sent["cmd"], "reset")
+        self.assertEqual(sent["payload"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

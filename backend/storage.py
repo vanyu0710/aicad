@@ -8,6 +8,8 @@ from uuid import uuid4
 ARTIFACT_ROOT = Path("work") / "new_arch_runs"
 
 _SNAPSHOT_KIND = re.compile(r"^snapshot_s\d+$")
+# v0.12 逐件交付：part_{NN}_{slug}.step/.stl（slug 无路径分隔符/盘符，防目录穿越）
+_PART_KIND = re.compile(r"^part_\d{2}_[^/\\:\0]{1,64}\.(step|stl)$")
 
 
 def create_run_dir() -> tuple[str, Path]:
@@ -29,5 +31,8 @@ def artifact_path(run_id: str, kind: str) -> Path:
         if _SNAPSHOT_KIND.match(kind):
             # agent 可视化快照（snapshot_s{步号}.png）
             return ARTIFACT_ROOT / run_id / f"{kind}.png"
+        if _PART_KIND.match(kind):
+            # agent 逐件归档的零件 STEP/STL（文件名即 kind）
+            return ARTIFACT_ROOT / run_id / kind
         raise KeyError(kind)
     return ARTIFACT_ROOT / run_id / names[kind]

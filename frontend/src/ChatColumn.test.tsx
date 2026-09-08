@@ -91,4 +91,37 @@ describe("ChatColumn", () => {
     expect(screen.getByText("开中心孔")).toBeInTheDocument();
     expect(screen.getByText("hole")).toBeInTheDocument();
   });
+
+  it("shows the BOM summary and per-part progress in the plan checklist", () => {
+    render(
+      <ChatColumn
+        chat={[]}
+        chatMessage=""
+        busy={false}
+        engineLabel="Build123d Worker"
+        questions={[]}
+        imageFile={null}
+        planMode={false}
+        onPlanModeChange={vi.fn()}
+        onClarificationContinue={vi.fn()}
+        onChatMessageChange={vi.fn()}
+        onSendChat={vi.fn()}
+        onImageChange={vi.fn()}
+        plan={{ summary: "两级减速箱", bom: [
+          { id: "p1", part: "小齿轮", role: "高速级主动轮", quantity: 1 },
+          { id: "p2", part: "箱体", role: "壳体", quantity: 1 },
+        ], steps: [
+          { id: "s1", title: "建小齿轮", part: "小齿轮", status: "completed" },
+          { id: "s2", title: "开轴孔", part: "小齿轮", status: "pending" },
+          { id: "s3", title: "建箱体", part: "箱体", status: "pending" },
+        ] }}
+      />,
+    );
+    expect(screen.getByTestId("plan-bom-summary")).toBeInTheDocument();
+    expect(screen.getByText("高速级主动轮")).toBeInTheDocument();
+    // 分组标题带完成进度
+    expect(screen.getByText("1/2")).toBeInTheDocument();
+    expect(screen.getByText("建小齿轮")).toBeInTheDocument();
+    expect(screen.getByText("建箱体")).toBeInTheDocument();
+  });
 });

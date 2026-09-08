@@ -118,4 +118,52 @@ describe("ApprovalPanel", () => {
     await user.click(screen.getByRole("button", { name: "跳过" }));
     expect(onResolve).toHaveBeenCalledWith(ask, "reject");
   });
+
+  it("renders the plan BOM with quantities and grouped steps", () => {
+    const plan: Approval = {
+      ...base,
+      kind: "plan_review",
+      op: "propose_plan",
+      message: "两级减速",
+      options: {
+        plan: {
+          summary: "两级减速",
+          bom: [
+            { id: "p1", part: "小齿轮", role: "高速级", quantity: 2, key_params: { 模数: "2", 齿数: "20" } },
+            { id: "p2", part: "箱体" },
+          ],
+          steps: [
+            { id: "s1", title: "建小齿轮", part: "小齿轮", op: "make_gear", status: "pending" },
+            { id: "s2", title: "建箱体", part: "箱体", status: "pending" },
+          ],
+        },
+      },
+    };
+    renderPanel([plan]);
+    expect(screen.getByText("零件清单")).toBeInTheDocument();
+    expect(screen.getByText("×2")).toBeInTheDocument();
+    expect(screen.getByText(/模数=2/)).toBeInTheDocument();
+    expect(screen.getAllByText("箱体").length).toBeGreaterThanOrEqual(2);
+    // 步骤按零件分组渲染（零件名同时出现在 BOM 与组标题）
+    expect(screen.getAllByText("小齿轮").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("建小齿轮")).toBeInTheDocument();
+  });
+
+  it("renders ungrouped plan steps when no bom", () => {
+    const plan: Approval = {
+      ...base,
+      kind: "plan_review",
+      op: "propose_plan",
+      message: "单件",
+      options: {
+        plan: {
+          summary: "单件",
+          steps: [{ id: "s1", title: "建底板", status: "pending" }],
+        },
+      },
+    };
+    renderPanel([plan]);
+    expect(screen.queryByText("零件清单")).not.toBeInTheDocument();
+    expect(screen.getByText("建底板")).toBeInTheDocument();
+  });
 });

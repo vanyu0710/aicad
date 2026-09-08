@@ -21,6 +21,7 @@ import {
   type Approval,
   type KernelFeatureTree,
   type ModelConfig,
+  type PlanBomItem,
   type PlanStep,
   type ProcessStep,
   type ProjectState,
@@ -412,6 +413,7 @@ export default function App() {
         setPlan({
           summary: event.payload?.summary ? String(event.payload.summary) : undefined,
           steps: Array.isArray(event.payload?.steps) ? (event.payload.steps as PlanStep[]) : [],
+          bom: Array.isArray(event.payload?.bom) ? (event.payload.bom as PlanBomItem[]) : undefined,
           approved: Boolean(event.payload?.approved),
         });
       }
@@ -721,6 +723,18 @@ export default function App() {
             )}
             <a className={runId ? "" : "disabled"} href={artifactUrl(runId, "execution_report")}>{t("app.artifact.report")}</a>
           </div>
+          {(project?.current.artifacts.parts?.length ?? 0) > 0 && (
+            <div className="artifact-row artifact-row-parts" data-testid="artifact-parts" title={t("app.artifact.parts_title")}>
+              <span className="artifact-parts-label">{t("app.artifact.parts")}</span>
+              {project!.current.artifacts.parts!.map((part) => (
+                <span key={`${part.index}-${part.part}`} className="artifact-part">
+                  <span className="artifact-part-name" title={part.note || part.part}>{part.part}</span>
+                  {part.step_file && <a href={artifactUrl(runId, part.step_file)}>STEP</a>}
+                  {part.stl_file && <a href={artifactUrl(runId, part.stl_file)}>STL</a>}
+                </span>
+              ))}
+            </div>
+          )}
           </section>
 
           <StructurePanel

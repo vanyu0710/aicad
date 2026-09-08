@@ -1,3 +1,28 @@
+## v0.13.0-alpha - 代码通道 run_build_script：模型写脚本、几何走内核（对标 DSH）
+
+同一模型在真实 coding harness 里能建复杂壳体、在 varen 里却打转——根因是表达力：op 菜单逐调用、坐标全手算、无循环变量。本版给 agent 开**建模脚本通道**（借鉴 DeepSeek Harness：原始 traceback 反馈、跑前检查点/跑败回滚、提交后自动复检），同时守住"几何主权归内核"：**脚本命名空间不提供裸 build123d，只注入 `k`（kernel 公开 op 门面）+ `math`**，脚本里每个 op 照常进 `_op_history`/`feature_graph` → 代码件与 op 件一样可参数重放、可特征树编辑。
+
+- **内核 v2.13（mechcad-kernel）**：`script_sandbox.py` AST 白名单（import 只许 math；禁危险模块/`eval` 等反射名/**一切 `_` 开头属性访问**；`__import__` 换守卫版双保险）+ `ScriptKernel` 门面（34 公开 op 同名直调 + 守卫 `execute()`，黑名单 `export/save_project/load_project/run_script`）+ `MechKernel.run_script`（`_snapshot` 检查点 → 受限 namespace exec + stdout/stderr 捕获 → 异常 `_restore` 整体回滚并回传原始 traceback；成功返回 solids/volume/bbox/ops_executed + iso 渲染）；`query` 新增 `what="solid_count"`。新测试 `test_v12_script_channel.py` 7 项（核心断言：**代码件 rebuild/update_feature 照常重放**）。
+- **aicad 后端**：`kernel_worker.run_script()` RPC；loop 合成工具 `run_build_script`（计划门控期不可用，同 finish_part；成功后手动触发 STL 导出+快照；回喂 compact JSON：solids/volume/bbox/stdout(2000)/traceback(4000)）；**finish_part 设计复检门**（DSH L1 review 的 CAD 化）：导出前 `solid_count==1` 契约检查，多实体（悬浮特征）拒绝归档——v0.12 渲染复检抓出的"浮齿"类缺陷从此机器拦截；`part_rec.built_via: ops|script` 进 `PartArtifact`/execution_report。
+- **特征契约校验（真实 LLM 验收发现的第二个缺口）**：Qwen 首轮验收 `undo` 回滚掉 4 个螺栓孔+1 个轴承孔后，最终总结仍声称全部存在（STEP 实测仅 3 个圆柱面）——单实体门拦得住"多体"，拦不住"少特征+谎报"。新增 `finish_part.feature_contract`（[{radius_mm, count}]）：归档前用 `select cylinder` 实测圆柱面半径计数，断言不符返回 `FEATURE_CONTRACT_MISMATCH` 拒绝归档；提示词补"undo 后必须 select/measure 重验、总结只写实测存在的特征"。E2E 增正/负例（错契约被真实内核拦截）。
+- **四视角快照**：`render_snapshot` 默认 `views=[iso,front,top,side]`（内核自动 compose_grid 拼图），会话流与 GLM 截图同风格。
+- **提示词 zh/en**：复杂零件（箱体/阶梯轴/筋/孔阵列）用 run_build_script 一次成型；脚本失败自动回滚按 traceback 改完重跑；复检门说明。
+- 测试：aicad 后端 381+（run_build_script 成功/失败回传/门控/built_via 流转、复检门拒绝多实体、RPC echo）；内核 384+。E2E `scripts/e2e_housing_script.py`（真实 worker 零 token）12/12：脚本建"底板+4 螺栓孔+双轴承凸台+通孔+三角筋"壳体 7.3s、单实体、体积对账、rebuild 可重放、复检门正确识别双实体拒绝。
+
+## v0.12.0-alpha - 变速箱级多零件流程：设计调研 + BOM 计划 + 逐件交付
+
+落地 `docs/PRODUCT_FLOW_GEARBOX.md` 的 F1：用户输入"设计个 1:100 的变速箱"即可走完 **自动计划模式 → 调研计算 → 提问澄清 → BOM 计划批准 → 逐件建模归档 → 零件级交付**。
+
+- **设计调研 `design_calculate` 合成工具**（`backend/agent/designcalc.py`，纯算术、无 CAD import，对齐 D2）：
+  - 内置 kind：`gear_ratio_split`（总传动比多级拆分：1:100 给出精确的 85/17×85/17×68/17=100.0 等方案，含根切下限 z1≥17、单级 3~8、z2≤140 工程约束）、`gear_pair`（ISO 6336 齿轮副全几何 + 中心距 + 端面重合度 + 根切警告）、`nearest_standard_module`、`shaft_diameter`（扭转初估 + 键槽削弱 + 标准径圆整）、`housing_wall`（铸造箱体经验壁厚）；经验公式输出一律 `method="empirical"` 不冒充校核。
+  - `kind="custom"` 沙箱（`backend/agent/calc_sandbox.py`）：模型可自行编写纯算术调研代码，`python -I` 子进程 + AST 白名单（禁 import/属性/下标/lambda/推导式）、`__builtins__` 清空、5s 超时、结果 JSON 限 4000 字符；`MECHCAD_AGENT_CALC_SANDBOX=off` 可关。内置计算与内核 `gear.py` 公式由对拍测试锁一致。
+  - 计划门控期间可用（归入 `_SYNTHETIC_TOOLS`），每次调用出 `agent_step` 卡片、转录进 execution_report。
+- **BOM 形态计划**：`propose_plan` 增加顶层 `bom`（part/role/quantity/key_params/depends_on，key_params 应来自调研数值），steps 支持 `part` 归属；session.plan / `plan_updated` / `plan_review` 审批卡全链路透传，旧计划无 bom 完全兼容。前端 `PlanReviewCard` 渲染零件清单表 + 按零件分组步骤；`ChatColumn` 进度清单升级为"零件（n/m）→ 步骤"两级打勾。
+- **逐件交付 `finish_part` 合成工具**：一个零件建模完成 → 导出 `part_NN_名称.step/.stl` 归档 + `artifact_ready{kind:"part"}` + 计划该件步骤自动打勾 → 调 kernel `reset` 清空会话 → 下一件从空会话开始（禁止零件互相融合）。reset 失败时报 WORKER_ERROR 并命令模型停止建模（防融合）。execution_report 增 `parts` 表；`ArtifactSet.parts`（`PartArtifact`）+ `/api/artifacts/{run}/{part文件}` 下载（storage 正则防目录穿越）；前端产物区列零件级 STEP/STL 链接。
+- **复杂任务自动进计划模式**：`/agent/message` 对命中多零件关键词（变速箱/减速器/装配/gearbox/…）的任务把 auto 提升为 plan（只升不降），响应带生效 `mode`；用户显式 plan 不受影响。默认 `max_steps` 30→60（调研/提问/归档同样计步）。
+- **内核配套（mechcad-kernel v2.12，本仓依赖）**：`make_gear` 注册为公开 op（真渐开线齿轮坯，`involute_teeth_threshold` 可控齿形回退，new_body/add/cut 语义 + confirm_replace 守护，可 update_feature 参数化重放）；worker RPC 新增 `reset` 命令。公开 op 33→34。顺带修复工作区遗留的 revolve 半重构缺陷（弧/折线剖面 wire 成功时 `new_solid` 未绑定，4 个内核测试恢复通过）。
+- 测试：后端 374（+37：designcalc 分级/几何/对拍、沙箱放行与逃逸、BOM 计划流、finish_part 成功与三类失败、自动 plan 启发式、parts 契约）；前端 58（+3：审批卡 BOM、分组清单进度、无 bom 回退）。内核仓 374（+14：make_gear op、reset RPC）。质量门 compileall + `git diff --check` 全绿。
+
 ## v0.11.0-alpha - Harness 能力升级：提问卡片 + 计划模式 + 进度清单
 
 参考 deepagents / Claude Code plan mode / LangGraph HITL，复用现有 `ApprovalBroker` + `pendingApprovals` + `/agent/resolve` + `options` 广播通道。

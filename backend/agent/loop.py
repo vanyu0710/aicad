@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import inspect
 import json
+import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,6 +51,9 @@ class AgentLoopResult:
     artifacts: dict[str, str] = field(default_factory=dict)
     logs: list[str] = field(default_factory=list)
     error: str | None = None
+    # v0.12 多零件逐件交付：finish_part 归档清单 + design_calculate 调研转录
+    parts: list[dict[str, Any]] = field(default_factory=list)
+    design_calculations: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _compact_step_result(data: dict[str, Any]) -> dict[str, Any]:
@@ -180,7 +184,7 @@ def _format_ask_user_transcript(questions: list[dict[str, Any]], answers: dict[s
 
 
 def _normalize_plan_steps(raw: Any) -> list[dict[str, Any]]:
-    """规范化计划步骤：补 id、剔除无标题项、初始状态 pending。"""
+    """规范化计划步骤：补 id、剔除无标题项、初始状态 pending；透传 part 归属。"""
     items = raw if isinstance(raw, list) else []
     steps: list[dict[str, Any]] = []
     for index, item in enumerate(items):
@@ -194,9 +198,161 @@ def _normalize_plan_steps(raw: Any) -> list[dict[str, Any]]:
             "title": title,
             "op": str(item.get("op") or "") or None,
             "rationale": str(item.get("rationale") or "") or None,
+            "part": str(item.get("part") or "") or None,
             "status": str(item.get("status") or "pending"),
         })
     return steps
+
+
+def _normalize_bom(raw: Any) -> list[dict[str, Any]]:
+    """规范化零件清单（BOM）：每项必须有 part 名；数量默认 1；参数/依赖容错。"""
+    items = raw if isinstance(raw, list) else []
+    bom: list[dict[str, Any]] = []
+    for index, item in enumerate(items[:24]):
+        if not isinstance(item, dict):
+            continue
+        part = str(item.get("part") or "").strip()
+        if not part:
+            continue
+        quantity = 1
+        try:
+            if item.get("quantity") is not None:
+                quantity = max(1, min(99, int(item["quantity"])))
+        except (TypeError, ValueError):
+            quantity = 1
+        key_params: dict[str, Any] = {}
+        raw_params = item.get("key_params")
+        if isinstance(raw_params, dict):
+            for k, v in list(raw_params.items())[:16]:
+                sv = str(v)
+                key_params[str(k)[:40]] = sv[:60]
+        depends_on = [
+            str(d).strip()
+            for d in (item.get("depends_on") or [])[:8]
+            if isinstance(d, (str, int)) and str(d).strip()
+        ]
+        bom.append({
+            "id": str(item.get("id") or f"p{index + 1}"),
+            "part": part,
+            "role": str(item.get("role") or "")[:120],
+            "quantity": quantity,
+            "key_params": key_params,
+            "depends_on": depends_on,
+        })
+    return bom
+
+
+_BUILTIN_CALC_KINDS = ("gear_ratio_split", "gear_pair", "nearest_standard_module",
+                       "shaft_diameter", "housing_wall")
+
+
+def _design_calculate_tool() -> dict[str, Any]:
+    """合成工具：设计调研计算（纯算术，无几何副作用，计划门控期间可用）。"""
+    return {
+        "type": "function",
+        "function": {
+            "name": "design_calculate",
+            "description": (
+                "工程调研计算（不动几何，随时可用）。内置 kind："
+                "gear_ratio_split（总传动比多级拆分，params: {total_ratio, max_stages?, min_stage_ratio?, max_stage_ratio?}）、"
+                "gear_pair（齿轮副几何+中心距+重合度，params: {module, z1, z2, pressure_angle_deg?}）、"
+                "nearest_standard_module（params: {target}）、"
+                "shaft_diameter（轴径初估，params: {power_kw, rpm} 或 {torque_nm}，可选 allowable_shear_mpa）、"
+                "housing_wall（铸造箱体壁厚经验估算，params: {center_distance_mm | shaft_diameter_mm}）。"
+                "kind=custom 时提交纯算术代码（code + variables），沙箱只允许数学函数与 for/if，"
+                "无 import/属性访问/下标，必须以 result = ... 输出；5 秒超时。"
+                "多零件任务（如变速箱）必须先用它调研：分级、齿数、模数、中心距、轴径，再 propose_plan。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string",
+                             "enum": [*_BUILTIN_CALC_KINDS, "custom"],
+                             "description": "计算类型"},
+                    "params": {"type": "object",
+                               "description": "内置 kind 的参数（custom 忽略）"},
+                    "code": {"type": "string",
+                             "description": "custom：纯算术代码，必须以 result = 输出"},
+                    "variables": {"type": "object",
+                                  "description": "custom：注入代码的数值变量 {名字: 数字}"},
+                    "reason": {"type": "string",
+                               "description": "本次计算要回答的问题（进过程记录，可选）"},
+                },
+                "required": ["kind"],
+            },
+        },
+    }
+
+
+def _run_build_script_tool() -> dict[str, Any]:
+    """合成工具：建模脚本通道（DSH 式）——复杂零件一次脚本完成，几何仍只能走 kernel 公开 op。"""
+    return {
+        "type": "function",
+        "function": {
+            "name": "run_build_script",
+            "description": (
+                "建模脚本通道：复杂零件（箱体/阶梯轴/加强筋/孔阵列/多特征组合）用一段 Python 脚本一次完成，"
+                "替代几十次原子 op 往返。脚本里只能用 `k`（kernel 公开 op 门面：k.create_workplane/k.new_sketch/"
+                "k.add_rectangle/k.add_circle/k.close_sketch/k.extrude/k.hole/k.boolean/k.fillet/k.chamfer/"
+                "k.shell/k.make_gear/k.select/k.measure…全量公开 op 同名直调，或 k.execute(op, **kw)）和 `math`；"
+                "支持循环/变量/函数/条件；每个 op 返回 StepResult（用 r['success'] 判断，失败可 raise 中断）；"
+                "print() 调试输出会回传。禁止 import build123d/文件/网络（几何主权归内核）。"
+                "失败自动回滚到执行前状态并回传原始 traceback；成功执行的 op 进特征历史，"
+                "与原子 op 一样可参数重放。零件建完后用 finish_part 归档。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string",
+                             "description": "Python 脚本（只用 k 与 math；必须产生几何变化）"},
+                    "reason": {"type": "string",
+                               "description": "本脚本建哪个零件/达成什么目标（过程记录，可选）"},
+                },
+                "required": ["code"],
+            },
+        },
+    }
+
+
+def _finish_part_tool() -> dict[str, Any]:
+    """合成工具：当前零件完成 → 归档导出 STEP/STL → 清空内核会话开始下一件。"""
+    return {
+        "type": "function",
+        "function": {
+            "name": "finish_part",
+            "description": (
+                "多零件计划（BOM）中一个零件建模完成时调用：把当前几何导出为 "
+                "part_NN_<零件名>.step/.stl 归档、在计划里把该零件的步骤打勾，"
+                "然后清空内核会话，让你开始下一个零件。"
+                "需要计划已批准；调用前当前会话必须有几何。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "part": {"type": "string",
+                             "description": "零件名（与计划 bom/步骤的 part 对应，如 '齿轮 z=20'）"},
+                    "note": {"type": "string", "description": "本件完成说明（可选）"},
+                    "feature_contract": {
+                        "type": "array",
+                        "description": (
+                            "特征契约（强烈建议提供）：断言零件应有 count 个指定半径的圆柱面"
+                            "（如 Ø9 螺栓孔×4 → {radius_mm: 4.5, count: 4}；Ø25 轴承孔×2 → {radius_mm: 12.5, count: 2}）。"
+                            "归档前系统用 select 实测圆柱面计数，与断言不符即拒绝——防止 undo 回滚掉特征后谎报完成。"
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "radius_mm": {"type": "number"},
+                                "count": {"type": "integer"},
+                            },
+                            "required": ["radius_mm", "count"],
+                        },
+                    },
+                },
+                "required": ["part"],
+            },
+        },
+    }
 
 
 def _propose_plan_tool() -> dict[str, Any]:
@@ -213,9 +369,29 @@ def _propose_plan_tool() -> dict[str, Any]:
                 "type": "object",
                 "properties": {
                     "summary": {"type": "string", "description": "一句话总体方案"},
+                    "bom": {
+                        "type": "array",
+                        "description": (
+                            "多零件任务必填：零件清单（要几个零件、分别是什么、关键参数）。"
+                            "单零件任务可省略。"
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "part": {"type": "string", "description": "零件名（唯一，步骤的 part 字段引用它）"},
+                                "role": {"type": "string", "description": "功能说明（如：高速级小齿轮）"},
+                                "quantity": {"type": "integer", "description": "数量，默认 1"},
+                                "key_params": {"type": "object",
+                                               "description": "关键设计参数（如 {\"模数\": \"2\", \"齿数\": \"20\", \"齿宽\": \"18\"}），应来自 design_calculate 调研结果"},
+                                "depends_on": {"type": "array", "items": {"type": "string"},
+                                               "description": "装配/设计依赖的其它零件名，可选"},
+                            },
+                            "required": ["part"],
+                        },
+                    },
                     "steps": {
                         "type": "array",
-                        "description": "有序建模步骤",
+                        "description": "有序建模步骤（多零件任务按零件分组排列）",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -223,6 +399,7 @@ def _propose_plan_tool() -> dict[str, Any]:
                                 "title": {"type": "string", "description": "人话描述这步做什么"},
                                 "op": {"type": "string", "description": "预计调用的 kernel op，可选"},
                                 "rationale": {"type": "string", "description": "为什么这样安排，可选"},
+                                "part": {"type": "string", "description": "本步所属零件名（对应 bom.part），多零件任务必填"},
                             },
                             "required": ["id", "title"],
                         },
@@ -267,7 +444,9 @@ def _update_plan_tool() -> dict[str, Any]:
 
 # 计划模式下、计划获批前允许调用的只读 op（研究用）；其余建模 op 一律拦截。
 READONLY_OPS = frozenset({"query", "select", "measure", "render", "validate_geometry"})
-_SYNTHETIC_TOOLS = frozenset({"ask_user", "propose_plan", "update_plan"})
+# design_calculate 是纯算术调研工具（无几何副作用），计划门控期间必须可用；
+# finish_part 涉及归档+清空，只在全量工具表（计划批准后）暴露。
+_SYNTHETIC_TOOLS = frozenset({"ask_user", "propose_plan", "update_plan", "design_calculate"})
 
 
 def _is_destructive(op: str, args: dict[str, Any]) -> bool:
@@ -342,6 +521,12 @@ def _args_preview(args: dict[str, Any], limit: int = _ARGS_PREVIEW_CLIP) -> str:
     return rendered if len(rendered) <= limit else rendered[:limit] + "…"
 
 
+def _part_slug(name: str) -> str:
+    """零件名 → 安全文件名片段（保留中文，剔除 Windows 非法字符，限长 24）。"""
+    cleaned = re.sub(r'[\\/:*?"<>|\s]+', "_", str(name)).strip("._")
+    return (cleaned[:24] or "part")
+
+
 class AgentLoop:
     def __init__(
         self,
@@ -382,6 +567,9 @@ class AgentLoop:
             _ask_user_tool(),
             _propose_plan_tool(),
             _update_plan_tool(),
+            _design_calculate_tool(),
+            _run_build_script_tool(),
+            _finish_part_tool(),
         ]
         self.tools = self._plan_mode_tools()
         self._context_descriptors: list[str] = []
@@ -408,6 +596,10 @@ class AgentLoop:
         self._round_no = 0
         self._update_plan_this_round = False
         self._last_volume: float | None = None
+        # 批准后计划的本地副本（无 session 时 finish_part 打勾/广播用）
+        self._approved_plan: dict[str, Any] | None = None
+        # v0.13 当前零件的来源标记：ops | script（finish_part 记账后复位 ops）
+        self._part_built_via = "ops"
         # 旧注入（测试 fake 只接受 (messages, tools)）不支持增量回调时自动降级
         try:
             params = inspect.signature(chat_with_tools).parameters
@@ -464,13 +656,21 @@ class AgentLoop:
         return [t for t in self._all_tools if t["function"]["name"] in allowed]
 
     def _handle_propose_plan(self, tool_call: ToolCall) -> dict[str, Any]:
-        """计划审批：approve/edit 批准后进入执行；reject 留在计划模式并回喂反馈。"""
+        """计划审批：approve/edit 批准后进入执行；reject 留在计划模式并回喂反馈。
+
+        v0.12：计划可携带 BOM（零件清单）；steps 每项可标注所属零件。多零件计划
+        批准后回喂逐件执行协议（建模 → finish_part 归档 → 下一件）。
+        """
         args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
         summary = str(args.get("summary") or "（未提供方案摘要）")
         steps = _normalize_plan_steps(args.get("steps"))
+        bom = _normalize_bom(args.get("bom"))
+        plan_payload: dict[str, Any] = {"summary": summary, "steps": steps}
+        if bom:
+            plan_payload["bom"] = bom
         decision = self._request_approval(
-            "plan_review", "propose_plan", {"summary": summary, "steps": steps},
-            summary, options={"plan": {"summary": summary, "steps": steps}},
+            "plan_review", "propose_plan", {"summary": summary, "steps": steps, "bom": bom},
+            summary, options={"plan": dict(plan_payload)},
         )
         action = str(decision.get("action"))
         if action in ("approve", "edit"):
@@ -478,23 +678,41 @@ class AgentLoop:
                 revised = _normalize_plan_steps(decision.get("args", {}).get("steps"))
                 if revised:
                     steps = revised
+                revised_bom = _normalize_bom(decision.get("args", {}).get("bom"))
+                if revised_bom:
+                    bom = revised_bom
+                plan_payload = {"summary": summary, "steps": steps}
+                if bom:
+                    plan_payload["bom"] = bom
             self._plan_approved = True
             self.tools = self._plan_mode_tools()
+            self._approved_plan = {"summary": summary, "steps": steps, "approved": True}
+            if bom:
+                self._approved_plan["bom"] = bom
             if self.session is not None:
-                self.session.set_plan(summary, steps, approved=True)
-            self.emit("plan_updated", "计划已批准", {"summary": summary, "steps": steps})
+                self.session.set_plan(summary, steps, approved=True, bom=bom or None)
+            self.emit("plan_updated", "计划已批准", plan_payload)
+            note = "计划已批准。开始逐步执行：每步开始前用 update_plan 置 in_progress，成功后置 completed。"
+            if bom:
+                note += (
+                    f"本计划含 {len(bom)} 类零件。逐件执行：建完一个零件调用 "
+                    "finish_part(part=零件名) 归档导出并清空会话，再开始下一零件；"
+                    "禁止把多个零件建在同一会话里互相融合。"
+                )
             result = {
                 "success": True,
                 "approved": True,
-                "note": "计划已批准。开始逐步执行：每步开始前用 update_plan 置 in_progress，成功后置 completed。",
+                "note": note,
                 "steps": steps,
             }
+            if bom:
+                result["bom"] = bom
         else:
             feedback = str(decision.get("message") or decision.get("args", {}).get("feedback") or "用户要求修改计划")
             result = {
                 "success": True,
                 "approved": False,
-                "note": f"用户未批准计划：{feedback}。请据此调整后再次调用 propose_plan，期间仍只能只读研究或 ask_user。",
+                "note": f"用户未批准计划：{feedback}。请据此调整后再次调用 propose_plan，期间仍只能只读研究、design_calculate 或 ask_user。",
             }
         return tool_result_message(tool_call, json.dumps(result, ensure_ascii=False), protocol=self.protocol)
 
@@ -568,6 +786,12 @@ class AgentLoop:
                     self._remember(self._handle_propose_plan(tool_call))
                 elif tool_call.name == "update_plan":
                     self._remember(self._handle_update_plan(tool_call))
+                elif tool_call.name == "design_calculate":
+                    self._remember(self._handle_design_calculate(tool_call, result))
+                elif tool_call.name == "run_build_script":
+                    self._remember(self._handle_run_build_script(tool_call, result))
+                elif tool_call.name == "finish_part":
+                    self._remember(self._handle_finish_part(tool_call, result))
                 else:
                     self._remember(self._execute_tool_call(tool_call, result))
         if self.step_count >= self.max_steps:
@@ -753,13 +977,16 @@ class AgentLoop:
                 self.logs.append(f"STEP 导出失败: {type(exc).__name__}: {exc}")
 
         report = {
-            "ok": bool(result.ok and not result.error) and bool(result.volume),
+            # 多零件任务以归档件数计完成度（末件 finish_part 后会话已清空）
+            "ok": bool(result.ok and not result.error) and bool(result.volume or result.parts),
             "engine": "mechkernel",
             "worker": "mechkernel-agent",
             "agent_stopped": result.stopped,
             "steps": result.steps,
             "final_text": result.final_text,
             "volume": result.volume,
+            "parts": result.parts,
+            "design_calculations": result.design_calculations,
             "feature_graph": result.feature_graph,
             "op_history": tree.get("op_history") or [],
             "narrative": (tree.get("narrative") or [])[-_NARRATIVE_CLIP:],
@@ -822,6 +1049,269 @@ class AgentLoop:
         transcript = _format_ask_user_transcript(questions, answers, action)
         result = {"success": True, "declined": action in ("reject", "timeout"), "answers": answers, "transcript": transcript}
         return tool_result_message(tool_call, json.dumps(result, ensure_ascii=False), protocol=self.protocol)
+
+    # ---------------------------------------------------- design research
+    def _handle_design_calculate(self, tool_call: ToolCall, result: AgentLoopResult) -> dict[str, Any]:
+        """合成工具 design_calculate：纯算术调研计算（内置 kind 或沙箱 custom）。"""
+        from backend.agent import calc_sandbox
+        from backend.agent.designcalc import CALCULATORS, CalcError
+
+        self.step_count += 1
+        result.steps = self.step_count
+        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+        kind = str(args.get("kind") or "").strip()
+        reason = str(args.get("reason") or "").strip()
+        preview: dict[str, Any] = {"kind": kind}
+        if kind == "custom":
+            preview["code"] = str(args.get("code") or "")[:_ARGS_PREVIEW_CLIP]
+        else:
+            preview["params"] = args.get("params") or {}
+        self.emit("agent_step", f"设计计算: {kind}", {
+            "step": self.step_count,
+            "op": "design_calculate",
+            "args_preview": _args_preview(preview),
+        })
+        entry: dict[str, Any] = {"step": self.step_count, "kind": kind}
+        if reason:
+            entry["reason"] = reason[:200]
+        try:
+            if kind == "custom":
+                output = calc_sandbox.run_sandboxed(str(args.get("code") or ""), args.get("variables"))
+            elif kind in CALCULATORS:
+                calculator = CALCULATORS[kind]
+                params = args.get("params") if isinstance(args.get("params"), dict) else {}
+                output = calculator(**params)
+            else:
+                raise CalcError(
+                    f"未知 kind: {kind!r}；可选 {sorted(CALCULATORS)} 或 'custom'"
+                )
+            payload: dict[str, Any] = {"success": True, "kind": kind, "result": output}
+            entry["ok"] = True
+        except (CalcError, calc_sandbox.SandboxError) as exc:
+            payload = {"success": False, "error_kind": "INVALID_REQUEST",
+                       "error": f"设计计算被拒绝: {exc}"}
+            entry.update(ok=False, error=str(exc)[:300])
+        except Exception as exc:  # noqa: BLE001 —— 计算崩溃不带走 agent
+            payload = {"success": False, "error_kind": "CALC_ERROR",
+                       "error": f"设计计算异常: {type(exc).__name__}: {exc}"}
+            entry.update(ok=False, error=f"{type(exc).__name__}: {exc}"[:300])
+        if reason:
+            payload["reason"] = reason
+        rendered = json.dumps(payload, ensure_ascii=False, default=str)
+        if len(rendered) > 12000:  # 兜底截断，防个别参数组合撑爆上下文
+            payload["result"] = "（结果过大已截断，请缩小 top_n 或只取关键值）"
+            rendered = json.dumps(payload, ensure_ascii=False, default=str)
+        result.design_calculations.append(entry)
+        return tool_result_message(tool_call, rendered, protocol=self.protocol)
+
+    # ---------------------------------------------------------- parts
+    def _mark_part_steps_completed(self, part: str) -> list[str]:
+        """finish_part 后把该零件名下的计划步骤打勾（session 优先，退到本地计划）。"""
+        completed: list[str] = []
+        if self.session is not None:
+            steps = (self.session.plan or {}).get("steps") or []
+            statuses = {s["id"]: "completed" for s in steps if s.get("part") == part}
+            if statuses:
+                self.session.update_plan_status(statuses)
+                completed = sorted(statuses)
+                self.emit("plan_updated", f"零件已归档: {part}", self.session.plan_dict())
+            return completed
+        plan = self._approved_plan
+        if plan:
+            for s in plan.get("steps") or []:
+                if s.get("part") == part and s.get("status") != "completed":
+                    s["status"] = "completed"
+                    completed.append(str(s.get("id")))
+            if completed:
+                self.emit("plan_updated", f"零件已归档: {part}", dict(plan))
+        return completed
+
+    def _handle_run_build_script(self, tool_call: ToolCall, result: AgentLoopResult) -> dict[str, Any]:
+        """合成工具 run_build_script：建模脚本通道（DSH 式原始 traceback + 检查点回滚）。"""
+        self.step_count += 1
+        result.steps = self.step_count
+        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+        code = str(args.get("code") or "")
+        reason = str(args.get("reason") or "").strip()
+        self.emit("agent_step", f"建模脚本: {reason[:40] or 'script'}", {
+            "step": self.step_count,
+            "op": "run_build_script",
+            "args_preview": _args_preview({"reason": reason, "code": code}),
+        })
+        if not self._plan_approved:
+            payload: dict[str, Any] = {"success": False, "error_kind": "PLAN_REQUIRED",
+                                       "error": "run_build_script 仅在计划获批准后使用。"}
+        elif not code.strip():
+            payload = {"success": False, "error_kind": "INVALID_REQUEST", "error": "code 不能为空。"}
+        else:
+            try:
+                data = self.worker.run_script(code, name=reason[:40] or "script")
+            except Exception as exc:  # noqa: BLE001 —— worker 超时/崩溃（如脚本死循环）
+                data = {"success": False, "error_kind": "WORKER_DEAD",
+                        "error": f"worker 调用失败: {type(exc).__name__}: {exc}。"
+                                 "若脚本含死循环会触发此路径；请简化循环规模后重试。"}
+            payload = {
+                "success": bool(data.get("success")),
+                "error_kind": data.get("error_kind"),
+                "error": (str(data.get("error") or ""))[:4000] or None,
+                "warning": data.get("warning"),
+            }
+            value = data.get("value") if isinstance(data.get("value"), dict) else {}
+            geometry = data.get("geometry_summary") if isinstance(data.get("geometry_summary"), dict) else {}
+            if data.get("success"):
+                payload.update(
+                    solids=value.get("solids"),
+                    volume=geometry.get("volume", value.get("volume")),
+                    bounding_box=geometry.get("bounding_box", value.get("bounding_box")),
+                    ops_executed=value.get("ops_executed"),
+                    stdout=(str(value.get("stdout") or ""))[:2000] or None,
+                    note="脚本执行成功，几何已更新（op 已进特征历史，可参数重放）。"
+                         "请自检 solids/volume/bbox 是否符合预期；零件完成后 finish_part 归档。",
+                )
+                self._part_built_via = "script"
+                # 合成工具不走 _execute_tool_call，手动触发 STL 导出 + 快照
+                self._track_geometry(data, result)
+            else:
+                payload["note"] = ("脚本执行失败，状态已回滚到执行前（无需清理）；"
+                                   "按 traceback 修正后重跑 run_build_script。")
+            result.logs.append(
+                f"run_build_script: success={payload['success']} ops={value.get('ops_executed') if data.get('success') else '-'}")
+        return tool_result_message(tool_call, json.dumps(payload, ensure_ascii=False, default=str),
+                                   protocol=self.protocol)
+
+    def _handle_finish_part(self, tool_call: ToolCall, result: AgentLoopResult) -> dict[str, Any]:
+        """合成工具 finish_part：当前零件导出归档 → 计划打勾 → 清空内核会话开下一件。"""
+        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+        part = str(args.get("part") or "").strip()
+        note = str(args.get("note") or "").strip()
+        self.step_count += 1
+        result.steps = self.step_count
+        self.emit("agent_step", f"零件归档: {part or '（无名）'}", {
+            "step": self.step_count, "op": "finish_part", "args_preview": _args_preview(args),
+        })
+        if not self._plan_approved:
+            payload: dict[str, Any] = {"success": False, "error_kind": "PLAN_REQUIRED",
+                                       "error": "finish_part 仅在计划获批准后使用。"}
+        elif not part:
+            payload = {"success": False, "error_kind": "INVALID_REQUEST",
+                       "error": "缺少零件名 part。"}
+        else:
+            contract = args.get("feature_contract") if isinstance(args.get("feature_contract"), list) else None
+            payload = self._finish_part_inner(part, note, result, contract)
+        return tool_result_message(tool_call, json.dumps(payload, ensure_ascii=False, default=str),
+                                   protocol=self.protocol)
+
+    def _check_feature_contract(self, contract: list) -> list[str]:
+        """特征契约校验：数圆柱面半径匹配 count。返回违规描述列表（空=通过）。"""
+        try:
+            sel = self.worker.execute("select", {"filter_type": "cylinder", "element_type": "face"})
+        except Exception as exc:  # noqa: BLE001
+            return [f"无法读取圆柱面（select 失败）: {type(exc).__name__}: {exc}"]
+        if not sel.get("success"):
+            return [f"无法读取圆柱面（select 未成功）: {sel.get('error')}"]
+        faces = (sel.get("value") or {}).get("selected") or []
+        violations: list[str] = []
+        for item in contract[:16]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                radius = float(item.get("radius_mm"))
+                expect = int(item.get("count"))
+            except (TypeError, ValueError):
+                violations.append(f"契约项非法（需 radius_mm/count）: {item}")
+                continue
+            actual = sum(1 for f in faces
+                         if f.get("radius_mm") is not None and abs(f["radius_mm"] - radius) < 0.05)
+            if actual != expect:
+                violations.append(
+                    f"半径 {radius}mm 圆柱面：断言 {expect} 个，实测 {actual} 个")
+        return violations
+
+    def _finish_part_inner(self, part: str, note: str, result: AgentLoopResult,
+                           contract: list | None = None) -> dict[str, Any]:
+        # 1) 当前会话必须有几何
+        try:
+            probe = self.worker.execute("query", {"target": "_current_geometry", "what": "volume"})
+        except Exception as exc:  # noqa: BLE001
+            probe = {"success": False, "error": f"{type(exc).__name__}: {exc}"}
+        volume: float | None = None
+        if probe.get("success"):
+            try:
+                volume = float(probe.get("value"))
+            except (TypeError, ValueError):
+                volume = None
+        if not volume:
+            return {"success": False, "error_kind": "INVALID_REQUEST",
+                    "error": "当前内核会话没有零件几何（上一次 finish_part 已清空会话）。"
+                             "请先把该零件建模完成再调用 finish_part。"}
+        # 1b) v0.13 设计复检门（DSH L1 review 的 CAD 化）：单实体契约。
+        # "齿悬浮/特征未连接"这类设计性缺陷 validate_geometry 查不出，这里机器拦截。
+        try:
+            solid_probe = self.worker.execute("query", {"target": "_current_geometry", "what": "solid_count"})
+            solids = solid_probe.get("value") if solid_probe.get("success") else None
+        except Exception:  # noqa: BLE001 —— 老内核无 solid_count 查询时跳过复检
+            solids = None
+        if isinstance(solids, int) and solids != 1:
+            return {"success": False, "error_kind": "GEOMETRY_FAILURE",
+                    "error": f"设计复检未通过：当前零件有 {solids} 个独立实体（期望 1 个），"
+                             "疑似特征未连接/存在悬浮体。请修复几何（fuse 或移除多余实体）"
+                             "后再调用 finish_part。"}
+        # 1c) v0.13 特征契约校验：断言的关键孔/圆柱面数量必须实测吻合，
+        # 否则拒绝归档——防 undo 回滚掉特征后仍谎报完成。
+        if contract:
+            violations = self._check_feature_contract(contract)
+            if violations:
+                return {"success": False, "error_kind": "FEATURE_CONTRACT_MISMATCH",
+                        "error": "特征契约校验未通过：" + "；".join(violations) +
+                                 "。请补齐缺失特征（重新 hole/圆柱）或删除多余特征后重试 finish_part。",
+                        "violations": violations}
+        # 2) 导出归档（零件级 STEP + STL）
+        idx = len(result.parts) + 1
+        slug = _part_slug(part)
+        step_path = self.run_dir / f"part_{idx:02d}_{slug}.step"
+        stl_path = self.run_dir / f"part_{idx:02d}_{slug}.stl"
+        try:
+            self.worker.export_step(str(step_path))
+            mesh = self.worker.export_mesh(str(stl_path))
+        except Exception as exc:  # noqa: BLE001 —— 导出失败不清会话，可修复重试
+            self.logs.append(f"零件 {part} 导出失败: {type(exc).__name__}: {exc}")
+            return {"success": False, "error_kind": "WORKER_ERROR",
+                    "error": f"零件导出失败: {type(exc).__name__}: {exc}。当前几何仍在，可修正后重试。"}
+        # 3) 清空内核会话（worker reset）
+        try:
+            self.worker.reset()
+        except Exception as exc:  # noqa: BLE001 —— reset 失败必须叫停，防止零件互相融合
+            self.logs.append(f"worker reset 失败: {type(exc).__name__}: {exc}")
+            return {"success": False, "error_kind": "WORKER_ERROR",
+                    "error": f"零件 {part} 已导出但会话清空失败: {exc}。"
+                             "请勿继续建模（会把下一件融合进当前零件），直接向用户报告此问题。"}
+        # 4) 记账 + 事件 + 计划打勾
+        part_rec = {
+            "part": part, "index": idx, "volume_mm3": round(volume, 2),
+            "step": str(step_path), "stl": str(stl_path),
+            "step_file": step_path.name, "stl_file": stl_path.name,
+            "stl_size": mesh.get("size"), "note": note,
+            "built_via": self._part_built_via,
+        }
+        self._part_built_via = "ops"  # 下一件默认原子 op
+        result.parts.append(part_rec)
+        result.artifacts[f"part_{idx:02d}_step"] = str(step_path)
+        result.artifacts[f"part_{idx:02d}_stl"] = str(stl_path)
+        result.volume = None
+        self._last_volume = None
+        self.emit("artifact_ready", f"零件已归档: {part}", {
+            "kind": "part", "part": part, "index": idx,
+            "step": str(step_path), "stl": str(stl_path),
+            "step_file": step_path.name, "stl_file": stl_path.name,
+            "size": mesh.get("size"),
+        })
+        completed = self._mark_part_steps_completed(part)
+        return {
+            "success": True, "archived": part_rec, "completed_steps": completed,
+            "note": f"零件「{part}」已归档（STEP/STL），内核会话已清空。"
+                    "请开始下一个零件（全新基体，无需 confirm_replace）；"
+                    "如已是最后一个零件，直接写最终总结。",
+        }
 
     # ---------------------------------------------------------------- events
     def _emit_step(self, step_no: int, op: str, data: dict[str, Any] | None, *, autofix: bool, message: str = "", args: dict[str, Any] | None = None) -> None:

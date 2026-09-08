@@ -227,6 +227,7 @@ export type ProjectState = {
       obj?: string;
       report?: string;
       execution_report?: string;
+      parts?: PartArtifact[];
     };
     questions: {
       id: string;
@@ -360,13 +361,35 @@ export type PlanStep = {
   title: string;
   op?: string | null;
   rationale?: string | null;
+  part?: string | null;
   status: "pending" | "in_progress" | "completed";
+};
+
+export type PlanBomItem = {
+  id: string;
+  part: string;
+  role?: string;
+  quantity?: number;
+  key_params?: Record<string, string>;
+  depends_on?: string[];
 };
 
 export type PlanState = {
   summary?: string;
   steps: PlanStep[];
+  bom?: PlanBomItem[];
   approved?: boolean;
+};
+
+export type PartArtifact = {
+  part: string;
+  index: number;
+  step?: string | null;
+  stl?: string | null;
+  step_file?: string | null;
+  stl_file?: string | null;
+  volume_mm3?: number | null;
+  note?: string | null;
 };
 
 export type AgentSessionView = {
@@ -384,7 +407,8 @@ export async function sendAgentMessage(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  return parseResponse<{ ok: boolean; started?: boolean; queued?: boolean; project_id: string }>(response);
+  // mode：后端实际生效的模式（多零件任务会被自动升级为 plan）
+  return parseResponse<{ ok: boolean; started?: boolean; queued?: boolean; project_id: string; mode?: "auto" | "plan" }>(response);
 }
 
 export async function fetchAgentSession(projectId: string) {
@@ -438,8 +462,12 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return data as T;
 }
 
-export function artifactUrl(runId: string | undefined, kind: "step" | "stl" | "obj" | "report" | "execution_report") {
-  if (!runId) {
+export function artifactUrl(
+  runId: string | undefined,
+  // v0.12：零件归档文件（part_NN_名.step/.stl）的 kind 是动态文件名，放宽为 string
+  kind: "step" | "stl" | "obj" | "report" | "execution_report" | (string & {}),
+) {
+  if (!runId || !kind) {
     return "";
   }
   return `${API_ROOT}/api/artifacts/${runId}/${kind}`;

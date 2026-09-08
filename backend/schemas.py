@@ -673,6 +673,22 @@ class CapabilityIssue(BaseModel):
     recoverable: bool = False
 
 
+class PartArtifact(BaseModel):
+    """v0.12 逐件交付：finish_part 归档的单个零件产物。"""
+
+    part: str
+    index: int = 1
+    step: str | None = None
+    stl: str | None = None
+    # 产物文件名（= /api/artifacts/{run_id}/{kind} 的 kind，供前端拼下载链接）
+    step_file: str | None = None
+    stl_file: str | None = None
+    volume_mm3: float | None = None
+    note: str | None = None
+    # v0.13：零件来源标记 ops=原子 op 序列 / script=run_build_script（两者均可参数重放）
+    built_via: str | None = None
+
+
 class ArtifactSet(BaseModel):
     run_id: str | None = None
     step: str | None = None
@@ -680,6 +696,7 @@ class ArtifactSet(BaseModel):
     obj: str | None = None
     report: str | None = None
     execution_report: str | None = None
+    parts: list[PartArtifact] = Field(default_factory=list)
 
 
 class DesignSnapshot(BaseModel):
@@ -801,7 +818,8 @@ class AgentMessageRequest(BaseModel):
     text: str
     image_data_url: str | None = None
     language: Literal["zh", "en"] = "zh"
-    max_steps: int = 30
+    # v0.12：调研计算/提问/零件归档同样计步，多零件任务预算相应上调
+    max_steps: int = Field(default=60, ge=5, le=400)
     mode: Literal["auto", "plan"] = "auto"  # plan=计划模式，先出计划待批准再执行
 
 

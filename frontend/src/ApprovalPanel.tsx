@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Approval, AskQuestion, PlanStep } from "./api";
+import type { Approval, AskQuestion, PlanBomItem, PlanStep } from "./api";
 import { useT } from "./i18n";
 
 type Props = {
@@ -267,20 +267,58 @@ function PlanReviewCard({
 }) {
   const t = useT();
   const [feedback, setFeedback] = useState("");
-  const plan = (approval.options?.plan ?? { steps: [] }) as { summary?: string; steps?: PlanStep[] };
+  const plan = (approval.options?.plan ?? { steps: [] }) as { summary?: string; steps?: PlanStep[]; bom?: PlanBomItem[] };
   const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  const bom = Array.isArray(plan.bom) ? plan.bom : [];
+  // 按零件分组展示步骤（保留原顺序；无 part 归入"通用"组）
+  const groups: { part: string; steps: PlanStep[] }[] = [];
+  for (const step of steps) {
+    const key = step.part || "";
+    let group = groups.find((g) => g.part === key);
+    if (!group) {
+      group = { part: key, steps: [] };
+      groups.push(group);
+    }
+    group.steps.push(step);
+  }
   return (
     <div className="approval-card plan-card-review">
       <div className="approval-head">
         <span className="approval-kind">{t("approval.kind.plan")}</span>
       </div>
       {plan.summary && <div className="approval-message">{plan.summary}</div>}
+      {bom.length > 0 && (
+        <div className="plan-bom" data-testid="plan-bom">
+          <div className="plan-bom-title">{t("plan.bom.title")}</div>
+          <ul className="plan-bom-list">
+            {bom.map((item) => (
+              <li key={item.id || item.part} className="plan-bom-item">
+                <span className="plan-bom-part">{item.part}</span>
+                {item.quantity && item.quantity > 1 ? <span className="plan-bom-qty">×{item.quantity}</span> : null}
+                {item.role ? <span className="plan-bom-role">{item.role}</span> : null}
+                {item.key_params && Object.keys(item.key_params).length > 0 ? (
+                  <code className="plan-bom-params">
+                    {Object.entries(item.key_params).map(([k, v]) => `${k}=${v}`).join(" ")}
+                  </code>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <ol className="plan-steps">
-        {steps.map((step) => (
-          <li key={step.id} className="plan-step pending">
-            <span className="plan-step-mark" aria-hidden="true">○</span>
-            <span className="plan-step-title">{step.title}</span>
-            {step.op && <code className="plan-step-op">{step.op}</code>}
+        {groups.map((group) => (
+          <li key={group.part || "*"} className="plan-step-group">
+            {group.part ? <div className="plan-step-part-title">{group.part}</div> : null}
+            <ol className="plan-steps plan-steps-sub">
+              {group.steps.map((step) => (
+                <li key={step.id} className="plan-step pending">
+                  <span className="plan-step-mark" aria-hidden="true">○</span>
+                  <span className="plan-step-title">{step.title}</span>
+                  {step.op && <code className="plan-step-op">{step.op}</code>}
+                </li>
+              ))}
+            </ol>
           </li>
         ))}
       </ol>

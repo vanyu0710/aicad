@@ -582,7 +582,15 @@ def _openai_tool_round_stream(
                  "function": {"name": call.name, "arguments": json.dumps(call.arguments, ensure_ascii=False)}}
                 for call in tool_calls
             ]
-        return ToolCallRound(text=text, tool_calls=tool_calls, raw_message=raw_message, finish_reason=finish_reason)
+        # v0.12 兼容兜底：某些 OpenAI 兼容端点（如 lingshuai 的 gpt-5.6 系列）在
+        # 流式 SSE 下不发 `delta.tool_calls`（正文流 + finish_reason 指示 tool_calls），
+        # 导致流式聚合不到工具调用。此时回退非流式重取一次，保证 agent loop 能拿到 tool_call。
+        if tool_calls or finish_reason not in ("tool_calls", "function_call"):
+            return ToolCallRound(text=text, tool_calls=tool_calls, raw_message=raw_message, finish_reason=finish_reason)
+        try:
+            return _openai_tool_round(config, messages, tools, tool_choice, max_tokens, temperature, timeout)
+        except Exception:
+            return ToolCallRound(text=text, tool_calls=tool_calls, raw_message=raw_message, finish_reason=finish_reason)
     if last_error:
         raise last_error
     raise ApiCallError("model call failed: no response", retryable=True)

@@ -73,7 +73,8 @@ class AgentSession:
     messages: list[dict[str, Any]] = field(default_factory=list)
     pending: list[dict[str, Any]] = field(default_factory=list)
     status: str = "idle"  # idle | running | waiting_approval
-    plan: dict[str, Any] = field(default_factory=dict)  # {summary, steps:[{id,title,op?,status}], approved}
+    # {summary, steps:[{id,title,op?,part?,status}], bom?:[{part,role,quantity,...}], approved}
+    plan: dict[str, Any] = field(default_factory=dict)
     updated_at: float = field(default_factory=_now)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -112,10 +113,19 @@ class AgentSession:
             self.save()
 
     # ------------------------------------------------------------ 计划模式
-    def set_plan(self, summary: str, steps: list[dict[str, Any]], *, approved: bool) -> None:
-        """记录/更新计划（propose_plan 批准后写入，含批准标记）。"""
+    def set_plan(
+        self,
+        summary: str,
+        steps: list[dict[str, Any]],
+        *,
+        approved: bool,
+        bom: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """记录/更新计划（propose_plan 批准后写入，含批准标记；v0.12 支持 BOM）。"""
         with self._lock:
             self.plan = {"summary": summary, "steps": [dict(s) for s in steps], "approved": approved}
+            if bom:
+                self.plan["bom"] = [dict(item) for item in bom]
             self.updated_at = _now()
             self.save()
 

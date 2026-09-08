@@ -201,14 +201,32 @@ class KernelWorkerClient:
     def export_step(self, path: str, timeout: float | None = None) -> dict:
         return self.request_ok("export", {"path": path, "format": "step"}, timeout=timeout)
 
+    def reset(self, timeout: float | None = None) -> dict:
+        """v0.12 逐件建模：进程内重建全新内核（特征树/几何/op 历史全清）。
+
+        上层（finish_part）必须先导出当前零件再调用，避免零件互相融合。
+        """
+        return self.request_ok("reset", {}, timeout=timeout)
+
     def render_snapshot(self, *, views: list[str] | None = None, size: int = 480, timeout: float | None = None) -> dict:
         """渲染当前几何的 PNG 证据图。``render_base64`` 只随 include_render=True 下发，
-        结果不进参数化历史；调用方负责解码落盘，base64 不回喂 LLM。"""
+        结果不进参数化历史；调用方负责解码落盘，base64 不回喂 LLM。
+
+        v0.13：默认四视角（iso/front/top/side）——内核 views>1 时自动拼证据网格图。
+        """
         return self.request_ok("execute", {
             "op": "render",
-            "args": {"views": views or ["iso"], "size": size, "quality": "evidence"},
+            "args": {"views": views or ["iso", "front", "top", "side"], "size": size, "quality": "evidence"},
             "include_render": True,
         }, timeout=timeout)
+
+    def run_script(self, code: str, *, name: str = "", timeout: float | None = None) -> dict:
+        """v0.13 代码通道：模型编写的建模脚本经 kernel run_script 执行。
+
+        沙箱边界在内核侧（mech_kernel/script_sandbox.py）：只许 import math、
+        几何只能走 k 门面（kernel 公开 op）、执行前检查点、失败回滚并回传 traceback。
+        """
+        return self.request_ok("run_script", {"code": code, "name": name}, timeout=timeout)
 
     # -------------------------------------------------------------- internal
     def _readline(self) -> str:
