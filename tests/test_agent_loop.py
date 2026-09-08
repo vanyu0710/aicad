@@ -48,9 +48,28 @@ class FakeWorker:
         self.exported_step: list[str] = []
         self.render_calls: list[dict] = []
         self.render_png = "iVBORw0KGgo="  # 最小假 base64 PNG
+        self.reset_calls = 0
+        self.reset_error: Exception | None = None
+        # v0.13 run_script 桩：按序弹出，缺省返回成功
+        self.run_script_calls: list[tuple[str, str]] = []
+        self.run_script_results: list = []
 
     def capabilities(self) -> dict:
         return self.capabilities_result
+
+    def run_script(self, code: str, *, name: str = "") -> dict:
+        self.run_script_calls.append((code, name))
+        if self.run_script_results:
+            result = self.run_script_results.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+        return {
+            "success": True,
+            "value": {"ops_executed": 3, "solids": 1, "volume": 5000.0,
+                      "bounding_box": [0, 0, 0, 100, 50, 10], "stdout": "ok\n"},
+            "geometry_summary": {"volume": 5000.0, "bounding_box": [0, 0, 0, 100, 50, 10]},
+        }
 
     def execute(self, op: str, args: dict | None = None) -> dict:
         self.executed.append((op, dict(args or {})))
@@ -79,6 +98,13 @@ class FakeWorker:
     def render_snapshot(self, *, views=None, size=480) -> dict:
         self.render_calls.append({"views": views, "size": size})
         return {"success": True, "render_base64": self.render_png}
+
+    def reset(self) -> dict:
+        # v0.12 逐件建模：finish_part 归档后清空内核会话
+        self.reset_calls += 1
+        if self.reset_error is not None:
+            raise self.reset_error
+        return {"reset": True}
 
 
 def _success(volume=1000.0) -> dict:
@@ -750,6 +776,509 @@ class AgentLoopPlanModeTests(unittest.TestCase):
         self.assertEqual(len(plan_events), 1)  # 只有第一次成功
         self.assertEqual(plan_events[0][2]["steps"][0]["status"], "in_progress")
         self.assertTrue(result.ok)
+
+
+class AgentLoopDesignCalculateTests(unittest.TestCase):
+    """v0.12 design_calculate：计划门控期可用、纯算术无几何副作用、custom 沙箱。"""
+
+    def _tool_payload(self, messages: list) -> dict:
+        tool_msgs = [m for m in messages if m.get("role") == "tool"]
+        self.assertTrue(tool_msgs, "应有工具结果回喂")
+        return json.loads(tool_msgs[-1]["content"])
+
+    def test_ratio_split_available_before_approval_and_returns_schemes(self) -> None:
+        worker = FakeWorker()
+        events: list = []
+        tools_by_round: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            tools_by_round.append([t["function"]["name"] for t in tools])
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call(
+                    "design_calculate",
+                    {"kind": "gear_ratio_split", "params": {"total_ratio": 100}, "reason": "1:100 怎么分级"},
+                )
+            self._tool_payload(messages)  # 至少要看到第一轮的调研结果
+            return ToolCallRound(text="调研完成", tool_calls=[])
+
+        result = _run(worker, chat, mode="plan",
+                      emit=lambda ev, m, p: events.append((ev, m, p)))
+        # 计划门控期间 design_calculate 可用、建模 op 不可用
+        self.assertIn("design_calculate", tools_by_round[0])
+        self.assertNotIn("create_workplane", tools_by_round[0])
+        self.assertNotIn("finish_part", tools_by_round[0])  # 归档工具批准后才暴露
+        # 工具没有走 worker（无几何副作用）
+        self.assertEqual(worker.executed, [])
+        # 会话流里有调研卡片
+        self.assertTrue(any(e[0] == "agent_step" and e[2].get("op") == "design_calculate"
+                            for e in events))
+        # 结果与调研转录
+        self.assertEqual(len(result.design_calculations), 1)
+        self.assertTrue(result.design_calculations[0]["ok"])
+        self.assertTrue(result.ok)
+
+    def test_custom_sandbox_roundtrip_and_block(self) -> None:
+        worker = FakeWorker()
+        seen: list[dict] = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("design_calculate",
+                                        {"kind": "custom",
+                                         "code": "result = {\"d\": 2 * sqrt(a), \"ratio\": i1 * i2}",
+                                         "variables": {"a": 16.0, "i1": 4.0, "i2": 5.0}})
+            if calls["n"] == 2:
+                seen.append(self._tool_payload(messages))
+                return _round_with_call("design_calculate",
+                                        {"kind": "custom", "code": "import os\nresult = os.getcwd()"})
+            seen.append(self._tool_payload(messages))
+            return ToolCallRound(text="懂", tool_calls=[])
+
+        result = _run(worker, chat)
+        self.assertTrue(seen[0]["success"], seen[0])
+        self.assertAlmostEqual(seen[0]["result"]["result"]["d"], 8.0)
+        self.assertAlmostEqual(seen[0]["result"]["result"]["ratio"], 20.0)
+        # import 逃逸被沙箱拒绝，错误回喂但 agent 不死
+        self.assertFalse(seen[1]["success"])
+        self.assertEqual(seen[1]["error_kind"], "INVALID_REQUEST")
+        self.assertIn("import", seen[1]["error"])
+        self.assertTrue(result.ok)
+
+    def test_unknown_kind_returns_error(self) -> None:
+        worker = FakeWorker()
+        seen: list[dict] = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("design_calculate", {"kind": "magic"})
+            seen.append(self._tool_payload(messages))
+            return ToolCallRound(text="end", tool_calls=[])
+
+        _run(worker, chat)
+        self.assertFalse(seen[0]["success"])
+        self.assertIn("gear_ratio_split", seen[0]["error"])
+
+
+class AgentLoopBomPlanTests(unittest.TestCase):
+    """v0.12 BOM 计划：审批卡带零件清单、批准持久化、解锁 finish_part。"""
+
+    def _bom(self) -> list:
+        return [
+            {"part": "小齿轮", "role": "高速级主动轮", "quantity": 1,
+             "key_params": {"模数": "2", "齿数": "20"}},
+            {"part": "箱体", "role": "壳体", "quantity": 1},
+        ]
+
+    def test_propose_plan_with_bom_flow(self) -> None:
+        from backend.agent.approvals import ApprovalBroker
+
+        broker = ApprovalBroker(timeout=5)
+        worker = FakeWorker([_success()])
+        events: list = []
+        tools_by_round: list = []
+        rounds_messages: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            tools_by_round.append([t["function"]["name"] for t in tools])
+            rounds_messages.append(list(messages))
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("propose_plan", {
+                    "summary": "两级减速，4 类零件",
+                    "bom": self._bom(),
+                    "steps": [
+                        {"id": "s1", "title": "建小齿轮", "op": "make_gear", "part": "小齿轮"},
+                        {"id": "s2", "title": "建箱体", "op": "extrude", "part": "箱体"},
+                    ],
+                })
+            return ToolCallRound(text="开工", tool_calls=[])
+
+        def resolve_after_time():
+            import time as _t
+
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "approve")
+
+        t = threading.Thread(target=resolve_after_time)
+        t.start()
+        result = _run(worker, chat, approvals=broker, mode="plan",
+                      emit=lambda ev, m, p: events.append((ev, m, p)))
+        t.join(timeout=2)
+        # 审批卡 payload 带 BOM
+        plan_reviews = [e for e in events if e[0] == "approval_required" and e[2].get("kind") == "plan_review"]
+        self.assertEqual(len(plan_reviews), 1)
+        plan_payload = plan_reviews[0][2]["options"]["plan"]
+        self.assertEqual([b["part"] for b in plan_payload["bom"]], ["小齿轮", "箱体"])
+        self.assertEqual(plan_payload["steps"][0]["part"], "小齿轮")
+        # plan_updated 事件带 bom；步骤保留 part 归属
+        plan_events = [e for e in events if e[0] == "plan_updated"]
+        self.assertTrue(plan_events and plan_events[0][2].get("bom"))
+        # 批准后解锁 finish_part 与全部建模 op
+        self.assertIn("finish_part", tools_by_round[1])
+        self.assertIn("create_workplane", tools_by_round[1])
+        # 回喂给模型的批准说明含逐件执行协议
+        tool_msgs = [m for m in rounds_messages[1] if m.get("role") == "tool"]
+        note = json.loads(tool_msgs[-1]["content"])
+        self.assertIn("2 类零件", note["note"])
+        self.assertIn("finish_part", note["note"])
+        self.assertTrue(result.ok)
+
+    def test_bom_normalization_tolerance(self) -> None:
+        from backend.agent.loop import _normalize_bom
+
+        bom = _normalize_bom([
+            {"part": "轴"},                                   # quantity 缺省 1
+            {"part": " 齿轮 "},                                # 名字两侧空白剔除
+            {"role": "没有零件名"},                             # 无 part → 丢弃
+            {"part": "轴承", "quantity": 200, "key_params": {"x" * 50: "y" * 200, "n": 3}},
+            "not-a-dict",
+        ])
+        self.assertEqual(len(bom), 3)
+        self.assertEqual(bom[0]["quantity"], 1)
+        self.assertEqual(bom[1]["part"], "齿轮")
+        self.assertEqual(bom[2]["quantity"], 99)               # 上限夹住
+        self.assertEqual(bom[2]["key_params"]["n"], "3")       # 值转字符串
+        self.assertLessEqual(len(bom[2]["key_params"]["x" * 40]), 60)  # 键/值截断
+        self.assertEqual(_normalize_bom(None), [])
+
+
+class AgentLoopFinishPartTests(unittest.TestCase):
+    """v0.12 finish_part：导出归档 → reset → 计划打勾；各失败路径。"""
+
+    def _bom_steps(self) -> tuple[list, list]:
+        bom = [{"part": "g1", "role": "齿轮1"}, {"part": "g2", "role": "齿轮2"}]
+        steps = [
+            {"id": "s1", "title": "建 g1", "part": "g1"},
+            {"id": "s2", "title": "建 g2", "part": "g2"},
+        ]
+        return bom, steps
+
+    def test_two_parts_archive_reset_and_tick(self) -> None:
+        from backend.agent.approvals import ApprovalBroker
+        from backend.agent.session import AgentSession
+
+        broker = ApprovalBroker(timeout=5)
+        # 执行脚本：create_workplane → 成功；每次 finish_part 探针 = volume + solid_count
+        worker = FakeWorker([
+            _success(5000.0),
+            {"success": True, "value": 12345.0},   # g1 volume
+            {"success": True, "value": 1},         # g1 solid_count（复检门）
+            {"success": True, "value": 5000.0},    # g2 volume
+            {"success": True, "value": 1},         # g2 solid_count
+        ])
+        events: list = []
+        bom, steps = self._bom_steps()
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("propose_plan", {"summary": "两件", "bom": bom, "steps": steps})
+            if calls["n"] == 2:
+                return _round_with_call("create_workplane", {"name": "base"})
+            if calls["n"] == 3:
+                return _round_with_call("finish_part", {"part": "g1"})
+            if calls["n"] == 4:
+                return _round_with_call("finish_part", {"part": "g2", "note": "末件"})
+            return ToolCallRound(text="全部完成", tool_calls=[])
+
+        def resolve_after_time():
+            import time as _t
+
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "approve")
+
+        with tempfile.TemporaryDirectory() as td:
+            session = AgentSession(project_id="p1", path=Path(td) / "s.json")
+            t = threading.Thread(target=resolve_after_time)
+            t.start()
+            result = _run(worker, chat, approvals=broker, session=session,
+                          run_dir=Path(td), mode="plan",
+                          emit=lambda ev, m, p: events.append((ev, m, p)))
+            t.join(timeout=2)
+            report = json.loads(Path(result.artifacts["execution_report"]).read_text(encoding="utf-8"))
+
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(worker.reset_calls, 2)
+        self.assertEqual(len(result.parts), 2)
+        first, second = result.parts
+        self.assertEqual(first["part"], "g1")
+        self.assertEqual(first["volume_mm3"], 12345.0)
+        self.assertTrue(first["step_file"].startswith("part_01_"))
+        self.assertTrue(first["step_file"].endswith(".step"))
+        self.assertTrue(first["stl_file"].startswith("part_01_") and first["stl_file"].endswith(".stl"))
+        self.assertTrue(second["step_file"].startswith("part_02_"))
+        # worker 导出：两件各一份 STEP；STL = 两件归档 + 建模期的 model.stl
+        self.assertEqual(len(worker.exported_step), 2)
+        self.assertTrue(all("part_0" in p for p in worker.exported_step))
+        self.assertEqual(len([p for p in worker.exported_mesh if "part_0" in p]), 2)
+        # artifact_ready 事件两次、kind=part
+        part_events = [e for e in events if e[0] == "artifact_ready" and e[2].get("kind") == "part"]
+        self.assertEqual([e[2]["part"] for e in part_events], ["g1", "g2"])
+        # 计划按零件打勾（session 持久化）
+        statuses = {s["id"]: s["status"] for s in session.plan["steps"]}
+        self.assertEqual(statuses, {"s1": "completed", "s2": "completed"})
+        # 归档后当前几何为空：最终 result.volume 是 None，但 parts 让报告成立
+        self.assertIsNone(result.volume)
+        self.assertEqual(len(report["parts"]), 2)
+        self.assertTrue(report["ok"])
+
+    def test_finish_part_before_plan_approval_blocked(self) -> None:
+        worker = FakeWorker()
+        seen: list[dict] = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("finish_part", {"part": "g1"})
+            tool_msgs = [m for m in messages if m.get("role") == "tool"]
+            seen.append(json.loads(tool_msgs[-1]["content"]))
+            return ToolCallRound(text="好吧", tool_calls=[])
+
+        # 计划模式未批准：finish_part 不在工具表（幻觉调用也被 handler 拒绝）
+        result = _run(worker, chat, mode="plan")
+        self.assertEqual(seen[0]["error_kind"], "PLAN_REQUIRED")
+        self.assertEqual(worker.reset_calls, 0)
+        self.assertTrue(result.ok)
+
+    def test_finish_part_without_geometry(self) -> None:
+        worker = FakeWorker([{"success": True, "value": None}])
+        seen: list[dict] = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("finish_part", {"part": "g1"})
+            tool_msgs = [m for m in messages if m.get("role") == "tool"]
+            seen.append(json.loads(tool_msgs[-1]["content"]))
+            return ToolCallRound(text="明白", tool_calls=[])
+
+        # auto 模式下计划视为已批准，但当前无几何 → 拒绝且不 reset
+        _run(worker, chat)
+        self.assertFalse(seen[0]["success"])
+        self.assertEqual(seen[0]["error_kind"], "INVALID_REQUEST")
+        self.assertEqual(worker.reset_calls, 0)
+        self.assertEqual(worker.exported_step, [])
+
+    def test_finish_part_reset_failure_tells_model_to_stop(self) -> None:
+        worker = FakeWorker([{"success": True, "value": 900.0}])
+        worker.reset_error = RuntimeError("boom")
+        seen: list[dict] = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("finish_part", {"part": "g1"})
+            tool_msgs = [m for m in messages if m.get("role") == "tool"]
+            seen.append(json.loads(tool_msgs[-1]["content"]))
+            return ToolCallRound(text="报告用户", tool_calls=[])
+
+        result = _run(worker, chat)
+        self.assertFalse(seen[0]["success"])
+        self.assertEqual(seen[0]["error_kind"], "WORKER_ERROR")
+        self.assertIn("不要继续", seen[0]["error"].replace("请勿", "不要"))
+        self.assertEqual(result.parts, [])  # reset 失败不算归档成功
+        self.assertEqual(len(worker.exported_step), 1)  # 文件已导出（保留现场）
+
+
+class AgentLoopRunBuildScriptTests(unittest.TestCase):
+    """v0.13 run_build_script：建模脚本通道（合成工具、门控、回传、built_via）。"""
+
+    def _last_tool_payload(self, messages: list) -> dict:
+        tool_msgs = [m for m in messages if m.get("role") == "tool"]
+        self.assertTrue(tool_msgs)
+        return json.loads(tool_msgs[-1]["content"])
+
+    def test_script_success_tracks_geometry_and_marks_built_via(self) -> None:
+        worker = FakeWorker()
+        events: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("run_build_script",
+                                        {"code": "k.extrude(sketch_name='s', depth=10)", "reason": "建壳体"})
+            payload = self._last_tool_payload(messages)
+            self.assertTrue(payload["success"])
+            self.assertEqual(payload["solids"], 1)
+            self.assertEqual(payload["ops_executed"], 3)
+            self.assertIn("ok", payload["stdout"])
+            self.assertIn("可参数重放", payload["note"])
+            return ToolCallRound(text="完成", tool_calls=[])
+
+        result = _run(worker, chat, emit=lambda ev, m, p: events.append((ev, m, p)))
+        self.assertEqual(worker.run_script_calls[0][0], "k.extrude(sketch_name='s', depth=10)")
+        # 合成工具成功后手动触发 track：STL 导出 + 快照发生
+        self.assertTrue(any(p.endswith("model.stl") for p in worker.exported_mesh))
+        self.assertTrue(worker.render_calls)
+        # 会话流有脚本卡片
+        self.assertTrue(any(e[0] == "agent_step" and e[2].get("op") == "run_build_script" for e in events))
+        self.assertTrue(result.ok)
+
+    def test_script_failure_returns_traceback_and_keeps_state(self) -> None:
+        worker = FakeWorker()
+        worker.run_script_results = [{
+            "success": False, "error_kind": "RECOVERABLE",
+            "error": "脚本执行失败（状态已回滚到执行前，可安全改脚本重试）:\nValueError: boom",
+        }]
+        seen: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("run_build_script", {"code": "raise ValueError('boom')"})
+            seen.append(self._last_tool_payload(messages))
+            return ToolCallRound(text="改脚本", tool_calls=[])
+
+        _run(worker, chat)
+        self.assertFalse(seen[0]["success"])
+        self.assertIn("boom", seen[0]["error"])
+        self.assertIn("已回滚", seen[0]["note"])
+        # 失败不触发导出/快照
+        self.assertEqual(worker.exported_mesh, [])
+
+    def test_script_hidden_before_plan_approval_and_blocked_as_hallucination(self) -> None:
+        worker = FakeWorker()
+        tools_by_round: list = []
+        seen: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            tools_by_round.append([t["function"]["name"] for t in tools])
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("run_build_script", {"code": "k.extrude(sketch_name='s', depth=1)"})
+            seen.append(self._last_tool_payload(messages))
+            return ToolCallRound(text="好", tool_calls=[])
+
+        # 计划模式未批准：工具表不含 run_build_script；幻觉调用也被 handler 拒绝
+        _run(worker, chat, mode="plan")
+        self.assertNotIn("run_build_script", tools_by_round[0])
+        self.assertEqual(seen[0]["error_kind"], "PLAN_REQUIRED")
+        self.assertEqual(worker.run_script_calls, [])
+
+    def test_script_built_via_flows_into_finish_part_record(self) -> None:
+        worker = FakeWorker([
+            {"success": True, "value": 8000.0},   # volume 探针
+            {"success": True, "value": 1},        # solid_count 探针
+        ])
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("run_build_script", {"code": "k.extrude(sketch_name='s', depth=10)"})
+            if calls["n"] == 2:
+                return _round_with_call("finish_part", {"part": "housing"})
+            return ToolCallRound(text="归档完成", tool_calls=[])
+
+        # auto 模式：计划视为已批准，finish_part 可用
+        result = _run(worker, chat)
+        self.assertEqual(len(result.parts), 1)
+        self.assertEqual(result.parts[0]["built_via"], "script")
+        self.assertEqual(worker.reset_calls, 1)
+
+    def test_finish_part_rejects_multi_solid_design_review_gate(self) -> None:
+        """复检门：solid_count>1（悬浮特征）拒绝归档，不导出不清会话。"""
+        worker = FakeWorker([
+            {"success": True, "value": 8000.0},   # volume
+            {"success": True, "value": 3},        # solid_count = 3 → 拒绝
+        ])
+        seen: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("finish_part", {"part": "housing"})
+            seen.append(self._last_tool_payload(messages))
+            return ToolCallRound(text="去修复", tool_calls=[])
+
+        _run(worker, chat)
+        self.assertFalse(seen[0]["success"])
+        self.assertEqual(seen[0]["error_kind"], "GEOMETRY_FAILURE")
+        self.assertIn("3 个独立实体", seen[0]["error"])
+        self.assertEqual(worker.exported_step, [])
+        self.assertEqual(worker.reset_calls, 0)
+
+    def test_finish_part_feature_contract_mismatch_blocks_archiving(self) -> None:
+        """v0.13 特征契约：实测圆柱面数量与断言不符 → FEATURE_CONTRACT_MISMATCH，拒绝归档。
+        （真实 LLM 验收发现：undo 回滚掉 4 螺栓孔+1 轴承孔后模型仍谎报完成）"""
+        worker = FakeWorker([
+            {"success": True, "value": 8000.0},   # volume
+            {"success": True, "value": 1},        # solid_count
+            {"success": True, "value": {"selected": [  # select cylinder：只有 1×Ø25 + 2×Ø40
+                {"ref": "F03", "type": "cylinder", "radius_mm": 12.5},
+                {"ref": "F04", "type": "cylinder", "radius_mm": 20.0},
+                {"ref": "F05", "type": "cylinder", "radius_mm": 20.0},
+            ]}},
+        ])
+        seen: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("finish_part", {
+                    "part": "housing",
+                    "feature_contract": [
+                        {"radius_mm": 4.5, "count": 4},    # 断言 4 螺栓孔
+                        {"radius_mm": 12.5, "count": 2},   # 断言 2 轴承孔
+                    ],
+                })
+            seen.append(self._last_tool_payload(messages))
+            return ToolCallRound(text="补孔", tool_calls=[])
+
+        _run(worker, chat)
+        self.assertFalse(seen[0]["success"])
+        self.assertEqual(seen[0]["error_kind"], "FEATURE_CONTRACT_MISMATCH")
+        self.assertIn("4.5", seen[0]["error"])
+        self.assertIn("12.5", seen[0]["error"])
+        self.assertEqual(len(seen[0]["violations"]), 2)
+        self.assertEqual(worker.exported_step, [])
+        self.assertEqual(worker.reset_calls, 0)
+
+    def test_finish_part_feature_contract_passes_when_matched(self) -> None:
+        worker = FakeWorker([
+            {"success": True, "value": 8000.0},
+            {"success": True, "value": 1},
+            {"success": True, "value": {"selected": [
+                {"ref": "F03", "type": "cylinder", "radius_mm": 4.5},
+                {"ref": "F04", "type": "cylinder", "radius_mm": 4.5},
+                {"ref": "F05", "type": "cylinder", "radius_mm": 12.5},
+            ]}},
+        ])
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("finish_part", {
+                    "part": "housing",
+                    "feature_contract": [{"radius_mm": 4.5, "count": 2},
+                                         {"radius_mm": 12.5, "count": 1}],
+                })
+            return ToolCallRound(text="完成", tool_calls=[])
+
+        result = _run(worker, chat)
+        self.assertEqual(len(result.parts), 1)
+        self.assertEqual(worker.reset_calls, 1)
 
 
 if __name__ == "__main__":

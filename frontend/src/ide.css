@@ -2174,3 +2174,119 @@
 .plan-card-review .plan-steps {
   margin: 8px 0;
 }
+
+/* v0.12 BOM 零件清单与按零件分组的步骤 */
+.plan-bom,
+.plan-bom-summary {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.plan-bom-title {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: 4px;
+}
+
+.plan-bom-list,
+.plan-bom-summary {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.plan-bom-summary {
+  display: flex;
+  flex-direction: column;
+}
+
+.plan-bom-item,
+.plan-bom-summary-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  flex-wrap: wrap;
+}
+
+.plan-bom-part {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.plan-bom-qty {
+  color: var(--jade);
+  font-size: 11px;
+}
+
+.plan-bom-role {
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+.plan-bom-params {
+  font-size: 10px;
+  color: var(--ink-muted);
+  background: rgba(56, 195, 232, 0.1);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+.plan-step-group {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.plan-steps-sub {
+  padding-left: 14px;
+}
+
+.plan-step-part-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.plan-step-part-title.done {
+  color: #5fe0a8;
+}
+
+.plan-step-part-progress {
+  margin-left: 6px;
+  font-weight: 400;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+
+/* v0.12 零件产物行 */
+.artifact-row-parts {
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.artifact-parts-label {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.artifact-part {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.artifact-part-name {
+  color: var(--ink-soft);
+}

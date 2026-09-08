@@ -1,7 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import ApprovalPanel from "../ApprovalPanel";
 import ClarificationPanel from "../ClarificationPanel";
-import { API_ROOT as apiRoot, type Approval, type PlanState } from "../api";
+import { API_ROOT as apiRoot, type Approval, type PlanState, type PlanStep } from "../api";
 import { useAppStore, type ChatEntry } from "../store";
 import { useT } from "../i18n";
 
@@ -23,6 +23,22 @@ type Props = {
   onImageChange: (file: File | null) => void;
   inputRef?: RefObject<HTMLInputElement>;
 };
+
+/** 步骤按零件分组（保留原顺序；无 part 归入"通用"组，part 为空串）。 */
+function groupStepsByPart(steps: PlanStep[]): { part: string; steps: PlanStep[]; done: number }[] {
+  const groups: { part: string; steps: PlanStep[]; done: number }[] = [];
+  for (const step of steps) {
+    const key = step.part || "";
+    let group = groups.find((g) => g.part === key);
+    if (!group) {
+      group = { part: key, steps: [], done: 0 };
+      groups.push(group);
+    }
+    group.steps.push(step);
+    if (step.status === "completed") group.done += 1;
+  }
+  return groups;
+}
 
 export default function ChatColumn({
   chat,
@@ -62,14 +78,37 @@ export default function ChatColumn({
       {plan && plan.steps.length > 0 && (
         <div className="plan-card">
           {plan.summary && <div className="plan-summary">{plan.summary}</div>}
+          {plan.bom && plan.bom.length > 0 && (
+            <ul className="plan-bom-summary" data-testid="plan-bom-summary">
+              {plan.bom.map((item) => (
+                <li key={item.id || item.part} className="plan-bom-summary-item">
+                  <span className="plan-bom-part">{item.part}</span>
+                  {item.quantity && item.quantity > 1 ? <span className="plan-bom-qty">×{item.quantity}</span> : null}
+                  {item.role ? <span className="plan-bom-role">{item.role}</span> : null}
+                </li>
+              ))}
+            </ul>
+          )}
           <ol className="plan-steps">
-            {plan.steps.map((step) => (
-              <li key={step.id} className={`plan-step ${step.status}`}>
-                <span className="plan-step-mark" aria-hidden="true">
-                  {step.status === "completed" ? "✓" : step.status === "in_progress" ? "▸" : "○"}
-                </span>
-                <span className="plan-step-title">{step.title}</span>
-                {step.op && <code className="plan-step-op">{step.op}</code>}
+            {groupStepsByPart(plan.steps).map((group) => (
+              <li key={group.part || "*"} className="plan-step-group">
+                {group.part ? (
+                  <div className={`plan-step-part-title ${group.done ? "done" : ""}`}>
+                    {group.done ? "✓" : "○"} {group.part}
+                    <span className="plan-step-part-progress">{group.done}/{group.steps.length}</span>
+                  </div>
+                ) : null}
+                <ol className="plan-steps plan-steps-sub">
+                  {group.steps.map((step) => (
+                    <li key={step.id} className={`plan-step ${step.status}`}>
+                      <span className="plan-step-mark" aria-hidden="true">
+                        {step.status === "completed" ? "✓" : step.status === "in_progress" ? "▸" : "○"}
+                      </span>
+                      <span className="plan-step-title">{step.title}</span>
+                      {step.op && <code className="plan-step-op">{step.op}</code>}
+                    </li>
+                  ))}
+                </ol>
               </li>
             ))}
           </ol>

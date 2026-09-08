@@ -38,6 +38,7 @@ from backend.schemas import (
     AgentSessionView,
     AgentStartRequest,
     ArtifactSet,
+    PartArtifact,
     ChatEditRequest,
     CreateProjectRequest,
     CreateProjectResponse,
@@ -528,6 +529,20 @@ def _agent_is_running(project_id: str) -> bool:
         return run is not None and run["thread"].is_alive()
 
 
+# v0.12：多零件/机构级任务自动进入计划模式（先调研→BOM 计划→批准再动工），
+# 用户无需手动开开关；单零件任务维持 auto 直建。启发式只做提升、不做降级。
+_MULTIPART_PATTERNS = (
+    "变速箱", "齿轮箱", "减速器", "减速箱", "传动装置", "多级传动", "装配",
+    "gearbox", "speed reducer", "reducer", "multi-stage", "multistage",
+    "transmission assembly", "gear train",
+)
+
+
+def _looks_multipart_task(text: str) -> bool:
+    low = str(text or "").lower()
+    return any(pattern in low for pattern in _MULTIPART_PATTERNS)
+
+
 @app.post("/api/projects/{project_id}/agent/message")
 async def agent_message(project_id: str, request: AgentMessageRequest):
     """v0.10 对话式入口：空闲=开新任务；运行中=插话（轮间注入）。"""
@@ -543,15 +558,16 @@ async def agent_message(project_id: str, request: AgentMessageRequest):
             {"queued": True},
         )
         return {"ok": True, "queued": True, "project_id": project_id}
+    mode = "plan" if (request.mode == "plan" or _looks_multipart_task(request.text)) else "auto"
     _launch_agent_run(
         project_id,
         text=request.text,
         image_data_url=request.image_data_url,
         language=request.language,
         max_steps=request.max_steps,
-        mode=request.mode,
+        mode=mode,
     )
-    return {"ok": True, "started": True, "project_id": project_id}
+    return {"ok": True, "started": True, "project_id": project_id, "mode": mode}
 
 
 @app.get("/api/projects/{project_id}/agent/session")
@@ -655,12 +671,7 @@ def _run_agent_thread(
             initial_user_message=task_message,
             mode=mode,
         )
-        artifacts = ArtifactSet(
-            run_id=run_id,
-            step=result.artifacts.get("step"),
-            stl=result.artifacts.get("stl"),
-            execution_report=result.artifacts.get("execution_report"),
-        )
+        artifacts = _result_artifact_set(run_id, result)
         snapshot = DesignSnapshot(
             feature_plan=FeaturePlanV3(
                 design_intent=text,
@@ -695,12 +706,23 @@ def _run_agent_thread(
                 _agent_runs.pop(project_id, None)
 
 
+def _result_artifact_set(run_id: str, result: AgentLoopResult) -> ArtifactSet:
+    """agent 结果 → ArtifactSet（v0.12：单件槽 step/stl + 逐件归档 parts）。"""
+    return ArtifactSet(
+        run_id=run_id,
+        step=result.artifacts.get("step"),
+        stl=result.artifacts.get("stl"),
+        execution_report=result.artifacts.get("execution_report"),
+        parts=[PartArtifact(**p) for p in result.parts],
+    )
+
+
 def _agent_execution_report(result: AgentLoopResult) -> ExecutionReport:
     """agent 快照的执行报告：FeaturePlanV3 不再承载执行语义（D1）。"""
     return ExecutionReport(
         execution_ok=bool(result.ok and not result.error),
         plan_complete=bool(result.ok and not result.stopped),
-        geometry_valid=bool(result.volume),
+        geometry_valid=bool(result.volume or result.parts),
         production_ready=False,
         fallback_used=False,
         engine="mechkernel",
@@ -711,6 +733,9 @@ def _agent_execution_report(result: AgentLoopResult) -> ExecutionReport:
         agent_final_text=result.final_text,
         agent_stopped=result.stopped,
         volume=result.volume,
+        # v0.12 多零件逐件交付：归档清单与调研转录（ExecutionReport extra=allow）
+        parts=result.parts,
+        design_calculations=result.design_calculations,
     )
 
 

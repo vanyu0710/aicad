@@ -398,5 +398,116 @@ class KernelEndpointsTests(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
 
 
+class AutoPlanModeTests(unittest.TestCase):
+    """v0.12：多零件/机构任务从 /agent/message 自动升级到 plan 模式。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.client = TestClient(main_module.app)
+
+    def setUp(self) -> None:
+        self._registry_patch = patch.object(
+            main_module, "_agent_sessions",
+            main_module.SessionRegistry(Path(tempfile.mkdtemp(prefix="mechcad-sess-test-"))),
+        )
+        self._registry_patch.start()
+        self.project_id = self.client.post("/api/projects", json={"name": "auto plan"}).json()["project_id"]
+        with main_module._agent_lock:
+            main_module._agent_runs.clear()
+
+    def tearDown(self) -> None:
+        with main_module._agent_lock:
+            runs = list(main_module._agent_runs.items())
+            main_module._agent_runs.clear()
+        for _, run in runs:
+            run["stop"].set()
+            run["thread"].join(timeout=2)
+        self._registry_patch.stop()
+
+    def _message_capturing_mode(self, text: str, explicit_mode: str | None = None) -> dict:
+        captured: dict = {}
+
+        def fake_thread(project_id, text_, image_data_url, language, max_steps, settings, stop_event,
+                        loop=None, approvals=None, session=None, mode=None):
+            captured["mode"] = mode
+
+        payload = {"text": text}
+        if explicit_mode:
+            payload["mode"] = explicit_mode
+        with patch.object(main_module, "_run_agent_thread", side_effect=fake_thread):
+            resp = self.client.post(f"/api/projects/{self.project_id}/agent/message", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        captured["response"] = resp.json()
+        return captured
+
+    def test_gearbox_text_upgrades_to_plan(self) -> None:
+        for text in ("给我设计个 1:100 的变速箱", "设计一台两级减速器", "design a 2-stage gearbox"):
+            captured = self._message_capturing_mode(text)
+            self.assertEqual(captured["mode"], "plan", text)
+            self.assertEqual(captured["response"]["mode"], "plan")
+
+    def test_simple_part_stays_auto(self) -> None:
+        captured = self._message_capturing_mode("做一块 120×120×12 的法兰，中心 Ø30 通孔")
+        self.assertEqual(captured["mode"], "auto")
+
+    def test_explicit_plan_respected_and_no_downgrade(self) -> None:
+        captured = self._message_capturing_mode("做一块法兰板", explicit_mode="plan")
+        self.assertEqual(captured["mode"], "plan")  # 用户显式 plan：不降级
+
+    def test_heuristic_helper_directly(self) -> None:
+        self.assertTrue(main_module._looks_multipart_task("装配体传动方案"))
+        self.assertFalse(main_module._looks_multipart_task("改个倒角"))
+
+
+class PartArtifactContractTests(unittest.TestCase):
+    """v0.12：ArtifactSet.parts 契约 + agent_done payload 透传 + artifact kind 解析。"""
+
+    def test_artifact_set_parts_serialization(self) -> None:
+        from backend.schemas import ArtifactSet, PartArtifact
+
+        parts = [
+            PartArtifact(part="小齿轮", index=1, step="/abs/part_01_小齿轮.step",
+                         stl="/abs/part_01_小齿轮.stl", step_file="part_01_小齿轮.step",
+                         stl_file="part_01_小齿轮.stl", volume_mm3=15787.2, note="involute"),
+            PartArtifact(part="箱体", index=2),
+        ]
+        artifacts = ArtifactSet(run_id="r1", parts=parts)
+        dumped = artifacts.model_dump()
+        self.assertEqual(len(dumped["parts"]), 2)
+        self.assertEqual(dumped["parts"][0]["part"], "小齿轮")
+        self.assertAlmostEqual(dumped["parts"][0]["volume_mm3"], 15787.2)
+        self.assertIsNone(dumped["parts"][1]["step"])
+
+    def test_storage_part_kind_path_and_traversal_guard(self) -> None:
+        from backend.storage import artifact_path
+
+        # 正常零件 kind 能解析（文件名即 kind）
+        p = artifact_path("run1", "part_02_箱体.step")
+        self.assertTrue(str(p).endswith("part_02_箱体.step"))
+        q = artifact_path("run1", "part_02_箱体.stl")
+        self.assertTrue(str(q).endswith(".stl"))
+        # 目录穿越与非法后缀必须拒绝
+        for bad in ("part_02_../../secret.step", "part_02_box.exe", "part_2_box.step", "model.step2"):
+            with self.assertRaises(KeyError, msg=bad):
+                artifact_path("run1", bad)
+
+    def test_thread_runner_passes_parts_to_artifact_set(self) -> None:
+        from backend.agent.loop import AgentLoopResult
+
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td)
+            result = AgentLoopResult(ok=True, steps=5, final_text="完成")
+            result.parts = [{"part": "g1", "index": 1, "step": str(run_dir / "part_01_g1.step"),
+                             "stl": str(run_dir / "part_01_g1.stl"), "step_file": "part_01_g1.step",
+                             "stl_file": "part_01_g1.stl", "volume_mm3": 1.5, "stl_size": 42}]
+            result.artifacts["execution_report"] = str(run_dir / "execution_report.json")
+            artifacts = main_module._result_artifact_set("runX", result)
+            dumped = artifacts.model_dump()
+            self.assertEqual(dumped["run_id"], "runX")
+            self.assertEqual([p["part"] for p in dumped["parts"]], ["g1"])
+            self.assertEqual(dumped["parts"][0]["step_file"], "part_01_g1.step")
+            self.assertEqual(dumped["execution_report"], str(run_dir / "execution_report.json"))
+
+
 if __name__ == "__main__":
     unittest.main()

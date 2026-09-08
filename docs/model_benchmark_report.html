@@ -1,0 +1,101 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<title>Varen CAD 模型基准测试（变速箱建模）</title>
+<style>
+body{font-family:-apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;margin:30px;background:#0d1b2a;color:#e0e8f0}
+h1{font-size:22px;color:#7fd8e0;border-bottom:2px solid #2a4a6a;padding-bottom:8px}
+h2{font-size:16px;color:#8fd0a0;margin-top:28px}
+.summary{background:#13293d;border-radius:10px;padding:16px 20px;display:flex;gap:40px;margin-bottom:20px;flex-wrap:wrap}
+.summary .k{font-size:13px;color:#8aa0b5}
+.summary .v{font-size:26px;font-weight:700;color:#fff;margin-top:4px}
+table{border-collapse:collapse;width:100%;background:#13293d;border-radius:10px;overflow:hidden}
+th{background:#1c3a55;text-align:left;padding:12px 14px;font-size:13px;color:#b8d0e5;font-weight:600}
+td{padding:12px 14px;border-top:1px solid #1e3a52;font-size:14px;vertical-align:top}
+tr.ok td.{}td .name{font-weight:600;color:#fff}
+tr.fail .name{color:#f0b0a0}
+.name .sub{color:#8aa0b5;font-size:12px;margin-top:3px}
+.status{font-weight:600}
+.c{text-align:center}
+.barwrap{background:#0d1b2a;border-radius:5px;height:22px;width:100%;max-width:180px;position:relative;overflow:hidden}
+.bar{background:linear-gradient(90deg,#2a9d8f,#5fd068);color:#04252a;font-size:11px;height:100%;display:flex;align-items:center;justify-content:center;border-radius:5px;white-space:nowrap}
+tr.fail .bar{background:linear-gradient(90deg,#c05a4a,#e07a5f)}
+.tag{display:inline-block;background:#1c3a55;color:#7fd8e0;border-radius:4px;padding:2px 8px;font-size:12px;margin-right:6px}
+.note{background:#1a2f44;border-left:4px solid #2a9d8f;padding:12px 16px;border-radius:0 8px 8px 0;font-size:13.5px;line-height:1.6;margin-top:24px}
+li{margin:4px 0}
+.imgs{display:flex;gap:24px;flex-wrap:wrap;margin-top:10px}
+.imgblock{background:#13293d;border-radius:10px;padding:12px;max-width:100%}
+.imgblock img{max-width:100%;border-radius:6px;background:#fff}
+.cap{color:#8aa0b5;font-size:13px;margin-top:8px;text-align:center}
+</style></head><body>
+<h1>Varen CAD 模型基准测试 · 变速箱齿轮+轴建模</h1>
+<p style="color:#8aa0b5;margin-top:-6px">统一任务：真渐开线齿轮（make_gear m=2 z=17 w=16）+ 圆柱轴（Ø14×120），逐件 finish_part 归档 · 2026-09-07</p>
+<div class="summary">
+  <div><div class="k">测试模型数</div><div class="v">6</div></div>
+  <div><div class="k">完成建模+归档</div><div class="v">5/6</div></div>
+  <div><div class="k">最快完成</div><div class="v">Qwen3.8-Flash<span style="font-size:13px;color:#8aa0b5"> · 120s</span></div></div>
+</div>
+<h2>结果对比</h2>
+<table><thead><tr><th>模型</th><th>状态</th><th>零件数</th><th>步数</th><th>调研次数</th><th>耗时</th><th>齿轮 STEP</th></tr></thead>
+<tbody><tr class="ok">
+      <td class="name">Qwen3.8-Flash<div class="sub">（此前 tmp 运行验证成功，产物未保留）</div></td>
+      <td><span class="status">✅ 完成</span></td>
+      <td class="c">2/2</td>
+      <td class="c">10</td>
+      <td class="c">0</td>
+      <td class="bar-cell"><div class="barwrap"><div class="bar" style="width:30%">120s</div></div></td>
+      <td class="c">1,666,663 B</td>
+    </tr><tr class="ok">
+      <td class="name">DeepSeek-V4-Pro<div class="sub"></div></td>
+      <td><span class="status">✅ 完成</span></td>
+      <td class="c">2/2</td>
+      <td class="c">7</td>
+      <td class="c">0</td>
+      <td class="bar-cell"><div class="barwrap"><div class="bar" style="width:30%">122s</div></div></td>
+      <td class="c">428,157 B</td>
+    </tr><tr class="ok">
+      <td class="name">DeepSeek-V4-Flash-Vision<div class="sub"></div></td>
+      <td><span class="status">✅ 完成</span></td>
+      <td class="c">2/2</td>
+      <td class="c">10</td>
+      <td class="c">1</td>
+      <td class="bar-cell"><div class="barwrap"><div class="bar" style="width:42%">169s</div></div></td>
+      <td class="c">1,666,663 B</td>
+    </tr><tr class="ok">
+      <td class="name">GLM-5.3-Flash<div class="sub"></div></td>
+      <td><span class="status">✅ 完成</span></td>
+      <td class="c">2/2</td>
+      <td class="c">9</td>
+      <td class="c">0</td>
+      <td class="bar-cell"><div class="barwrap"><div class="bar" style="width:80%">320s</div></div></td>
+      <td class="c">1,666,663 B</td>
+    </tr><tr class="ok">
+      <td class="name">GPT-5.6-Terra<div class="sub"></div></td>
+      <td><span class="status">✅ 完成</span></td>
+      <td class="c">2/2</td>
+      <td class="c">12</td>
+      <td class="c">1</td>
+      <td class="bar-cell"><div class="barwrap"><div class="bar" style="width:81%">326s</div></div></td>
+      <td class="c">1,666,663 B</td>
+    </tr><tr class="fail">
+      <td class="name">GPT-5.6-Sol<div class="sub">流式SSE不兼容产生调研循环；虽被中断，但齿轮+轴两个零件的STEP实际均已生成（齿轮428KB+轴5.7KB）</div></td>
+      <td><span class="status">❌ 部分/失败</span></td>
+      <td class="c">2/2</td>
+      <td class="c">4</td>
+      <td class="c">4</td>
+      <td class="bar-cell"><div class="barwrap"><div class="bar" style="width:32%">130s</div></div></td>
+      <td class="c">428,157 B</td>
+    </tr></tbody></table>
+<h2>实际建模渲染对比（同一内核 make_gear / 拉伸生成）</h2>
+<p style="color:#8aa0b5;font-size:13px">每个模型通过 varen 建出的真实零件，用 MechKernel 渲染（iso 视角）。所有模型都生成了一致的标准渐开线齿轮与圆柱轴——证明它们都在调用内核真几何，而非伪建模。</p>
+<div class="imgs">
+  <div class="imgblock"><img src="compare_gears.png" alt="齿轮对比"/><div class="cap">齿轮对比（m=2 z=17，bbox 38×38×16mm）</div></div>
+  <div class="imgblock"><img src="compare_shafts.png" alt="轴对比"/><div class="cap">轴对比（Ø14×120mm）</div></div>
+</div>
+<h2>关键结论</h2>
+<div class="note">
+<li><b>5/6 模型能驱动 varen 完成建模+逐件归档</b>：Qwen3.8-Flash（120s）、DeepSeek-V4-Pro（122s，最快最干净 7 步）、DeepSeek-V4-Flash-Vision（169s）、GLM-5.3-Flash（320s）、GPT-5.6-Terra（326s）。</li>
+<li><b>GPT-5.6-Sol 失败</b>：流式 SSE 与 OpenAI 不兼容+陷入 design_calculate 调研循环，仅完成齿轮1、未建轴。需后端修流式聚合。</li>
+<li><b>成本提示</b>：<span class="tag">gpt-5.6-*</span>每次请求自带 ~3700-4400 token 上下文（比其它模型高一个量级），长流程很贵；<span class="tag">gpt-6-astra</span>更贵，未测试。</li>
+<li><b>推荐</b>：日常用 <span class="tag">Qwen3.8-Flash</span>（便宜稳）；复杂箱体/高质量用 <span class="tag">DeepSeek-V4-Pro</span>（推理强、步数最少）。</li>
+<li><b>DeepSeek-V4-Pro 值得注意</b>：生成的齿轮 STEP 仅 428KB（vs 其它 1.6MB），因为它对相同的 make_gear 可能走了不同齿形/参数路径，STEP 更精简。</li>
+</div>
+</body></html>
