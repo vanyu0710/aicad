@@ -1,3 +1,15 @@
+## v0.13.2-alpha - 标准平面轴系契约修复 + 计划收尾门控（真实 LLM 全流程二次验收驱动）
+
+- **内核 v2.13.2 平面契约修复（mechcad-kernel）**：真实 LLM 建箱体时**反复试探平面映射、撤销重来约 30 步**，定位到两处根因：
+  - `XZ` 声明为 `(x_dir=+x, y_dir=+z, normal=+y)` 是**左手系**（x×y=−y≠normal），build123d 按右手系重算 → 草图 v 轴变 −z、拉伸方向翻转。现改为 `normal=−y`（保留"横 x 纵 z"直觉且右手系）。
+  - `_sketch_plane` 把**所有过原点标准平面**一律短路成 `None`，于是回退到 `direction="Z"` → Plane.XY，XZ/YZ 的声明轴从未生效。现仅当声明轴与 direction 等价时才走快路径；否则按 `x_dir+y_dir` 构造真实平面（v 严格等于声明的 y_dir，左手系声明自动翻转 y_dir）。
+  - 顺带修复 custom/face 平面 `y_dir` 未推导（默认 (0,1,0)，法向为 Y 时与 x_dir 平行 → `x_dir and y_dir must not be parallel` 崩溃）。
+  - 回归测试：`test_standard_plane_axes_match_declaration` + `test_standard_planes_are_right_handed`（内核 386/386）。
+  - **实测效果**：同一任务平面试探从 ~30 次降到 **0 次**。
+- **计划未完成不得收工**：模型归档第一件就写总结（真实 LLM 曾只建 1 件就 PASS）。提示词明确"finish_part 是中途动作"，harness 加门控——模型停止时若批准计划仍有 pending 步骤，注入提醒一次并继续（`_plan_has_pending`）。
+- **防重复归档**：真实 LLM 把 11 件归档成 24 次（修改零件时旧版本也归档）。`finish_part` 对同名零件二次归档返回 `DUPLICATE_PART` 拒绝。
+- **真实 LLM 全流程二次验收（deepseek-v4.1-flash）PASS**：**BOM 11 项全部建成**（6 齿轮 + 4 轴 + 1 箱体），箱体独立核验单实体 196×596×243mm、4 底脚安装孔 + 8 组轴承孔（r13.5~50）、带法兰与加强筋。测试：aicad 385、内核 386 全绿。
+
 ## v0.13.1-alpha - 重推理模型适配 + 调研防打转（真实 LLM 全流程验收驱动）
 
 换用 `deepseek-v4.1-flash-expires-on-0910`（重推理模型）跑"1:100 变速箱"全流程时暴露两处适配缺口，均已修复：

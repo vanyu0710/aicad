@@ -603,6 +603,8 @@ class AgentLoop:
         # v0.13.1 调研防打转：计划批准前 design_calculate 调用次数硬上限
         self._calc_calls = 0
         self._calc_budget = 8
+        # v0.13.2 计划未完成不得收工（只提醒一次，避免死循环）
+        self._nagged_incomplete_plan = False
         # 旧注入（测试 fake 只接受 (messages, tools)）不支持增量回调时自动降级
         try:
             params = inspect.signature(chat_with_tools).parameters
@@ -635,6 +637,15 @@ class AgentLoop:
         if result.error and not result.stopped:
             result.ok = False
         return result
+
+    def _plan_has_pending(self) -> bool:
+        """批准的计划里是否还有未完成步骤（用于"不得提前收工"门控）。"""
+        steps: list = []
+        if self.session is not None:
+            steps = (self.session.plan or {}).get("steps") or []
+        elif self._approved_plan:
+            steps = self._approved_plan.get("steps") or []
+        return any(s.get("status") != "completed" for s in steps if isinstance(s, dict))
 
     def _absorb_pending(self) -> None:
         """把用户在运行中插入的消息注入对话（轮间生效）。"""
@@ -772,6 +783,19 @@ class AgentLoop:
                     # 非流式：整轮文字一次性播出（流式时已逐段回调，不重复）
                     self.emit("agent_text_delta", round.text, {"round": self._round_no, "done": not round.tool_calls})
             if not round.tool_calls:
+                # v0.13.2 计划未完成不得收工：模型停止时若批准的计划里还有未完成
+                # 步骤/零件，注入提醒让它继续（防止"归档第一件就收尾"）。
+                if self._plan_approved and self._plan_has_pending():
+                    if not self._nagged_incomplete_plan:
+                        self._nagged_incomplete_plan = True
+                        self._remember({"role": "assistant", "content": round.text or ""})
+                        self._remember({
+                            "role": "user",
+                            "content": ("计划尚未完成：还有未完成的零件/步骤。请继续逐件建模，"
+                                        "直到计划中所有零件都已 finish_part 归档；不要现在写总结。"),
+                        })
+                        self.logs.append("计划未完成，已提醒模型继续。")
+                        continue
                 result.final_text = round.text
                 result.ok = True
                 if round.text:
@@ -1213,6 +1237,12 @@ class AgentLoop:
         elif not part:
             payload = {"success": False, "error_kind": "INVALID_REQUEST",
                        "error": "缺少零件名 part。"}
+        elif any(p.get("part") == part for p in result.parts):
+            # v0.13.2 防重复归档：同名零件已归档过（真实 LLM 跑出过 24 件里 13 件重复）。
+            # 若确需替换，模型应先用不同零件名或先向用户说明。
+            payload = {"success": False, "error_kind": "DUPLICATE_PART",
+                       "error": f"零件「{part}」已归档过（part #{next(p['index'] for p in result.parts if p['part'] == part):02d}）。"
+                                "请继续下一个尚未归档的零件；如需重做该件，请先用 update_plan 说明并换用新零件名。"}
         else:
             contract = args.get("feature_contract") if isinstance(args.get("feature_contract"), list) else None
             payload = self._finish_part_inner(part, note, result, contract)

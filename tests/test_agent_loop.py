@@ -1281,5 +1281,75 @@ class AgentLoopRunBuildScriptTests(unittest.TestCase):
         self.assertEqual(worker.reset_calls, 1)
 
 
+
+
+    def test_duplicate_part_archiving_rejected(self) -> None:
+        """v0.13.2: 同名零件二次归档被拒（真实 LLM 曾把 11 件归档成 24 次）。"""
+        worker = FakeWorker([
+            {"success": True, "value": 8000.0}, {"success": True, "value": 1},
+            {"success": True, "value": 8000.0}, {"success": True, "value": 1},
+        ])
+        seen: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("finish_part", {"part": "housing"})
+            if calls["n"] == 2:
+                return _round_with_call("finish_part", {"part": "housing"})  # 重复
+            seen.append(self._last_tool_payload(messages))
+            return ToolCallRound(text="换下一件", tool_calls=[])
+
+        result = _run(worker, chat)
+        self.assertEqual(len(result.parts), 1)          # 只归档一次
+        self.assertFalse(seen[0]["success"])
+        self.assertEqual(seen[0]["error_kind"], "DUPLICATE_PART")
+        self.assertEqual(worker.reset_calls, 1)         # 第二次未触发 reset
+
+    def test_incomplete_plan_gets_nagged_to_continue(self) -> None:
+        """v0.13.2: 计划批准后模型停止但还有 pending 步骤 → 注入提醒一次并继续。"""
+        from backend.agent.approvals import ApprovalBroker
+        from backend.agent.session import AgentSession
+        import tempfile as _tf
+
+        broker = ApprovalBroker(timeout=5)
+        worker = FakeWorker()
+        rounds_msgs: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            rounds_msgs.append(list(messages))
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("propose_plan", {
+                    "summary": "两件", "bom": [{"part": "a"}, {"part": "b"}],
+                    "steps": [{"id": "s1", "title": "建 a", "part": "a"},
+                              {"id": "s2", "title": "建 b", "part": "b"}]})
+            if calls["n"] == 2:
+                return ToolCallRound(text="我先归档 a 就收尾", tool_calls=[])  # 提前停
+            # 被提醒后应继续
+            return ToolCallRound(text="好的，继续", tool_calls=[])
+
+        def resolve_after_time():
+            import time as _t
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "approve")
+
+        import threading as _th
+        with _tf.TemporaryDirectory() as td:
+            session = AgentSession(project_id="p1", path=Path(td) / "s.json")
+            t = _th.Thread(target=resolve_after_time); t.start()
+            result = _run(worker, chat, approvals=broker, session=session,
+                          run_dir=Path(td), mode="plan", emit=lambda *_: None)
+            t.join(timeout=2)
+        # 第三轮消息里应含提醒
+        nag = [m for m in rounds_msgs[-1] if m.get("role") == "user" and "计划尚未完成" in str(m.get("content"))]
+        self.assertTrue(nag, "应注入计划未完成提醒")
+        self.assertTrue(result.ok)
+
+
 if __name__ == "__main__":
     unittest.main()
