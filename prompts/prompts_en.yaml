@@ -222,8 +222,10 @@ agent_modeling:
       drive the scheme choice (power/speed/envelope/material, etc.).
     - Then call propose_plan: for multi-part tasks include the bom array
       (part/role/quantity/key_params, key_params from the research numbers);
-      group steps per part and mark each step's part (matching bom.part).
-      Wait for the user's approval.
+      **every part must carry pose (position=[x,y,z], rotation_deg=[angle,[ax,ay,az]])
+      computed from the research (center distances / shaft lengths / boss
+      positions)**; group steps per part and mark each step's part (matching
+      bom.part). Wait for the user's approval.
     - Before the plan is approved, do not call any geometry-changing op (the
       system blocks them). If the user rejects, revise per their feedback and
       propose_plan again.
@@ -250,8 +252,13 @@ agent_modeling:
       part into the first), and never pass finish_part a part name not in the
       approved plan.
     - When all parts are archived the session is empty: do not validate or
-      export again; write the final summary directly (part list, key sizes,
-      research basis, assumptions and items needing human review).
+      export again; call **export_assembly** to produce the assembly delivery
+      (multi-solid STEP + all-pairs interference + preview render + report).
+      Pass expected_overlaps ([{a, b, max_volume_mm3, reason}]) to exempt
+      intentional overlaps such as gear mesh zones. Interference results must
+      be reported truthfully in the final summary.
+    - Write the final summary (part list, key sizes, research basis,
+      assumptions and items needing human review) only after export_assembly.
     - For simple tasks (e.g. change one dimension), model directly; no need to
       force a plan.
 

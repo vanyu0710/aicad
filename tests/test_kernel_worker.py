@@ -254,6 +254,25 @@ class KernelWorkerEditCommandsTests(unittest.TestCase):
         self.assertEqual(sent["cmd"], "reset")
         self.assertEqual(sent["payload"], {})
 
+    def test_assembly_rpcs(self) -> None:
+        """v0.14 F2a：export_assembly / assembly_interference / render_assembly RPC。"""
+        parts = [{"path": "p/a.step", "name": "a", "pose": {"position": [0, 0, 0]}}]
+        client, proc = _make_client([
+            self._echo_payload("export_assembly"),
+            self._echo_payload("assembly_interference"),
+            self._echo_payload("render_assembly"),
+        ])
+        client.export_assembly(parts, "p/asm.step")
+        sent = json.loads(proc.written_lines[0])
+        self.assertEqual(sent["payload"], {"parts": parts, "out_step": "p/asm.step"})
+        client.assembly_interference(parts, expected_overlaps=[{"a": "a", "b": "b"}])
+        sent = json.loads(proc.written_lines[1])
+        self.assertEqual(sent["payload"]["tolerance"], 0.001)
+        self.assertEqual(sent["payload"]["expected_overlaps"], [{"a": "a", "b": "b"}])
+        client.render_assembly(parts, size=320)
+        sent = json.loads(proc.written_lines[2])
+        self.assertEqual(sent["payload"], {"parts": parts, "size": 320})
+
 
 if __name__ == "__main__":
     unittest.main()

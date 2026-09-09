@@ -228,6 +228,26 @@ class KernelWorkerClient:
         """
         return self.request_ok("run_script", {"code": code, "name": name}, timeout=timeout)
 
+    # ---------------------------------------------------------- assembly (F2a)
+    def export_assembly(self, parts: list[dict], out_step: str,
+                        timeout: float | None = None) -> dict:
+        """v0.14 装配导出：零件 STEP + 位姿 → XCAF 装配树 STEP（无状态，内核不感知）。"""
+        return self.request_ok("export_assembly", {"parts": parts, "out_step": out_step},
+                               timeout=timeout)
+
+    def assembly_interference(self, parts: list[dict], *, tolerance: float = 0.001,
+                              expected_overlaps: list[dict] | None = None,
+                              timeout: float | None = None) -> dict:
+        """v0.14 装配干涉：全对求交（bbox 预过滤）+ 预期重叠豁免。"""
+        return self.request_ok("assembly_interference", {
+            "parts": parts, "tolerance": tolerance, "expected_overlaps": expected_overlaps,
+        }, timeout=timeout)
+
+    def render_assembly(self, parts: list[dict], *, size: int = 480,
+                        timeout: float | None = None) -> dict:
+        """v0.14 装配预览：分件着色四视角 PNG 网格（render_base64）。"""
+        return self.request_ok("render_assembly", {"parts": parts, "size": size}, timeout=timeout)
+
     # -------------------------------------------------------------- internal
     def _readline(self) -> str:
         """读一行响应；读过程中断/管道损坏统一转 WORKER_DEAD。"""

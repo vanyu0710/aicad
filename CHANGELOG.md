@@ -1,3 +1,15 @@
+## v0.14.0-alpha - F2a 装配视图：项目零件库 + 位姿 manifest + 装配 STEP/干涉/预览（对标设计文档 ASSEMBLY_F2_DESIGN）
+
+装配 = 已归档零件 + 位姿 manifest 之上的**视图**（设计 D1）：内核单几何契约零改动，零件改参走"单会话重做 + 重新归档"，manifest 更新即装配更新。
+
+- **项目零件库**（`backend/storage.py`）：`work/project_parts/{project}/`——`vNNN_名.step/.stl` 版本化归档 + `parts_manifest.json` 原子写（tmp+replace）+ 文件名白名单防穿越；`finish_part` 在 run 归档之外同步写库（版本递增、upsert 不重复），`part_rec` 加 `library_*`/`pose` 字段。
+- **BOM 位姿**：`propose_plan.bom[].pose`（position/rotation_deg，数值来自 design_calculate 调研：中心距/轴长/凸台位）；`_normalize_pose` 严格校验（非法丢字段不整体拒）。`depends_on` 从死数据转为装配顺序/报告分组。
+- **内核 v2.14 三命令**（`mech_kernel/assembly_scene.py` + server dispatch，**无状态**：不读写 kernel 实例、不进事务）：`export_assembly`（逐件 import+位姿 → 带 label 的 Compound 树 → build123d XCAF 装配 STEP；中文产品名经 reader→TDataStd_Name→writer 回写修正 pyOCP UTF-8 逐字节 mojibake）、`assembly_interference`（bbox 预过滤 + collision 全对求交 + expected_overlaps 豁免，重合体 boolean 已知坑透传）、`render_assembly`（分件着色四视角证据网格）。
+- **agent 收尾工具 `export_assembly`**：全部零件归档后一键交付（装配 STEP + 干涉 + 预览图 + `assembly_NNN_report.json`），结果写 manifest + `ArtifactSet.assembly` 投影 + `artifact_ready{kind:"assembly"}`；门控：计划批准 + 无 pending 零件 + 库非空。**发现并修复两个集成 bug**：server 脚本模式下相对导入 ImportError（测试包导入发现不了）；库路径未 resolve 导致 worker 在内核仓解析失败。
+- **前端**：Viewport `models[]` 多件按位姿叠加（**不 center()**）+ 显隐/点选高亮；App 装配模式自动切换 + 装配面板（STEP/报告链接、干涉计数、零件位姿列表）；`assemblyArtifactUrl`；零件库 REST（manifest + 库文件下载）。
+- **修复**：`_commit_kernel_state_snapshot` 手动改参/undo 后丢 parts 清单（现存 bug）→ 现 carry-over parts+assembly。
+- 测试：aicad 392+（pose 规范化、库写/版本 upsert、export 门控与成功、RPC echo、URL、carry-over 回归）、内核 391（assembly_scene 5 + 既有）、前端 61；E2E `scripts/e2e_assembly_flow.py` 13/13（真实 worker：3 件带位姿入库 → 装配 STEP 回读 3 具名产品 → 故意插入的凸台×底板干涉命中 → 预览/报告落盘）。
+
 ## v0.13.2-alpha - 标准平面轴系契约修复 + 计划收尾门控（真实 LLM 全流程二次验收驱动）
 
 - **内核 v2.13.2 平面契约修复（mechcad-kernel）**：真实 LLM 建箱体时**反复试探平面映射、撤销重来约 30 步**，定位到两处根因：

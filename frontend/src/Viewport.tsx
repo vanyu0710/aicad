@@ -5,11 +5,22 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { useT } from "./i18n";
 
+export type AssemblyModel = {
+  name: string;
+  url: string;
+  position?: number[] | null;
+  rotationDeg?: [number, number[]] | null;
+};
+
 type Props = {
   objUrl?: string;
   stlUrl?: string;
   breadcrumb?: string;
   statusLabel?: string;
+  // v0.14 F2a：装配预览——多零件按位姿叠加（提供 models 时优先于 stlUrl）
+  models?: AssemblyModel[];
+  hidden?: string[];
+  selected?: string | null;
 };
 
 type ViewPreset = "iso" | "front" | "top" | "right" | "fit";
@@ -22,7 +33,10 @@ type ViewStatus =
   | "stl_loaded"
   | "load_failed";
 
-export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel }: Props) {
+// 装配分色板（按件轮换）
+const ASSEMBLY_COLORS = [0x5f746c, 0x4a6f8f, 0x7a6a4f, 0x5c7a5c, 0x6f5a78, 0x4f7a78, 0x7a5f5f, 0x5a6f7a];
+
+export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel, models, hidden, selected }: Props) {
   const t = useT();
   const mountRef = useRef<HTMLDivElement | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -31,7 +45,8 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel }: Pr
   const boundsRef = useRef<THREE.Box3 | null>(null);
   const [status, setStatus] = useState<ViewStatus>("waiting");
   const [viewMode, setViewMode] = useState<"shaded" | "wireframe">("shaded");
-  const loaderKey = useMemo(() => `${objUrl || ""}:${stlUrl || ""}`, [objUrl, stlUrl]);
+  const modelsKey = useMemo(() => JSON.stringify(models || []), [models]);
+  const loaderKey = useMemo(() => `${objUrl || ""}:${stlUrl || ""}:${modelsKey}`, [objUrl, stlUrl, modelsKey]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -131,6 +146,47 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel }: Pr
 
     const loadModel = async () => {
       clearModel();
+      // v0.14 F2a 装配预览：逐件加载、按位姿摆放（不做 center()——会摧毁位姿）
+      if (models && models.length) {
+        setStatus("loading_stl");
+        const group = new THREE.Group();
+        try {
+          for (let index = 0; index < models.length; index += 1) {
+            const entry = models[index];
+            const geometry = await new STLLoader().loadAsync(entry.url);
+            geometry.computeBoundingBox();
+            const material = new THREE.MeshStandardMaterial({
+              color: ASSEMBLY_COLORS[index % ASSEMBLY_COLORS.length],
+              metalness: 0.08,
+              roughness: 0.72,
+            });
+            material.wireframe = viewMode === "wireframe";
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.userData.partName = entry.name;
+            const position = entry.position;
+            if (Array.isArray(position) && position.length === 3) {
+              mesh.position.set(position[0], position[1], position[2]);
+            }
+            const rotation = entry.rotationDeg;
+            if (Array.isArray(rotation) && rotation.length === 2
+                && Array.isArray(rotation[1]) && rotation[1].length === 3) {
+              const axis = new THREE.Vector3(rotation[1][0], rotation[1][1], rotation[1][2]);
+              if (axis.lengthSq() > 1e-9) {
+                mesh.quaternion.setFromAxisAngle(axis.normalize(), (rotation[0] * Math.PI) / 180);
+              }
+            }
+            group.add(mesh);
+          }
+          modelRef.current = group;
+          scene.add(group);
+          fitCamera(group);
+          setStatus("stl_loaded");
+          return;
+        } catch {
+          setStatus("load_failed");
+          return;
+        }
+      }
       if (objUrl) {
         setStatus("loading_obj");
         try {
@@ -191,7 +247,29 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel }: Pr
       modelRef.current = null;
       boundsRef.current = null;
     };
-  }, [loaderKey, objUrl, stlUrl, viewMode]);
+  }, [loaderKey, objUrl, stlUrl, modelsKey, viewMode]);
+
+  // v0.14 F2a：装配显隐 + 点选高亮（不重载，只改材质/可见性）
+  useEffect(() => {
+    const root = modelRef.current;
+    if (!root) {
+      return;
+    }
+    root.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.userData.partName) {
+        return;
+      }
+      mesh.visible = !(hidden || []).includes(String(mesh.userData.partName));
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      materials.forEach((material) => {
+        const standard = material as THREE.MeshStandardMaterial;
+        if (standard && "emissive" in standard) {
+          standard.emissive.setHex(String(mesh.userData.partName) === (selected || "") ? 0x3fd0c9 : 0x000000);
+        }
+      });
+    });
+  }, [hidden, selected, status]);
 
   const setPreset = (preset: ViewPreset) => {
     const camera = cameraRef.current;

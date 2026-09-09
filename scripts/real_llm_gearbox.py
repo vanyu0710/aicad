@@ -32,7 +32,8 @@ from backend.storage import ARTIFACT_ROOT  # noqa: E402
 TASK = (
     "给我设计个 1:100 的变速箱（三级圆柱齿轮减速器）：输入功率 1.5kW，输入转速 1400rpm，"
     "输出转速约 14rpm，直齿轮模数 m=2，箱体做简化外壳（底板 + 轴承凸台 + 加强筋）。"
-    "先做设计调研，再出零件清单（BOM）计划等我确认，然后逐件建模归档。"
+    "先做设计调研，再出零件清单（BOM）计划等我确认（每个零件给装配位姿 pose），"
+    "然后逐件建模归档，全部完成后调用 export_assembly 导出装配交付物。"
 )
 AUTO_ANSWER = "按常规机械设计取值即可"
 
@@ -123,6 +124,7 @@ def main() -> int:
         session=session,
         initial_user_message=build_task_message(TASK, worker, caps),
         mode="plan",  # 变速箱任务自动升级后的等效模式
+        project_id=project_id,
     )
     dt = time.time() - t0
 
@@ -137,6 +139,11 @@ def main() -> int:
               f"{p['step_file']:<32} {f.stat().st_size if f.exists() else 0}B")
     snaps = sorted(run_dir.glob("snapshot_s*.png"))
     print(f"四视角快照: {len(snaps)} 张 → {run_dir}")
+    if result.assembly:
+        asm = result.assembly
+        print(f"装配: {asm.get('step_file')} | 零件 {asm.get('parts_count')} | "
+              f"干涉 {asm.get('interfering_count')}（豁免 {asm.get('exempted_count')}）| "
+              f"预览 {asm.get('render_file')} 报告 {asm.get('report_file')}", flush=True)
     print("final_text:", (result.final_text or "")[:500].replace("\n", " "), flush=True)
     manager.stop(project_id)
     ok = bool(result.ok and result.parts)

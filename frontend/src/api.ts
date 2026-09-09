@@ -228,6 +228,7 @@ export type ProjectState = {
       report?: string;
       execution_report?: string;
       parts?: PartArtifact[];
+      assembly?: AssemblySummary | null;
     };
     questions: {
       id: string;
@@ -390,6 +391,40 @@ export type PartArtifact = {
   stl_file?: string | null;
   volume_mm3?: number | null;
   note?: string | null;
+  built_via?: "ops" | "script" | null;
+  // v0.14 F2a：装配位姿 + 项目零件库文件
+  pose?: AssemblyPose | null;
+  library_step_file?: string | null;
+  library_stl_file?: string | null;
+  library_version?: number | null;
+};
+
+export type AssemblyPose = {
+  position: number[];
+  rotation_deg?: [number, number[]] | null;
+};
+
+export type InterferencePair = {
+  name_a: string;
+  name_b: string;
+  interfering: boolean;
+  volume_mm3: number;
+  center?: number[] | null;
+  error?: string | null;
+  exempt_reason?: string | null;
+};
+
+export type AssemblySummary = {
+  exported_at?: string | null;
+  step_file?: string | null;
+  render_file?: string | null;
+  report_file?: string | null;
+  parts_count: number;
+  total_pairs: number;
+  interfering_count: number;
+  exempted_count: number;
+  max_interference_volume_mm3: number;
+  pairs: InterferencePair[];
 };
 
 export type AgentSessionView = {
@@ -471,4 +506,12 @@ export function artifactUrl(
     return "";
   }
   return `${API_ROOT}/api/artifacts/${runId}/${kind}`;
+}
+
+// v0.14 F2a：项目零件库/装配产物文件（manifest 权威，跨 run 稳定）
+export function assemblyArtifactUrl(projectId: string | undefined, filename: string | null | undefined) {
+  if (!projectId || !filename) {
+    return "";
+  }
+  return `${API_ROOT}/api/projects/${projectId}/assembly/artifacts/${encodeURIComponent(filename)}`;
 }

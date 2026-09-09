@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { resolveApiRoot, resolveWsRoot } from "./api";
+import { artifactUrl, assemblyArtifactUrl, resolveApiRoot, resolveWsRoot } from "./api";
+
+describe("assembly artifact urls (v0.14 F2a)", () => {
+  it("builds library file urls with encoding", () => {
+    expect(assemblyArtifactUrl("p1", "v003_小齿轮.step"))
+      .toBe(`/api/projects/p1/assembly/artifacts/${encodeURIComponent("v003_小齿轮.step")}`);
+  });
+
+  it("returns empty for missing project or filename", () => {
+    expect(assemblyArtifactUrl(undefined, "a.step")).toBe("");
+    expect(assemblyArtifactUrl("p1", null)).toBe("");
+  });
+
+  it("artifactUrl still supports dynamic part kinds", () => {
+    expect(artifactUrl("r1", "part_01_gear.step")).toBe("/api/artifacts/r1/part_01_gear.step");
+    expect(artifactUrl(undefined, "step")).toBe("");
+  });
+});
 
 describe("same-origin address resolution", () => {
   it("defaults API root to the current origin", () => {
