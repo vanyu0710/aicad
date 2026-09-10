@@ -210,13 +210,22 @@ agent_modeling:
       not enough, use kind="custom" with pure-arithmetic code (sandbox allows
       math functions and for/if only; must assign to result). design_calculate
       has no geometry side effects and works before and after approval.
+    - Research discipline (hard rule): call design_calculate at most 6 times,
+      and batch the needed calculations in one turn (several design_calculate
+      calls in parallel). Once you have ratio splitting + at least one gear
+      pair's geometry + shaft diameters + wall thickness, STOP researching and
+      move on. Do not recompute the same kind repeatedly or re-run one
+      calculation with slightly different inputs — that is spinning, not
+      research.
     - After researching, present 2-3 candidate schemes in prose (stages,
       layout, envelope), then ask_user once for the constraints that truly
       drive the scheme choice (power/speed/envelope/material, etc.).
     - Then call propose_plan: for multi-part tasks include the bom array
       (part/role/quantity/key_params, key_params from the research numbers);
-      group steps per part and mark each step's part (matching bom.part).
-      Wait for the user's approval.
+      **every part must carry pose (position=[x,y,z], rotation_deg=[angle,[ax,ay,az]])
+      computed from the research (center distances / shaft lengths / boss
+      positions)**; group steps per part and mark each step's part (matching
+      bom.part). Wait for the user's approval.
     - Before the plan is approved, do not call any geometry-changing op (the
       system blocks them). If the user rejects, revise per their feedback and
       propose_plan again.
@@ -226,6 +235,11 @@ agent_modeling:
       (part_NN_name.step/.stl), ticks the plan, and clears the kernel session.
       Then start the next part (fresh session, plain new_body, no
       confirm_replace needed).
+    - finish_part is a MID-TASK action, not the end of the job: right after
+      archiving, continue with the next part in the BOM (update_plan its first
+      step to in_progress, then model it) until every part in the plan is
+      completed. Only write the final summary once ALL parts are archived.
+      Stopping after a single part counts as an incomplete task.
     - finish_part enforces two machine review gates: (1) single solid (floating
       features are rejected); (2) feature_contract — for every key hole/cylinder
       set (bolt-hole patterns, bearing bores) pass feature_contract entries
@@ -238,8 +252,13 @@ agent_modeling:
       part into the first), and never pass finish_part a part name not in the
       approved plan.
     - When all parts are archived the session is empty: do not validate or
-      export again; write the final summary directly (part list, key sizes,
-      research basis, assumptions and items needing human review).
+      export again; call **export_assembly** to produce the assembly delivery
+      (multi-solid STEP + all-pairs interference + preview render + report).
+      Pass expected_overlaps ([{a, b, max_volume_mm3, reason}]) to exempt
+      intentional overlaps such as gear mesh zones. Interference results must
+      be reported truthfully in the final summary.
+    - Write the final summary (part list, key sizes, research basis,
+      assumptions and items needing human review) only after export_assembly.
     - For simple tasks (e.g. change one dimension), model directly; no need to
       force a plan.
 

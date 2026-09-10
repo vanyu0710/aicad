@@ -417,6 +417,13 @@
   background: rgba(8, 20, 38, 0.92);
 }
 
+/* Preserve the blank line the store inserts between an agent round's prose and
+   the next round, so successive messages don't run together. */
+.chat-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .chat-image-chip {
   justify-self: start;
   padding: 1px 8px;
@@ -2289,4 +2296,69 @@
 
 .artifact-part-name {
   color: var(--ink-soft);
+}
+
+/* v0.14 F2a 装配面板 */
+.assembly-panel {
+  margin: 6px 12px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 12px;
+}
+
+.assembly-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.assembly-panel-head a {
+  color: var(--jade);
+}
+
+.assembly-interfere {
+  margin-left: auto;
+  color: var(--ink-muted);
+}
+
+.assembly-interfere.warn {
+  color: #e0a05f;
+}
+
+.assembly-parts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.assembly-part {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-soft);
+}
+
+.assembly-part.selected {
+  color: #3fd0c9;
+}
+
+.assembly-part-name {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.assembly-part-pose {
+  margin-left: auto;
+  color: var(--ink-muted);
+  font-size: 11px;
 }

@@ -509,5 +509,54 @@ class PartArtifactContractTests(unittest.TestCase):
             self.assertEqual(dumped["execution_report"], str(run_dir / "execution_report.json"))
 
 
+class AssemblyApiTests(unittest.TestCase):
+    """v0.14 F2a：零件库 REST + 快照 carry-over（手动改参不丢 parts）。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.client = TestClient(main_module.app)
+
+    def setUp(self) -> None:
+        self.project_id = self.client.post("/api/projects", json={"name": "asm test"}).json()["project_id"]
+
+    def test_manifest_endpoint_and_traversal_guard(self) -> None:
+        resp = self.client.get(f"/api/projects/{self.project_id}/assembly/manifest")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["parts"], [])
+        # 库文件下载：未知文件名 → 404（穿越防护）
+        for bad in ("..%2F..%2Fetc", "secret.exe", "assembly_x.step"):
+            r = self.client.get(f"/api/projects/{self.project_id}/assembly/artifacts/{bad}")
+            self.assertEqual(r.status_code, 404, bad)
+
+    def test_commit_snapshot_carries_parts_and_assembly(self) -> None:
+        from backend.schemas import ArtifactSet, AssemblySummary, DesignSnapshot, PartArtifact
+        from backend.session import SessionStore
+
+        store = main_module.store
+        snapshot = DesignSnapshot(artifacts=ArtifactSet(
+            run_id="r1",
+            parts=[PartArtifact(part="齿轮1", index=1, step_file="part_01.step")],
+            assembly=AssemblySummary(parts_count=1),
+        ))
+        store.commit_snapshot(self.project_id, snapshot)
+
+        class FakeWorker:
+            def is_alive(self): return True
+            def undo(self, steps=1): return {"success": True}
+            def redo(self, steps=1): return {"success": True}
+            def feature_tree(self): return {"graph": {"nodes": {}, "edges": {}}, "op_history": [], "narrative": []}
+            def export_mesh(self, path): return {"size": 0}
+            def export_step(self, path): return {"success": True}
+
+        import backend.storage as storage_mod
+        with patch.object(main_module, "_kernel_worker_or_none", return_value=FakeWorker()), \
+             patch.object(storage_mod, "create_run_dir", return_value=("run2", Path(tempfile.mkdtemp()))):
+            resp = self.client.post(f"/api/projects/{self.project_id}/undo")
+            self.assertEqual(resp.status_code, 200)
+        current = store.get_project(self.project_id).current.artifacts
+        self.assertEqual([p.part for p in current.parts], ["齿轮1"])  # carry-over
+        self.assertIsNotNone(current.assembly)
+
+
 if __name__ == "__main__":
     unittest.main()

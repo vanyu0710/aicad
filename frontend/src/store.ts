@@ -27,6 +27,8 @@ export type ChatEntry = {
   tools: ChatToolCard[];
   /** 几何可视化快照（/api/artifacts/... 相对 URL），按到达顺序内嵌展示。 */
   snapshots: string[];
+  /** 是否已在"工具卡片之后的新一轮正文"开头插入过空行（防连行，只插一次）。 */
+  broke?: boolean;
 };
 
 export const DEFAULT_DESCRIPTION_ZH =
@@ -288,18 +290,28 @@ export const useAppStore = create<AppState>((set) => ({
       }
       const last = state.chat[state.chat.length - 1];
       if (last && last.role === "assistant" && last.status === "streaming") {
-        const updated = { ...last, text: last.text + chunk };
+        // A tool card between two prose rounds marks a boundary; insert one
+        // blank line the first time text follows it, then clear the flag so the
+        // rest of the round streams normally (inserting on every chunk would
+        // split words mid-token).
+        const brk = last.tools.length > 0 && last.text.length > 0 && !last.broke;
+        const updated = {
+          ...last,
+          text: last.text + (brk ? "\n\n" : "") + chunk,
+          broke: brk ? true : last.broke,
+        };
         return { chat: [...state.chat.slice(0, -1), updated] };
       }
       return {
-        chat: [...state.chat, { id: nextChatId("assistant"), role: "assistant", text: chunk, hasImage: false, status: "streaming", tools: [], snapshots: [] }],
+        chat: [...state.chat, { id: nextChatId("assistant"), role: "assistant", text: chunk, hasImage: false, status: "streaming", tools: [], snapshots: [], broke: false }],
       };
     }),
   attachChatToolCard: (card) =>
     set((state) => {
       const last = state.chat[state.chat.length - 1];
       if (last && last.role === "assistant" && last.status === "streaming") {
-        const updated = { ...last, tools: [...last.tools, card] };
+        // A new tool card opens another prose round, so allow one more break.
+        const updated = { ...last, tools: [...last.tools, card], broke: false };
         return { chat: [...state.chat.slice(0, -1), updated] };
       }
       return {

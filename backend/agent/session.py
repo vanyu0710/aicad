@@ -75,6 +75,8 @@ class AgentSession:
     status: str = "idle"  # idle | running | waiting_approval
     # {summary, steps:[{id,title,op?,part?,status}], bom?:[{part,role,quantity,...}], approved}
     plan: dict[str, Any] = field(default_factory=dict)
+    # v0.14 F2a：项目零件库镜像（权威在 work/project_parts/{id}/parts_manifest.json）
+    parts_library: dict[str, Any] = field(default_factory=dict)
     updated_at: float = field(default_factory=_now)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -143,6 +145,30 @@ class AgentSession:
         with self._lock:
             return json.loads(json.dumps(self.plan, ensure_ascii=False))
 
+    # ------------------------------------------------------- parts library (F2a)
+    def update_part_entry(self, entry: dict[str, Any]) -> None:
+        """按零件名 upsert 一条零件库记录（镜像 manifest）。"""
+        with self._lock:
+            library = self.parts_library if isinstance(self.parts_library, dict) else {}
+            parts = library.setdefault("parts", [])
+            for index, item in enumerate(parts):
+                if item.get("name") == entry.get("name"):
+                    parts[index] = entry
+                    break
+            else:
+                parts.append(entry)
+            self.parts_library = library
+            self.updated_at = _now()
+            self.save()
+
+    def set_assembly(self, assembly: dict[str, Any] | None) -> None:
+        with self._lock:
+            library = self.parts_library if isinstance(self.parts_library, dict) else {}
+            library["assembly"] = assembly
+            self.parts_library = library
+            self.updated_at = _now()
+            self.save()
+
     # ------------------------------------------------------------ 视图与持久化
     def view(self, limit: int = 200) -> list[dict[str, Any]]:
         """给前端的展示视图：只保留 user/assistant 轮次，图片以标记表示。
@@ -191,6 +217,7 @@ class AgentSession:
             "messages": self.messages,
             "pending": self.pending,
             "plan": self.plan,
+            "parts_library": self.parts_library,
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -228,6 +255,7 @@ class SessionRegistry:
                     session.messages = list(data.get("messages") or [])
                     session.pending = list(data.get("pending") or [])
                     session.plan = dict(data.get("plan") or {})
+                    session.parts_library = dict(data.get("parts_library") or {})
                     session.status = "idle"  # 进程重启后运行态一律复位
                 except (ValueError, OSError):
                     session.messages = []

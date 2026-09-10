@@ -98,6 +98,28 @@
 
 测试覆盖：aicad 后端 374（+37）、前端 58（+3）、内核 374（+14，另顺带修复工作区遗留的 revolve 半重构缺陷使原 4 个失败恢复通过）；两仓 compileall + `git diff --check` 全绿。
 
+## 8. F2a 装配视图验收（2026-09-09，v0.14.0-alpha）
+
+设计见 [ASSEMBLY_F2_DESIGN.md](./ASSEMBLY_F2_DESIGN.md)（装配 = 零件库 + 位姿 manifest 的视图，内核单几何契约零改动）。
+
+**已落地**：项目零件库（版本化 + manifest 原子写 + 防穿越）；BOM `pose` 位姿（数值来自调研计算）；内核 v2.14 三个无状态命令（`export_assembly` XCAF 具名装配 STEP、`assembly_interference` bbox 预过滤全对求交 + 豁免表、`render_assembly` 分件着色四视角）；agent 收尾工具 `export_assembly`；前端装配模式（Viewport 多件按位姿叠加 + 显隐/点选高亮 + 装配面板）；修复 `_commit_kernel_state_snapshot` 丢 parts 的现存 bug；空轮次瞬态重试（v0.14.1）。
+
+**验收结果**：
+- E2E（真实 worker，零 token）`scripts/e2e_assembly_flow.py` **13/13**：3 件带位姿入库 → 装配 STEP **XCAF 回读 3 个具名产品（底板/凸台A/凸台B）** → 故意插入的凸台×底板干涉命中（total_pairs=3）→ 预览图 + 报告落盘。
+- 装配预览图实测：底板 120×80×10 + 两凸台按位姿摆放，SIDE 视图清晰可见插入件与重叠区。
+- 测试：内核 391、aicad 392+、前端 61 全绿。
+- 过程中抓出并修复两个集成 bug：server 脚本模式下相对导入（测试包导入无法暴露）、库路径未 resolve（worker 在内核仓解析）。
+
+**真实 LLM 端到端（deepseek-v4.1-flash，"1:100 变速箱"，769s）PASS**：
+调研→提问→BOM（11 项带位姿）→批准→逐件建模 14 件归档（齿轮 ops/轴箱体 script）→
+**几何自检发现第 2 级大齿轮与输出轴重叠 2mm，主动修订计划重做 3 件**→
+`export_assembly` 交付：`assembly_005.step`（XCAF 14 产品）+ 干涉 **91 对全查、21 对啮合区按豁免表放行、未豁免干涉体积 = 0** + 分件着色四视角预览 + 交付报告 + manifest。
+装配预览实测：箱体（带筋+轴承座）内三级齿轮清晰可见，轴端伸出两侧。
+过程中另修一处 harness 瞬态：推理模型偶发空轮次 → v0.14.1 nudge 重试（≤2）。
+
+**F2b（预留未做）**：内核 `_parts` 注册表 + active-part 指针、装配参数化联动（改零件自动重算装配）。
+**F3 剩余**：齿轮副中心距/顶隙自动校核、装配级计划进度 UI、vision 外观自检。
+
 ## 7. v0.13 代码通道验收（2026-09-08）
 
 **动因**：同一 GLM-5.3-Flash 在真实 coding harness（ZCode/DSH）里能建复杂壳体，在 varen 里却打转——瓶颈是 op 菜单的表达力（逐调用、坐标脑内算、无循环变量）。v0.13 落地 `run_build_script`：**模型写 Python 脚本，但几何只能经 `k` 门面调 kernel 公开 op**（AST 白名单只许 import math、禁裸 build123d），DSH 式检查点回滚 + 原始 traceback 反馈；**脚本 op 照常进 `_op_history`，代码件可参数重放**。

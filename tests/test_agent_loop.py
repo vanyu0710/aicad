@@ -53,9 +53,36 @@ class FakeWorker:
         # v0.13 run_script 桩：按序弹出，缺省返回成功
         self.run_script_calls: list[tuple[str, str]] = []
         self.run_script_results: list = []
+        # v0.14 装配命令桩调用记录
+        self.assembly_calls: list[tuple] = []
 
     def capabilities(self) -> dict:
         return self.capabilities_result
+
+    # ---- v0.14 F2a 装配命令桩 ----
+    def export_assembly(self, parts, out_step, timeout=None) -> dict:
+        self.assembly_calls.append(("export", len(parts)))
+        path = Path(out_step)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("ISO-10303-21;\n; fake assembly\n", encoding="utf-8")
+        return {"ok": True, "parts": len(parts), "solids": len(parts), "volume": 12345.0,
+                "bounding_box": [0, 0, 0, 100, 100, 100], "step_bytes": 32}
+
+    def assembly_interference(self, parts, *, tolerance=0.001, expected_overlaps=None,
+                              timeout=None) -> dict:
+        self.assembly_calls.append(("interference", len(parts)))
+        pairs = []
+        if len(parts) >= 2:
+            pairs = [{"name_a": parts[0]["name"], "name_b": parts[1]["name"],
+                      "interfering": True, "volume_mm3": 12.5}]
+        return {"ok": True, "total_pairs": len(parts) * (len(parts) - 1) // 2,
+                "checked_pairs": len(pairs), "prefiltered_pairs": 0,
+                "interfering_count": len(pairs), "exempted_count": 0,
+                "max_interference_volume": 12.5, "pairs": pairs, "exempted": []}
+
+    def render_assembly(self, parts, *, size=480, timeout=None) -> dict:
+        self.assembly_calls.append(("render", len(parts)))
+        return {"ok": True, "render_base64": "iVBORw0KGgo="}
 
     def run_script(self, code: str, *, name: str = "") -> dict:
         self.run_script_calls.append((code, name))
@@ -135,14 +162,14 @@ def _round_with_call(name: str, arguments: dict) -> ToolCallRound:
     )
 
 
-def _run(worker, chat, *, max_steps=10, stop_event=None, emit=None, run_dir=None, approvals=None, session=None, mode="auto"):
+def _run(worker, chat, *, max_steps=10, stop_event=None, emit=None, run_dir=None, approvals=None, session=None, mode="auto", project_id=None):
     if run_dir is None:
         with tempfile.TemporaryDirectory() as td:
-            return _run_in_dir(worker, chat, Path(td), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals, session=session, mode=mode)
-    return _run_in_dir(worker, chat, Path(run_dir), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals, session=session, mode=mode)
+            return _run_in_dir(worker, chat, Path(td), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals, session=session, mode=mode, project_id=project_id)
+    return _run_in_dir(worker, chat, Path(run_dir), max_steps=max_steps, stop_event=stop_event, emit=emit, approvals=approvals, session=session, mode=mode, project_id=project_id)
 
 
-def _run_in_dir(worker, chat, run_dir: Path, *, max_steps, stop_event, emit, approvals=None, session=None, mode="auto"):
+def _run_in_dir(worker, chat, run_dir: Path, *, max_steps, stop_event, emit, approvals=None, session=None, mode="auto", project_id=None):
     return run_agent_loop(
         worker=worker,
         chat_with_tools=chat,
@@ -156,6 +183,7 @@ def _run_in_dir(worker, chat, run_dir: Path, *, max_steps, stop_event, emit, app
         approvals=approvals,
         session=session,
         mode=mode,
+        project_id=project_id,
     )
 
 
@@ -1279,6 +1307,250 @@ class AgentLoopRunBuildScriptTests(unittest.TestCase):
         result = _run(worker, chat)
         self.assertEqual(len(result.parts), 1)
         self.assertEqual(worker.reset_calls, 1)
+
+
+
+
+    def test_duplicate_part_archiving_rejected(self) -> None:
+        """v0.13.2: 同名零件二次归档被拒（真实 LLM 曾把 11 件归档成 24 次）。"""
+        worker = FakeWorker([
+            {"success": True, "value": 8000.0}, {"success": True, "value": 1},
+            {"success": True, "value": 8000.0}, {"success": True, "value": 1},
+        ])
+        seen: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("finish_part", {"part": "housing"})
+            if calls["n"] == 2:
+                return _round_with_call("finish_part", {"part": "housing"})  # 重复
+            seen.append(self._last_tool_payload(messages))
+            return ToolCallRound(text="换下一件", tool_calls=[])
+
+        result = _run(worker, chat)
+        self.assertEqual(len(result.parts), 1)          # 只归档一次
+        self.assertFalse(seen[0]["success"])
+        self.assertEqual(seen[0]["error_kind"], "DUPLICATE_PART")
+        self.assertEqual(worker.reset_calls, 1)         # 第二次未触发 reset
+
+    def test_incomplete_plan_gets_nagged_to_continue(self) -> None:
+        """v0.13.2: 计划批准后模型停止但还有 pending 步骤 → 注入提醒一次并继续。"""
+        from backend.agent.approvals import ApprovalBroker
+        from backend.agent.session import AgentSession
+        import tempfile as _tf
+
+        broker = ApprovalBroker(timeout=5)
+        worker = FakeWorker()
+        rounds_msgs: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            rounds_msgs.append(list(messages))
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("propose_plan", {
+                    "summary": "两件", "bom": [{"part": "a"}, {"part": "b"}],
+                    "steps": [{"id": "s1", "title": "建 a", "part": "a"},
+                              {"id": "s2", "title": "建 b", "part": "b"}]})
+            if calls["n"] == 2:
+                return ToolCallRound(text="我先归档 a 就收尾", tool_calls=[])  # 提前停
+            # 被提醒后应继续
+            return ToolCallRound(text="好的，继续", tool_calls=[])
+
+        def resolve_after_time():
+            import time as _t
+            _t.sleep(0.15)
+            with broker._lock:
+                aid = next(iter(broker._requests))
+            broker.resolve(aid, "approve")
+
+        import threading as _th
+        with _tf.TemporaryDirectory() as td:
+            session = AgentSession(project_id="p1", path=Path(td) / "s.json")
+            t = _th.Thread(target=resolve_after_time); t.start()
+            result = _run(worker, chat, approvals=broker, session=session,
+                          run_dir=Path(td), mode="plan", emit=lambda *_: None)
+            t.join(timeout=2)
+        # 第三轮消息里应含提醒
+        nag = [m for m in rounds_msgs[-1] if m.get("role") == "user" and "计划尚未完成" in str(m.get("content"))]
+        self.assertTrue(nag, "应注入计划未完成提醒")
+        self.assertTrue(result.ok)
+
+
+class AssemblyFlowTests(unittest.TestCase):
+    """v0.14 F2a：BOM pose、finish_part 写项目零件库、export_assembly 门控与成功路径。"""
+
+    def _last_tool_payload(self, messages: list) -> dict:
+        tool_msgs = [m for m in messages if m.get("role") == "tool"]
+        self.assertTrue(tool_msgs)
+        return json.loads(tool_msgs[-1]["content"])
+
+    def test_normalize_bom_pose(self) -> None:
+        from backend.agent.loop import _normalize_bom
+
+        bom = _normalize_bom([
+            {"part": "a", "pose": {"position": [1, 2, 3], "rotation_deg": [90, [0, 0, 1]]}},
+            {"part": "b", "pose": {"position": ["x", 0, 0]}},   # 非法 → pose=None
+            {"part": "c"},                                       # 无 pose → None
+        ])
+        self.assertEqual(bom[0]["pose"], {"position": [1.0, 2.0, 3.0], "rotation_deg": [90.0, [0.0, 0.0, 1.0]]})
+        self.assertIsNone(bom[1]["pose"])
+        self.assertIsNone(bom[2]["pose"])
+
+    def test_finish_part_writes_project_library_and_manifest(self) -> None:
+        from backend import storage
+        from backend.agent.loop import _normalize_bom
+
+        worker = FakeWorker([
+            {"success": True, "value": 8000.0}, {"success": True, "value": 1},
+        ])
+        bom = _normalize_bom([{"part": "housing", "pose": {"position": [0, 0, 0]}}])
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("finish_part", {"part": "housing"})
+            return ToolCallRound(text="完成", tool_calls=[])
+
+        with tempfile.TemporaryDirectory() as td:
+            orig_root = storage.PROJECT_PARTS_ROOT
+            storage.PROJECT_PARTS_ROOT = Path(td) / "project_parts"
+            try:
+                result = _run(worker, chat, run_dir=Path(td), project_id="proj-lib-test")
+                # 计划里没有 bom 时 pose=None，但库文件与 manifest 必须生成
+                lib_dir = storage.PROJECT_PARTS_ROOT / "proj-lib-test"
+                manifest = storage.read_manifest("proj-lib-test")
+                entries = manifest.get("parts") or []
+                self.assertEqual(len(entries), 1)
+                entry = entries[0]
+                self.assertEqual(entry["name"], "housing")
+                self.assertEqual(entry["version"], 1)
+                self.assertTrue((lib_dir / entry["step_file"]).exists())
+                self.assertTrue((lib_dir / entry["stl_file"]).exists())
+                # part_rec 带库字段
+                self.assertEqual(result.parts[0]["library_version"], 1)
+                self.assertEqual(result.parts[0]["library_step_file"], entry["step_file"])
+                # 二次归档 → 版本递增
+                worker2 = FakeWorker([{"success": True, "value": 9000.0}, {"success": True, "value": 1}])
+                calls["n"] = 0
+
+                def chat2(messages, tools):
+                    calls["n"] += 1
+                    if calls["n"] == 1:
+                        return _round_with_call("finish_part", {"part": "housing"})
+                    return ToolCallRound(text="ok", tool_calls=[])
+
+                # 新 run 目录（避免 DUPLICATE_PART 门是 run 内判定的干扰：result 每次新建）
+                with tempfile.TemporaryDirectory() as td2:
+                    _run(worker2, chat2, run_dir=Path(td2), project_id="proj-lib-test")
+                manifest2 = storage.read_manifest("proj-lib-test")
+                self.assertEqual(manifest2["parts"][0]["version"], 2)
+                self.assertEqual(len(manifest2["parts"]), 1)  # upsert 不重复
+            finally:
+                storage.PROJECT_PARTS_ROOT = orig_root
+        self.assertTrue(result.ok)
+
+    def test_export_assembly_gates(self) -> None:
+        worker = FakeWorker()
+        seen: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("export_assembly", {})
+            seen.append(self._last_tool_payload(messages))
+            return ToolCallRound(text="好", tool_calls=[])
+
+        # 计划模式未批准 → PLAN_REQUIRED
+        _run(worker, chat, mode="plan")
+        self.assertEqual(seen[0]["error_kind"], "PLAN_REQUIRED")
+        # auto（=已批准）但无 project_id → INVALID_REQUEST
+        seen.clear(); calls["n"] = 0
+        _run(worker, chat)
+        self.assertEqual(seen[0]["error_kind"], "INVALID_REQUEST")
+
+    def test_empty_round_retried_with_nudge(self) -> None:
+        """v0.14.1: 模型偶发空轮次（无文字无 tool_calls）→ 注入 nudge 重试而非静默收尾。"""
+        worker = FakeWorker()
+        seen: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return ToolCallRound(text="", tool_calls=[])          # 空轮次
+            nudges = [m for m in messages if m.get("role") == "user" and "回复为空" in str(m.get("content"))]
+            seen.append(len(nudges))
+            return ToolCallRound(text="这次有内容了", tool_calls=[])   # 恢复
+
+        result = _run(worker, chat)
+        self.assertEqual(seen, [1])                       # 恰好一次 nudge
+        self.assertEqual(result.final_text, "这次有内容了")
+        self.assertTrue(result.ok)
+
+    def test_empty_round_retries_capped(self) -> None:
+        worker = FakeWorker()
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            return ToolCallRound(text="", tool_calls=[])  # 永远空
+
+        result = _run(worker, chat)
+        self.assertEqual(calls["n"], 3)                   # 1 初始 + 2 重试后放弃
+        self.assertTrue(result.ok)                        # 维持旧语义：空收尾仍 ok
+
+    def test_export_assembly_success(self) -> None:
+        from backend import storage
+
+        worker = FakeWorker()
+        events: list = []
+        calls = {"n": 0}
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("export_assembly", {"note": "交付"})
+            payload = self._last_tool_payload(messages)
+            self.assertTrue(payload["success"], payload)
+            self.assertEqual(payload["parts_count"], 2)
+            self.assertEqual(payload["interfering_count"], 1)
+            self.assertTrue(payload["interfering"])
+            return ToolCallRound(text="装配完成", tool_calls=[])
+
+        with tempfile.TemporaryDirectory() as td:
+            orig_root = storage.PROJECT_PARTS_ROOT
+            storage.PROJECT_PARTS_ROOT = Path(td) / "project_parts"
+            try:
+                # 预置零件库：两件带位姿、库文件存在
+                lib = storage.PROJECT_PARTS_ROOT / "proj-x"
+                lib.mkdir(parents=True)
+                (lib / "v001_a.step").write_text("ISO-10303-21;", encoding="utf-8")
+                (lib / "v001_b.step").write_text("ISO-10303-21;", encoding="utf-8")
+                storage.write_manifest("proj-x", {"parts": [
+                    {"name": "a", "version": 1, "step_file": "v001_a.step", "pose": {"position": [0, 0, 0]}},
+                    {"name": "b", "version": 1, "step_file": "v001_b.step", "pose": {"position": [1, 0, 0]}},
+                ], "assembly": None})
+                result = _run(worker, chat, run_dir=Path(td), project_id="proj-x",
+                              emit=lambda ev, m, p: events.append((ev, m, p)))
+                self.assertIsNotNone(result.assembly)
+                self.assertEqual(result.assembly["parts_count"], 2)
+                # manifest 回写装配摘要 + 产物文件生成
+                manifest = storage.read_manifest("proj-x")
+                self.assertIsNotNone(manifest.get("assembly"))
+                self.assertTrue((lib / manifest["assembly"]["step_file"]).exists())
+                self.assertTrue((lib / manifest["assembly"]["report_file"]).exists())
+                self.assertTrue((lib / manifest["assembly"]["render_file"]).exists())
+                # artifact_ready 事件带 kind=assembly
+                self.assertTrue(any(e[0] == "artifact_ready" and e[2].get("kind") == "assembly"
+                                    for e in events))
+            finally:
+                storage.PROJECT_PARTS_ROOT = orig_root
+        self.assertTrue(result.ok)
 
 
 if __name__ == "__main__":

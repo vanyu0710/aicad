@@ -1,3 +1,36 @@
+## v0.14.0-alpha - F2a 装配视图：项目零件库 + 位姿 manifest + 装配 STEP/干涉/预览（对标设计文档 ASSEMBLY_F2_DESIGN）
+
+装配 = 已归档零件 + 位姿 manifest 之上的**视图**（设计 D1）：内核单几何契约零改动，零件改参走"单会话重做 + 重新归档"，manifest 更新即装配更新。
+
+- **项目零件库**（`backend/storage.py`）：`work/project_parts/{project}/`——`vNNN_名.step/.stl` 版本化归档 + `parts_manifest.json` 原子写（tmp+replace）+ 文件名白名单防穿越；`finish_part` 在 run 归档之外同步写库（版本递增、upsert 不重复），`part_rec` 加 `library_*`/`pose` 字段。
+- **BOM 位姿**：`propose_plan.bom[].pose`（position/rotation_deg，数值来自 design_calculate 调研：中心距/轴长/凸台位）；`_normalize_pose` 严格校验（非法丢字段不整体拒）。`depends_on` 从死数据转为装配顺序/报告分组。
+- **内核 v2.14 三命令**（`mech_kernel/assembly_scene.py` + server dispatch，**无状态**：不读写 kernel 实例、不进事务）：`export_assembly`（逐件 import+位姿 → 带 label 的 Compound 树 → build123d XCAF 装配 STEP；中文产品名经 reader→TDataStd_Name→writer 回写修正 pyOCP UTF-8 逐字节 mojibake）、`assembly_interference`（bbox 预过滤 + collision 全对求交 + expected_overlaps 豁免，重合体 boolean 已知坑透传）、`render_assembly`（分件着色四视角证据网格）。
+- **agent 收尾工具 `export_assembly`**：全部零件归档后一键交付（装配 STEP + 干涉 + 预览图 + `assembly_NNN_report.json`），结果写 manifest + `ArtifactSet.assembly` 投影 + `artifact_ready{kind:"assembly"}`；门控：计划批准 + 无 pending 零件 + 库非空。**发现并修复两个集成 bug**：server 脚本模式下相对导入 ImportError（测试包导入发现不了）；库路径未 resolve 导致 worker 在内核仓解析失败。
+- **前端**：Viewport `models[]` 多件按位姿叠加（**不 center()**）+ 显隐/点选高亮；App 装配模式自动切换 + 装配面板（STEP/报告链接、干涉计数、零件位姿列表）；`assemblyArtifactUrl`；零件库 REST（manifest + 库文件下载）。
+- **修复**：`_commit_kernel_state_snapshot` 手动改参/undo 后丢 parts 清单（现存 bug）→ 现 carry-over parts+assembly。
+- 测试：aicad 392+（pose 规范化、库写/版本 upsert、export 门控与成功、RPC echo、URL、carry-over 回归）、内核 391（assembly_scene 5 + 既有）、前端 61；E2E `scripts/e2e_assembly_flow.py` 13/13（真实 worker：3 件带位姿入库 → 装配 STEP 回读 3 具名产品 → 故意插入的凸台×底板干涉命中 → 预览/报告落盘）。
+
+## v0.13.2-alpha - 标准平面轴系契约修复 + 计划收尾门控（真实 LLM 全流程二次验收驱动）
+
+- **内核 v2.13.2 平面契约修复（mechcad-kernel）**：真实 LLM 建箱体时**反复试探平面映射、撤销重来约 30 步**，定位到两处根因：
+  - `XZ` 声明为 `(x_dir=+x, y_dir=+z, normal=+y)` 是**左手系**（x×y=−y≠normal），build123d 按右手系重算 → 草图 v 轴变 −z、拉伸方向翻转。现改为 `normal=−y`（保留"横 x 纵 z"直觉且右手系）。
+  - `_sketch_plane` 把**所有过原点标准平面**一律短路成 `None`，于是回退到 `direction="Z"` → Plane.XY，XZ/YZ 的声明轴从未生效。现仅当声明轴与 direction 等价时才走快路径；否则按 `x_dir+y_dir` 构造真实平面（v 严格等于声明的 y_dir，左手系声明自动翻转 y_dir）。
+  - 顺带修复 custom/face 平面 `y_dir` 未推导（默认 (0,1,0)，法向为 Y 时与 x_dir 平行 → `x_dir and y_dir must not be parallel` 崩溃）。
+  - 回归测试：`test_standard_plane_axes_match_declaration` + `test_standard_planes_are_right_handed`（内核 386/386）。
+  - **实测效果**：同一任务平面试探从 ~30 次降到 **0 次**。
+- **计划未完成不得收工**：模型归档第一件就写总结（真实 LLM 曾只建 1 件就 PASS）。提示词明确"finish_part 是中途动作"，harness 加门控——模型停止时若批准计划仍有 pending 步骤，注入提醒一次并继续（`_plan_has_pending`）。
+- **防重复归档**：真实 LLM 把 11 件归档成 24 次（修改零件时旧版本也归档）。`finish_part` 对同名零件二次归档返回 `DUPLICATE_PART` 拒绝。
+- **真实 LLM 全流程二次验收（deepseek-v4.1-flash）PASS**：**BOM 11 项全部建成**（6 齿轮 + 4 轴 + 1 箱体），箱体独立核验单实体 196×596×243mm、4 底脚安装孔 + 8 组轴承孔（r13.5~50）、带法兰与加强筋。测试：aicad 385、内核 386 全绿。
+
+## v0.13.1-alpha - 重推理模型适配 + 调研防打转（真实 LLM 全流程验收驱动）
+
+换用 `deepseek-v4.1-flash-expires-on-0910`（重推理模型）跑"1:100 变速箱"全流程时暴露两处适配缺口，均已修复：
+
+- **输出预算不足**：重推理模型 reasoning token 挤占 `max_tokens`，原 8192 在"出 BOM 计划"这类长输出时被 reasoning 吃光（`finish_reason=length`、正文为空、agent 静默结束）。planner `max_tokens` 改为可配置（`MECHCAD_PLANNER_MAX_TOKENS`，默认 32768）；实测该模型支持至 65536。
+- **调研打转硬门控**：模型可能反复调用 `design_calculate` 同类计算而不推进。提示词加"调研 ≤6 次、必须一轮内合并、凑齐即停"，harness 层加 `RESEARCH_BUDGET_EXCEEDED` 硬门（计划批准前累计超 8 次即拒绝并强制推进到提问/计划）——不只靠提示词。
+
+**真实 LLM 全流程验收（deepseek-v4.1-flash，670s/85 步）PASS**：7 步调研 → `ask_user` → **BOM 计划（11 项零件 / 15 步）** → 批准 → 逐件建模归档 **11 件全部成功**（6 齿轮 via=ops 真渐开线 + 4 阶梯轴 via=script + 1 箱体 via=script）。独立核验箱体 STEP：单实体、473×230×162mm、8 种半径圆柱面各 2 个（4 轴两端轴承孔）。36 张四视角快照。脚本 `scripts/real_llm_gearbox.py` 可复跑。
+
 ## v0.13.0-alpha - 代码通道 run_build_script：模型写脚本、几何走内核（对标 DSH）
 
 同一模型在真实 coding harness 里能建复杂壳体、在 varen 里却打转——根因是表达力：op 菜单逐调用、坐标全手算、无循环变量。本版给 agent 开**建模脚本通道**（借鉴 DeepSeek Harness：原始 traceback 反馈、跑前检查点/跑败回滚、提交后自动复检），同时守住"几何主权归内核"：**脚本命名空间不提供裸 build123d，只注入 `k`（kernel 公开 op 门面）+ `math`**，脚本里每个 op 照常进 `_op_history`/`feature_graph` → 代码件与 op 件一样可参数重放、可特征树编辑。

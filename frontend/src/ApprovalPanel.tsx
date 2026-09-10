@@ -124,13 +124,13 @@ export default function ApprovalPanel({ approvals, busy, onResolve }: Props) {
 
 type Answers = Record<string, string | string[]>;
 
-function normalizeQuestions(approval: Approval): AskQuestion[] {
+function normalizeQuestions(approval: Approval, t: (k: string) => string): AskQuestion[] {
   const raw = (approval.options?.questions ?? approval.args?.questions) as AskQuestion[] | undefined;
   if (Array.isArray(raw) && raw.length) {
     return raw;
   }
   const legacy = String(approval.message || "");
-  return [{ id: "q1", question: legacy || "（请回答）", type: "text", allowFreeText: true, required: true }];
+  return [{ id: "q1", question: legacy || t("approval.question.fallback"), type: "text", allowFreeText: true, required: true }];
 }
 
 function AskUserCard({
@@ -143,7 +143,7 @@ function AskUserCard({
   onResolve: Props["onResolve"];
 }) {
   const t = useT();
-  const questions = normalizeQuestions(approval);
+  const questions = normalizeQuestions(approval, t);
   const [answers, setAnswers] = useState<Answers>({});
   const [free, setFree] = useState<Record<string, string>>({});
 

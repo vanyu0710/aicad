@@ -20,7 +20,9 @@ from __future__ import annotations
 import base64
 import inspect
 import json
+import math
 import re
+import shutil
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,6 +56,8 @@ class AgentLoopResult:
     # v0.12 多零件逐件交付：finish_part 归档清单 + design_calculate 调研转录
     parts: list[dict[str, Any]] = field(default_factory=list)
     design_calculations: list[dict[str, Any]] = field(default_factory=list)
+    # v0.14 F2a：export_assembly 的装配摘要（投影进 ArtifactSet）
+    assembly: dict[str, Any] | None = None
 
 
 def _compact_step_result(data: dict[str, Any]) -> dict[str, Any]:
@@ -204,8 +208,37 @@ def _normalize_plan_steps(raw: Any) -> list[dict[str, Any]]:
     return steps
 
 
+def _normalize_pose(raw: Any) -> dict[str, Any] | None:
+    """BOM pose 规范化：position=[x,y,z] 有限数；rotation_deg=[angle,[ax,ay,az]]。
+
+    非法 pose 返回 None（丢字段不整体拒绝，审批卡可见缺位姿）。"""
+    if not isinstance(raw, dict):
+        return None
+    position = raw.get("position")
+    if not (isinstance(position, (list, tuple)) and len(position) == 3):
+        return None
+    try:
+        pos = [float(v) for v in position]
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in pos):
+        return None
+    out: dict[str, Any] = {"position": pos}
+    rotation = raw.get("rotation_deg")
+    if isinstance(rotation, (list, tuple)) and len(rotation) == 2:
+        try:
+            angle = float(rotation[0])
+            axis = [float(v) for v in rotation[1]]
+        except (TypeError, ValueError, IndexError):
+            return out
+        if (math.isfinite(angle) and len(axis) == 3 and all(math.isfinite(v) for v in axis)
+                and any(abs(v) > 1e-9 for v in axis)):
+            out["rotation_deg"] = [angle, axis]
+    return out
+
+
 def _normalize_bom(raw: Any) -> list[dict[str, Any]]:
-    """规范化零件清单（BOM）：每项必须有 part 名；数量默认 1；参数/依赖容错。"""
+    """规范化零件清单（BOM）：每项必须有 part 名；数量默认 1；参数/依赖/位姿容错。"""
     items = raw if isinstance(raw, list) else []
     bom: list[dict[str, Any]] = []
     for index, item in enumerate(items[:24]):
@@ -238,8 +271,37 @@ def _normalize_bom(raw: Any) -> list[dict[str, Any]]:
             "quantity": quantity,
             "key_params": key_params,
             "depends_on": depends_on,
+            "pose": _normalize_pose(item.get("pose")),
         })
     return bom
+
+
+def _export_assembly_tool() -> dict[str, Any]:
+    """合成工具：装配导出（F2a）——零件库 + 位姿 manifest → 装配 STEP + 干涉 + 预览图 + 交付报告。"""
+    return {
+        "type": "function",
+        "function": {
+            "name": "export_assembly",
+            "description": (
+                "全部零件 finish_part 归档后调用：把项目零件库按各零件 BOM 位姿组装为装配交付物——"
+                "多实体装配 STEP（每零件具名产品节点）、全对干涉检查（可传 expected_overlaps 豁免表："
+                "[{a, b, max_volume_mm3, reason}]，如齿轮啮合区）、整装配四视角预览图、交付报告。"
+                "不需要当前会话有几何（读的是已归档文件）。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expected_overlaps": {
+                        "type": "array",
+                        "description": "预期重叠豁免（设计意图内的干涉），每项 {a, b, max_volume_mm3?, reason}",
+                        "items": {"type": "object"},
+                    },
+                    "note": {"type": "string", "description": "本次装配导出的说明（可选）"},
+                },
+                "required": [],
+            },
+        },
+    }
 
 
 _BUILTIN_CALC_KINDS = ("gear_ratio_split", "gear_pair", "nearest_standard_module",
@@ -385,6 +447,14 @@ def _propose_plan_tool() -> dict[str, Any]:
                                                "description": "关键设计参数（如 {\"模数\": \"2\", \"齿数\": \"20\", \"齿宽\": \"18\"}），应来自 design_calculate 调研结果"},
                                 "depends_on": {"type": "array", "items": {"type": "string"},
                                                "description": "装配/设计依赖的其它零件名，可选"},
+                                "pose": {
+                                    "type": "object",
+                                    "description": (
+                                        "装配位姿（多零件任务必填）：position=[x,y,z] mm 世界坐标、"
+                                        "rotation_deg=[角度,[ax,ay,az]] 可选；数值应来自 design_calculate "
+                                        "调研（中心距/轴长/凸台位置），全部零件以此摆进装配。"
+                                    ),
+                                },
                             },
                             "required": ["part"],
                         },
@@ -546,6 +616,7 @@ class AgentLoop:
         session: AgentSession | None = None,
         initial_user_message: dict[str, Any] | None = None,
         mode: str = "auto",
+        project_id: str | None = None,
     ) -> None:
         self.worker = worker
         self.chat_with_tools = chat_with_tools
@@ -570,6 +641,7 @@ class AgentLoop:
             _design_calculate_tool(),
             _run_build_script_tool(),
             _finish_part_tool(),
+            _export_assembly_tool(),
         ]
         self.tools = self._plan_mode_tools()
         self._context_descriptors: list[str] = []
@@ -600,6 +672,15 @@ class AgentLoop:
         self._approved_plan: dict[str, Any] | None = None
         # v0.13 当前零件的来源标记：ops | script（finish_part 记账后复位 ops）
         self._part_built_via = "ops"
+        # v0.13.1 调研防打转：计划批准前 design_calculate 调用次数硬上限
+        self._calc_calls = 0
+        self._calc_budget = 8
+        # v0.14 F2a：项目零件库归属（None = 不写库，仅 run 目录归档）
+        self.project_id = str(project_id or "") or None
+        # v0.13.2 计划未完成不得收工（只提醒一次，避免死循环）
+        self._nagged_incomplete_plan = False
+        # v0.14.1 空轮次瞬态重试计数
+        self._empty_round_retries = 0
         # 旧注入（测试 fake 只接受 (messages, tools)）不支持增量回调时自动降级
         try:
             params = inspect.signature(chat_with_tools).parameters
@@ -632,6 +713,15 @@ class AgentLoop:
         if result.error and not result.stopped:
             result.ok = False
         return result
+
+    def _plan_has_pending(self) -> bool:
+        """批准的计划里是否还有未完成步骤（用于"不得提前收工"门控）。"""
+        steps: list = []
+        if self.session is not None:
+            steps = (self.session.plan or {}).get("steps") or []
+        elif self._approved_plan:
+            steps = self._approved_plan.get("steps") or []
+        return any(s.get("status") != "completed" for s in steps if isinstance(s, dict))
 
     def _absorb_pending(self) -> None:
         """把用户在运行中插入的消息注入对话（轮间生效）。"""
@@ -763,12 +853,38 @@ class AgentLoop:
                 round = self.chat_with_tools(self.messages, self.tools, on_text_delta=on_delta)
             else:
                 round = self.chat_with_tools(self.messages, self.tools)
+            if round.text or round.tool_calls:
+                self._empty_round_retries = 0
             if round.text:
                 self.logs.append(f"模型输出: {round.text[:500]}")
                 if not streamed["active"]:
                     # 非流式：整轮文字一次性播出（流式时已逐段回调，不重复）
                     self.emit("agent_text_delta", round.text, {"round": self._round_no, "done": not round.tool_calls})
             if not round.tool_calls:
+                # v0.14.1 推理模型偶发整轮空返回（无文字无 tool_calls）：这是 API 瞬态，
+                # 不是任务完成——注入 nudge 重试（至多 2 次），避免 agent 静默"成功"收尾。
+                if not (round.text or "").strip() and self._empty_round_retries < 2:
+                    self._empty_round_retries += 1
+                    self._remember({
+                        "role": "user",
+                        "content": ("你上一轮的回复为空。请继续任务：调研完成就调用 ask_user 或 "
+                                    "propose_plan；全部完成就输出最终总结文字。"),
+                    })
+                    self.logs.append("模型返回空轮次，已注入提醒重试。")
+                    continue
+                # v0.13.2 计划未完成不得收工：模型停止时若批准的计划里还有未完成
+                # 步骤/零件，注入提醒让它继续（防止"归档第一件就收尾"）。
+                if self._plan_approved and self._plan_has_pending():
+                    if not self._nagged_incomplete_plan:
+                        self._nagged_incomplete_plan = True
+                        self._remember({"role": "assistant", "content": round.text or ""})
+                        self._remember({
+                            "role": "user",
+                            "content": ("计划尚未完成：还有未完成的零件/步骤。请继续逐件建模，"
+                                        "直到计划中所有零件都已 finish_part 归档；不要现在写总结。"),
+                        })
+                        self.logs.append("计划未完成，已提醒模型继续。")
+                        continue
                 result.final_text = round.text
                 result.ok = True
                 if round.text:
@@ -792,6 +908,8 @@ class AgentLoop:
                     self._remember(self._handle_run_build_script(tool_call, result))
                 elif tool_call.name == "finish_part":
                     self._remember(self._handle_finish_part(tool_call, result))
+                elif tool_call.name == "export_assembly":
+                    self._remember(self._handle_export_assembly(tool_call, result))
                 else:
                     self._remember(self._execute_tool_call(tool_call, result))
         if self.step_count >= self.max_steps:
@@ -914,10 +1032,15 @@ class AgentLoop:
             mesh = self.worker.export_mesh(str(stl_path))
             if mesh.get("size"):
                 result.artifacts["stl"] = str(stl_path)
-                self.emit("artifact_ready", "几何已更新，3D 网格已导出", {
+                # run_id + url let the UI live-preview the mesh while the agent is
+                # still building (the viewport otherwise stays empty until the run
+                # commits its final artifact set).
+                self.emit("artifact_ready", "geometry updated, 3D mesh exported", {
                     "kind": "stl",
                     "path": str(stl_path),
                     "size": mesh.get("size"),
+                    "run_id": self.run_dir.name,
+                    "url": f"/api/artifacts/{self.run_dir.name}/stl",
                 })
         except Exception as exc:  # noqa: BLE001 —— 网格导出失败不阻断建模
             self.logs.append(f"STL 导出失败: {type(exc).__name__}: {exc}")
@@ -987,6 +1110,7 @@ class AgentLoop:
             "volume": result.volume,
             "parts": result.parts,
             "design_calculations": result.design_calculations,
+            "assembly": result.assembly,
             "feature_graph": result.feature_graph,
             "op_history": tree.get("op_history") or [],
             "narrative": (tree.get("narrative") or [])[-_NARRATIVE_CLIP:],
@@ -1071,6 +1195,21 @@ class AgentLoop:
             "op": "design_calculate",
             "args_preview": _args_preview(preview),
         })
+        # v0.13.1 调研防打转硬门控：计划批准前累计超过预算即拒绝，强制推进到提问/计划。
+        if not self._plan_approved:
+            self._calc_calls += 1
+            if self._calc_calls > self._calc_budget:
+                return tool_result_message(
+                    tool_call,
+                    json.dumps({
+                        "success": False,
+                        "error_kind": "RESEARCH_BUDGET_EXCEEDED",
+                        "error": f"调研预算已用完（{self._calc_budget} 次 design_calculate）。"
+                                 "请立即停止计算：用已有结果写 2-3 个候选方案，"
+                                 "然后 ask_user 澄清关键约束或直接 propose_plan 出 BOM 计划。",
+                    }, ensure_ascii=False),
+                    protocol=self.protocol,
+                )
         entry: dict[str, Any] = {"step": self.step_count, "kind": kind}
         if reason:
             entry["reason"] = reason[:200]
@@ -1179,6 +1318,180 @@ class AgentLoop:
         return tool_result_message(tool_call, json.dumps(payload, ensure_ascii=False, default=str),
                                    protocol=self.protocol)
 
+    def _bom_entry(self, part: str) -> dict[str, Any] | None:
+        """从批准计划（session 优先，退本地副本）里按零件名取 BOM 项。"""
+        plan: dict[str, Any] = {}
+        if self.session is not None:
+            plan = self.session.plan or {}
+        elif self._approved_plan:
+            plan = self._approved_plan
+        for item in plan.get("bom") or []:
+            if isinstance(item, dict) and item.get("part") == part:
+                return item
+        return None
+
+    def _archive_to_parts_library(self, part: str, step_path: Path, stl_path: Path,
+                                  volume: float) -> dict[str, Any] | None:
+        """v0.14 F2a：把本次归档复制进项目零件库（版本递增）并更新 manifest + session 镜像。
+
+        失败只记日志——run 目录归档仍是事实，装配导出会明确报缺件。"""
+        if not self.project_id:
+            return None
+        from backend import storage
+
+        try:
+            manifest = storage.read_manifest(self.project_id)
+            entries = [p for p in manifest.get("parts") or [] if isinstance(p, dict)]
+            existing = next((p for p in entries if p.get("name") == part), None)
+            version = int((existing or {}).get("version") or 0) + 1
+            slug = _part_slug(part)
+            lib_dir = storage.project_parts_dir(self.project_id)
+            lib_dir.mkdir(parents=True, exist_ok=True)
+            lib_step = f"v{version:03d}_{slug}.step"
+            lib_stl = f"v{version:03d}_{slug}.stl"
+            shutil.copyfile(step_path, lib_dir / lib_step)
+            shutil.copyfile(stl_path, lib_dir / lib_stl)
+            bom_item = self._bom_entry(part) or {}
+            entry = {
+                "name": part, "version": version, "run_id": self.run_dir.name,
+                "step_file": lib_step, "stl_file": lib_stl,
+                "built_via": self._part_built_via, "volume_mm3": round(float(volume), 2),
+                "pose": bom_item.get("pose"),
+                "contract_passed": True,
+                "role": bom_item.get("role") or "",
+                "depends_on": bom_item.get("depends_on") or [],
+            }
+            manifest["parts"] = [p for p in entries if p.get("name") != part] + [entry]
+            storage.write_manifest(self.project_id, manifest)
+            if self.session is not None:
+                self.session.update_part_entry(entry)
+            return {"version": version, "step_file": lib_step, "stl_file": lib_stl,
+                    "pose": entry["pose"]}
+        except Exception as exc:  # noqa: BLE001 —— 库写失败不阻断逐件交付
+            self.logs.append(f"零件库写入失败（不影响 run 归档）: {type(exc).__name__}: {exc}")
+            return None
+
+    def _handle_export_assembly(self, tool_call: ToolCall, result: AgentLoopResult) -> dict[str, Any]:
+        """合成工具 export_assembly：零件库 + 位姿 → 装配 STEP + 干涉 + 预览图 + 交付报告。"""
+        self.step_count += 1
+        result.steps = self.step_count
+        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+        self.emit("agent_step", "装配导出", {
+            "step": self.step_count, "op": "export_assembly", "args_preview": _args_preview(args),
+        })
+        if not self._plan_approved:
+            payload: dict[str, Any] = {"success": False, "error_kind": "PLAN_REQUIRED",
+                                       "error": "export_assembly 仅在计划获批准后使用。"}
+        elif not self.project_id:
+            payload = {"success": False, "error_kind": "INVALID_REQUEST",
+                       "error": "项目零件库不可用（缺 project_id）。"}
+        elif self._plan_has_pending():
+            payload = {"success": False, "error_kind": "PLAN_INCOMPLETE",
+                       "error": "计划中还有未归档零件：先完成全部 finish_part 再导出装配。"}
+        else:
+            payload = self._export_assembly_inner(args, result)
+        return tool_result_message(tool_call, json.dumps(payload, ensure_ascii=False, default=str),
+                                   protocol=self.protocol)
+
+    def _export_assembly_inner(self, args: dict, result: AgentLoopResult) -> dict[str, Any]:
+        from datetime import datetime
+
+        from backend import storage
+
+        manifest = storage.read_manifest(self.project_id or "")
+        entries = [p for p in manifest.get("parts") or [] if isinstance(p, dict)]
+        if not entries:
+            return {"success": False, "error_kind": "EMPTY_LIBRARY",
+                    "error": "项目零件库为空：先逐件 finish_part 归档。"}
+        lib_dir = storage.project_parts_dir(self.project_id or "")
+        # 绝对路径：worker 子进程 cwd 在内核仓，相对路径会在那边解析失败
+        # （与 AgentLoop.__init__ resolve(run_dir) 同一教训）。
+        lib_dir = lib_dir.resolve()
+        parts_payload = []
+        for entry in entries:
+            step_file = str(entry.get("step_file") or "")
+            if not (lib_dir / step_file).exists():
+                return {"success": False, "error_kind": "LIBRARY_BROKEN",
+                        "error": f"零件 {entry.get('name')} 的库文件缺失: {step_file}"}
+            parts_payload.append({
+                "path": str(lib_dir / step_file),
+                "name": str(entry.get("name")),
+                "pose": entry.get("pose") or {"position": [0.0, 0.0, 0.0]},
+            })
+        seq = 1 + len(list(lib_dir.glob("assembly_*.step")))
+        out_step = lib_dir / f"assembly_{seq:03d}.step"
+        try:
+            export = self.worker.export_assembly(parts_payload, str(out_step))
+            interference = self.worker.assembly_interference(
+                parts_payload, expected_overlaps=args.get("expected_overlaps"))
+            render = self.worker.render_assembly(parts_payload)
+        except Exception as exc:  # noqa: BLE001 —— worker 崩溃/超时
+            return {"success": False, "error_kind": "WORKER_ERROR",
+                    "error": f"装配命令执行失败: {type(exc).__name__}: {exc}"}
+        render_file = report_file = None
+        png = render.get("render_base64") if isinstance(render, dict) else None
+        if png:
+            try:
+                import base64 as _b64
+                render_file = f"assembly_{seq:03d}_render.png"
+                (lib_dir / render_file).write_bytes(_b64.b64decode(png))
+            except Exception:
+                render_file = None
+        exported_at = datetime.now().isoformat(timespec="seconds")
+        report = {
+            "exported_at": exported_at,
+            "note": str(args.get("note") or ""),
+            "parts": [{"name": e.get("name"), "version": e.get("version"),
+                       "pose": e.get("pose")} for e in entries],
+            "export": {k: export.get(k) for k in ("parts", "solids", "volume", "bounding_box", "step_bytes")},
+            "interference": interference,
+        }
+        try:
+            report_file = f"assembly_{seq:03d}_report.json"
+            (lib_dir / report_file).write_text(
+                json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            report_file = None
+        summary = {
+            "exported_at": exported_at,
+            "step_file": out_step.name,
+            "render_file": render_file,
+            "report_file": report_file,
+            "parts_count": len(entries),
+            "total_pairs": interference.get("total_pairs", 0),
+            "interfering_count": interference.get("interfering_count", 0),
+            "exempted_count": interference.get("exempted_count", 0),
+            "max_interference_volume_mm3": interference.get("max_interference_volume", 0.0),
+            "pairs": (interference.get("pairs") or [])[:40],
+        }
+        manifest["assembly"] = summary
+        storage.write_manifest(self.project_id or "", manifest)
+        if self.session is not None:
+            self.session.set_assembly(summary)
+        result.assembly = summary
+        self.emit("artifact_ready", f"装配已导出: {out_step.name}", {
+            "kind": "assembly", "step_file": out_step.name,
+            "render_file": render_file, "report_file": report_file,
+            "interfering_count": summary["interfering_count"],
+            "exempted_count": summary["exempted_count"],
+        })
+        interfering_brief = [
+            f"{p['name_a']}×{p['name_b']} {round(p.get('volume_mm3') or 0, 1)}mm³"
+            for p in (interference.get("pairs") or []) if p.get("interfering")][:10]
+        return {
+            "success": True,
+            "step_file": out_step.name,
+            "render_file": render_file,
+            "report_file": report_file,
+            "parts_count": len(entries),
+            "total_pairs": summary["total_pairs"],
+            "interfering_count": summary["interfering_count"],
+            "exempted_count": summary["exempted_count"],
+            "interfering": interfering_brief,
+            "note": ("装配交付物已生成（STEP/干涉/预览/报告）。"
+                     + ("存在未豁免干涉对，请在总结中如实说明。" if interfering_brief else "")),
+        }
+
     def _handle_finish_part(self, tool_call: ToolCall, result: AgentLoopResult) -> dict[str, Any]:
         """合成工具 finish_part：当前零件导出归档 → 计划打勾 → 清空内核会话开下一件。"""
         args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
@@ -1195,6 +1508,12 @@ class AgentLoop:
         elif not part:
             payload = {"success": False, "error_kind": "INVALID_REQUEST",
                        "error": "缺少零件名 part。"}
+        elif any(p.get("part") == part for p in result.parts):
+            # v0.13.2 防重复归档：同名零件已归档过（真实 LLM 跑出过 24 件里 13 件重复）。
+            # 若确需替换，模型应先用不同零件名或先向用户说明。
+            payload = {"success": False, "error_kind": "DUPLICATE_PART",
+                       "error": f"零件「{part}」已归档过（part #{next(p['index'] for p in result.parts if p['part'] == part):02d}）。"
+                                "请继续下一个尚未归档的零件；如需重做该件，请先用 update_plan 说明并换用新零件名。"}
         else:
             contract = args.get("feature_contract") if isinstance(args.get("feature_contract"), list) else None
             payload = self._finish_part_inner(part, note, result, contract)
@@ -1286,12 +1605,18 @@ class AgentLoop:
                     "error": f"零件 {part} 已导出但会话清空失败: {exc}。"
                              "请勿继续建模（会把下一件融合进当前零件），直接向用户报告此问题。"}
         # 4) 记账 + 事件 + 计划打勾
+        # v0.14 F2a：同步写项目零件库（版本递增 + manifest + session 镜像）
+        library = self._archive_to_parts_library(part, step_path, stl_path, volume) or {}
         part_rec = {
             "part": part, "index": idx, "volume_mm3": round(volume, 2),
             "step": str(step_path), "stl": str(stl_path),
             "step_file": step_path.name, "stl_file": stl_path.name,
             "stl_size": mesh.get("size"), "note": note,
             "built_via": self._part_built_via,
+            "library_step_file": library.get("step_file"),
+            "library_stl_file": library.get("stl_file"),
+            "library_version": library.get("version"),
+            "pose": library.get("pose"),
         }
         self._part_built_via = "ops"  # 下一件默认原子 op
         result.parts.append(part_rec)
@@ -1351,6 +1676,7 @@ def run_agent_loop(
     session: AgentSession | None = None,
     initial_user_message: dict[str, Any] | None = None,
     mode: str = "auto",
+    project_id: str | None = None,
 ) -> AgentLoopResult:
     """函数式入口（main.py 用）；类入口便于测试注入。"""
     loop = AgentLoop(
@@ -1369,5 +1695,6 @@ def run_agent_loop(
         session=session,
         initial_user_message=initial_user_message,
         mode=mode,
+        project_id=project_id,
     )
     return loop.run()

@@ -673,6 +673,39 @@ class CapabilityIssue(BaseModel):
     recoverable: bool = False
 
 
+class AssemblyPose(BaseModel):
+    """v0.14 F2a：零件在装配中的位姿（与内核 assemble/assembly_scene 的格式同构）。"""
+
+    position: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
+    # [angle_deg, [ax, ay, az]]，None = 不旋转
+    rotation_deg: list | None = None
+
+
+class InterferencePair(BaseModel):
+    name_a: str
+    name_b: str
+    interfering: bool = False
+    volume_mm3: float = 0.0
+    center: list[float] | None = None
+    error: str | None = None
+    exempt_reason: str | None = None
+
+
+class AssemblySummary(BaseModel):
+    """v0.14 F2a：装配投影（权威数据在项目零件库 manifest，这里供前端直读）。"""
+
+    exported_at: str | None = None
+    step_file: str | None = None
+    render_file: str | None = None
+    report_file: str | None = None
+    parts_count: int = 0
+    total_pairs: int = 0
+    interfering_count: int = 0
+    exempted_count: int = 0
+    max_interference_volume_mm3: float = 0.0
+    pairs: list[InterferencePair] = Field(default_factory=list)
+
+
 class PartArtifact(BaseModel):
     """v0.12 逐件交付：finish_part 归档的单个零件产物。"""
 
@@ -687,6 +720,11 @@ class PartArtifact(BaseModel):
     note: str | None = None
     # v0.13：零件来源标记 ops=原子 op 序列 / script=run_build_script（两者均可参数重放）
     built_via: str | None = None
+    # v0.14 F2a：装配位姿 + 项目零件库文件名（manifest 权威，这里投影）
+    pose: AssemblyPose | None = None
+    library_step_file: str | None = None
+    library_stl_file: str | None = None
+    library_version: int | None = None
 
 
 class ArtifactSet(BaseModel):
@@ -697,6 +735,8 @@ class ArtifactSet(BaseModel):
     report: str | None = None
     execution_report: str | None = None
     parts: list[PartArtifact] = Field(default_factory=list)
+    # v0.14 F2a：装配投影（不进 undo 历史语义，仅展示/下载用）
+    assembly: AssemblySummary | None = None
 
 
 class DesignSnapshot(BaseModel):

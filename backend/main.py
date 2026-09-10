@@ -66,7 +66,12 @@ from backend.mechcad_ai.client import (
 from backend.mechcad_ai.prompts import get_prompt
 from backend.normalization import normalize_feature_plan
 from backend.session import SessionStore
-from backend.storage import artifact_path, create_run_dir
+from backend.storage import (
+    artifact_path,
+    create_run_dir,
+    project_artifact_path,
+    read_manifest,
+)
 from backend.validation import apply_validation_result, validate_feature_plan
 from backend.static_assets import mount_frontend
 
@@ -652,8 +657,17 @@ def _run_agent_thread(
         run_id, run_dir = create_run_dir()
         config = resolve_role_config(settings, "planner")
 
+        # v0.13.1 重推理模型（如 deepseek-v4.1-flash）reasoning token 会挤占输出预算，
+        # 8192 会导致长计划/BOM 时 finish_reason=length、正文为空。可用环境变量覆盖。
+        try:
+            planner_max_tokens = int(os.getenv("MECHCAD_PLANNER_MAX_TOKENS", "32768"))
+        except ValueError:
+            planner_max_tokens = 32768
+
         def chat_with_tools(messages, tools, on_text_delta=None):
-            return chat_completion_with_tools(settings, "planner", messages, tools, max_tokens=8192, on_text_delta=on_text_delta)
+            return chat_completion_with_tools(settings, "planner", messages, tools,
+                                              max_tokens=planner_max_tokens,
+                                              on_text_delta=on_text_delta)
 
         task_message = build_task_message(text, worker, worker.capabilities(), image_data_url)
         result = run_agent_loop(
@@ -670,6 +684,7 @@ def _run_agent_thread(
             session=session,
             initial_user_message=task_message,
             mode=mode,
+            project_id=project_id,
         )
         artifacts = _result_artifact_set(run_id, result)
         snapshot = DesignSnapshot(
@@ -707,13 +722,14 @@ def _run_agent_thread(
 
 
 def _result_artifact_set(run_id: str, result: AgentLoopResult) -> ArtifactSet:
-    """agent 结果 → ArtifactSet（v0.12：单件槽 step/stl + 逐件归档 parts）。"""
+    """agent 结果 → ArtifactSet（v0.12：单件槽 step/stl + 逐件归档 parts；v0.14：装配投影）。"""
     return ArtifactSet(
         run_id=run_id,
         step=result.artifacts.get("step"),
         stl=result.artifacts.get("stl"),
         execution_report=result.artifacts.get("execution_report"),
         parts=[PartArtifact(**p) for p in result.parts],
+        assembly=result.assembly,
     )
 
 
@@ -835,6 +851,10 @@ def redo(project_id: str):
 def _commit_kernel_state_snapshot(project_id: str, worker) -> None:
     """把内核当前状态导出为快照（undo/redo 或编辑后提交），供前端/回溯使用。"""
     run_id, run_dir = create_run_dir()
+    # 绝对路径：kernel 子进程 cwd 在内核仓，相对路径会在那边解析失败（与
+    # AgentLoop.__init__ 同一原因）。此前漏了 resolve，导致手动改参/undo/redo
+    # 后 STL/STEP 导出静默失败，前端视口显示 "Model load failed"。
+    run_dir = run_dir.resolve()
     stl_path = run_dir / "model.stl"
     step_path = run_dir / "model.step"
     stl = None
@@ -850,7 +870,17 @@ def _commit_kernel_state_snapshot(project_id: str, worker) -> None:
     except Exception:  # noqa: BLE001
         pass
     tree = worker.feature_tree()
-    artifacts = ArtifactSet(run_id=run_id, stl=stl, step=step, execution_report=str(run_dir / "execution_report.json"))
+    # v0.14 F2a：手动改参/undo 后重建快照时保留零件库 parts 与装配投影
+    # （此前这里重建 ArtifactSet 会把上一 run 归档的零件清单整体丢掉）。
+    try:
+        prior = store.get_project(project_id).current.artifacts
+        carried_parts = list(prior.parts or [])
+        carried_assembly = prior.assembly
+    except KeyError:
+        carried_parts, carried_assembly = [], None
+    artifacts = ArtifactSet(run_id=run_id, stl=stl, step=step,
+                            execution_report=str(run_dir / "execution_report.json"),
+                            parts=carried_parts, assembly=carried_assembly)
     op_history = tree.get("op_history") or []
     (run_dir / "execution_report.json").write_text(json.dumps({
         "ok": True, "engine": "mechkernel", "worker": "mechkernel-agent",
@@ -888,6 +918,26 @@ def get_artifact(run_id: str, kind: str):
         raise HTTPException(status_code=404, detail="Unknown artifact kind") from exc
     if not path.exists():
         raise HTTPException(status_code=404, detail="Artifact not found")
+    return FileResponse(path)
+
+
+@app.get("/api/projects/{project_id}/assembly/manifest")
+def assembly_manifest(project_id: str):
+    """v0.14 F2a：项目零件库 manifest（权威文件直读）。"""
+    _project_or_404(project_id)
+    return read_manifest(project_id)
+
+
+@app.get("/api/projects/{project_id}/assembly/artifacts/{filename}")
+def assembly_artifact(project_id: str, filename: str):
+    """v0.14 F2a：零件库/装配产物文件下载（库文件名白名单校验防穿越）。"""
+    _project_or_404(project_id)
+    try:
+        path = project_artifact_path(project_id, filename)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Unknown assembly artifact") from exc
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Assembly artifact not found")
     return FileResponse(path)
 
 

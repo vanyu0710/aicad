@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { KernelFeatureData } from "./api";
+import { useT } from "./i18n";
 
 type Props = {
   feature: KernelFeatureData | null;
@@ -13,6 +14,7 @@ type Props = {
  * 保存调用 kernel/update_feature（内核参数化重放）。取代旧 FeatureForm 的 FeatureV3 逻辑。
  */
 export default function KernelFeatureForm({ feature, busy, onSave, onDelete }: Props) {
+  const t = useT();
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [error, setError] = useState("");
 
@@ -26,7 +28,7 @@ export default function KernelFeatureForm({ feature, busy, onSave, onDelete }: P
   }, [draft]);
 
   if (!feature) {
-    return <div className="kernel-form-empty">请选择特征</div>;
+    return <div className="kernel-form-empty">{t("kernel.form.select")}</div>;
   }
 
   const type = feature.type ?? "unknown";
@@ -41,7 +43,7 @@ export default function KernelFeatureForm({ feature, busy, onSave, onDelete }: P
       }
       if (typeof value === "number") {
         if (value <= 0 && key !== "angle_deg") {
-          setError(`参数 ${key} 必须大于 0`);
+          setError(t("kernel.form.error.positive", { key }));
           return;
         }
         params[key] = value;
@@ -49,7 +51,7 @@ export default function KernelFeatureForm({ feature, busy, onSave, onDelete }: P
         const num = Number(value);
         if (Number.isFinite(num)) {
           if (num <= 0 && key !== "angle_deg") {
-            setError(`参数 ${key} 必须大于 0`);
+            setError(t("kernel.form.error.positive", { key }));
             return;
           }
           params[key] = num;
@@ -73,7 +75,7 @@ export default function KernelFeatureForm({ feature, busy, onSave, onDelete }: P
       </div>
 
       {editableEntries.length === 0 ? (
-        <div className="kernel-form-empty">此特征无可编辑参数</div>
+        <div className="kernel-form-empty">{t("kernel.form.empty")}</div>
       ) : (
         <div className="kernel-form-fields">
           {editableEntries.map(([key, value]) => (
@@ -94,11 +96,11 @@ export default function KernelFeatureForm({ feature, busy, onSave, onDelete }: P
 
       <div className="kernel-form-actions">
         <button type="button" className="kernel-form-save" disabled={busy} onClick={handleSave}>
-          保存参数
+          {t("kernel.form.save")}
         </button>
         {onDelete && (
           <button type="button" className="kernel-form-delete" disabled={busy} onClick={() => onDelete(feature.id)}>
-            删除特征
+            {t("kernel.form.delete")}
           </button>
         )}
       </div>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   artifactUrl,
+  assemblyArtifactUrl,
   createProject,
   deleteProject,
   deleteKernelFeature,
@@ -32,7 +33,7 @@ import StructurePanel from "./layout/StructurePanel";
 import TopCommandBar from "./layout/TopCommandBar";
 import SettingsDialog from "./SettingsDialog";
 import StartupScreen from "./StartupScreen";
-import Viewport from "./Viewport";
+import Viewport, { type AssemblyModel } from "./Viewport";
 import { useT } from "./i18n";
 import {
   DEFAULT_SETTINGS,
@@ -169,6 +170,15 @@ export default function App() {
     narrative: [],
     node_count: 0,
   });
+  // Live mesh preview: the agent emits artifact_ready as geometry changes, so the
+  // viewport can show the part building instead of an empty grid until the run
+  // commits its final artifact set. `rev` busts the URL cache so the loader
+  // re-fetches the same model.stl path on every op (a stable URL would be
+  // treated as unchanged and never reload).
+  const [liveMesh, setLiveMesh] = useState<{ runId: string; url: string; rev: number } | null>(null);
+  // v0.14 F2a：装配预览显隐/选中
+  const [assemblyHidden, setAssemblyHidden] = useState<string[]>([]);
+  const [assemblySelected, setAssemblySelected] = useState<string | null>(null);
 
   const refreshKernelTree = async () => {
     if (!project?.project_id) {
@@ -409,6 +419,14 @@ export default function App() {
           attachChatSnapshot(url);
         }
       }
+      if (event.type === "artifact_ready") {
+        // live-preview the mesh as the agent builds
+        const url = String(event.payload?.url || "");
+        const run = String(event.payload?.run_id || "");
+        if (url && run) {
+          setLiveMesh((prev) => ({ runId: run, url, rev: (prev?.rev ?? 0) + 1 }));
+        }
+      }
       if (event.type === "plan_updated") {
         setPlan({
           summary: event.payload?.summary ? String(event.payload.summary) : undefined,
@@ -434,6 +452,10 @@ export default function App() {
       }
       if (event.type === "agent_done") {
         setAgentRunning(false);
+        // Do NOT clear liveMesh here: the committed artifact set is fetched
+        // asynchronously below, and clearing now would blank the viewport at
+        // exactly the moment the finished model should be visible. The viewport
+        // switches to the committed run once it arrives (see viewRunId).
         finalizeChatAssistant();
         void (async () => {
           try {
@@ -499,8 +521,29 @@ export default function App() {
   const evidenceConflicts = plan?.evidence?.conflicts || [];
   const designIntent = plan?.design_intent_details;
   const runId = project?.current.artifacts.run_id;
+  // While the agent is building (or before the committed artifact lands), use the
+  // live mesh the loop just exported; once the run commits, that takes over.
+  const liveActive = Boolean(liveMesh) && (agentRunning || !runId);
+  const viewRunId = liveActive ? liveMesh!.runId : runId;
   // agent 路径只产出 stl/step（无 obj）；hasModel 只看 stl
-  const hasModel = Boolean(project?.current.artifacts.stl);
+  const hasModel = Boolean(project?.current.artifacts.stl) || liveActive;
+  // v0.14 F2a：装配预览——export 过装配且零件带库 STL 时，视口切多件叠加
+  const assembly = project?.current.artifacts.assembly ?? null;
+  const assemblyModels: AssemblyModel[] | undefined = useMemo(() => {
+    if (!assembly || !project) {
+      return undefined;
+    }
+    const parts = (project.current.artifacts.parts || []).filter((p) => p.library_stl_file);
+    if (!parts.length) {
+      return undefined;
+    }
+    return parts.map((p) => ({
+      name: p.part,
+      url: assemblyArtifactUrl(project.project_id, p.library_stl_file),
+      position: p.pose?.position ?? [0, 0, 0],
+      rotationDeg: p.pose?.rotation_deg ?? null,
+    }));
+  }, [assembly, project]);
   const canUndo = Boolean(project?.history?.length);
   const canRedo = Boolean(project?.redo_stack?.length);
   const hasRequiredQuestions = questions.some((question) => question.required !== false && !question.answer);
@@ -707,8 +750,15 @@ export default function App() {
               </div>
             )}
           <Viewport
-            objUrl={artifactUrl(runId, "obj")}
-            stlUrl={artifactUrl(runId, "stl")}
+            objUrl={assemblyModels ? undefined : artifactUrl(viewRunId, "obj")}
+            stlUrl={assemblyModels
+              ? undefined
+              : liveActive
+                ? `${artifactUrl(liveMesh!.runId, "stl")}?rev=${liveMesh!.rev}`
+                : artifactUrl(viewRunId, "stl")}
+            models={assemblyModels}
+            hidden={assemblyHidden}
+            selected={assemblySelected}
             breadcrumb={t("app.breadcrumb", {
               partFamily: plan?.part_family || "FeaturePlan",
               feature: selectedFeature?.id || t("app.breadcrumb.none"),
@@ -733,6 +783,45 @@ export default function App() {
                   {part.stl_file && <a href={artifactUrl(runId, part.stl_file)}>STL</a>}
                 </span>
               ))}
+            </div>
+          )}
+          {assembly && project && (
+            <div className="assembly-panel" data-testid="assembly-panel">
+              <div className="assembly-panel-head">
+                <span className="eyebrow">ASSEMBLY</span>
+                <a href={assemblyArtifactUrl(project.project_id, assembly.step_file)}>{t("app.assembly.step")}</a>
+                {assembly.report_file && (
+                  <a href={assemblyArtifactUrl(project.project_id, assembly.report_file)}>{t("app.assembly.report")}</a>
+                )}
+                <span className={`assembly-interfere ${assembly.interfering_count - assembly.exempted_count > 0 ? "warn" : ""}`}>
+                  {t("app.assembly.interference", { count: assembly.interfering_count, exempt: assembly.exempted_count })}
+                </span>
+              </div>
+              <div className="assembly-parts">
+                {(project.current.artifacts.parts || []).filter((p) => p.library_stl_file).map((part) => (
+                  <label key={part.part} className={`assembly-part ${assemblySelected === part.part ? "selected" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={!assemblyHidden.includes(part.part)}
+                      onChange={(event) => setAssemblyHidden((current) => (
+                        event.target.checked
+                          ? current.filter((name) => name !== part.part)
+                          : [...current, part.part]
+                      ))}
+                    />
+                    <button
+                      type="button"
+                      className="assembly-part-name"
+                      onClick={() => setAssemblySelected((current) => (current === part.part ? null : part.part))}
+                    >
+                      {part.part}
+                    </button>
+                    <span className="assembly-part-pose" title={JSON.stringify(part.pose || null)}>
+                      {part.pose ? `[${part.pose.position.map((v) => Math.round(v)).join(", ")}]` : "—"}
+                    </span>
+                  </label>
+                ))}
+              </div>
             </div>
           )}
           </section>
