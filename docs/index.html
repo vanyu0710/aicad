@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Varen CAD — 把草图变成可制造的三维模型</title>
+<meta name="description" content="Varen CAD 是面向机械工程师的 AI 建模 IDE：AI agent 像工程师一样逐步自主建模，你随时看进度、改参数、确认关键决策，交付参数化 BRep 零件与多实体装配 STEP。" />
+
+<!-- 字体: Instrument Serif (display) + Inter (body) + JetBrains Mono (code) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  /* ===== Token 系统（与 MechCAD Kernel 同源：深海色板 + 珊瑚 accent）===== */
+  :root {
+    --abyss:    #04111f;
+    --deep:     #0a2540;
+    --indigo:   #14365e;
+    --ocean:    #1a5490;
+    --mid:      #2c6cae;
+    --sky:      #5b9bcf;
+    --mist:     #a8c4dc;
+    --foam:     #e6eef4;
+    --snow:     #f6f9fc;
+
+    --coral:     #ff7d5c;
+    --coral-dim: #ff7d5c22;
+    --coral-glow:#ff7d5c44;
+
+    --ink:      #0a2540;
+    --mute:     #52697a;
+    --line:     #14365e18;
+
+    --radius:    14px;
+    --radius-lg: 22px;
+    --shadow:    0 24px 60px -28px rgba(4, 17, 31, 0.5);
+    --shadow-sm: 0 6px 24px -10px rgba(4, 17, 31, 0.25);
+    --maxw:      1200px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: "Inter", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: var(--ink); line-height: 1.65; overflow-x: hidden;
+    background: var(--snow);
+    font-feature-settings: "cv11", "ss01", "ss03";
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--ocean); text-decoration: none; }
+  a:hover { color: var(--coral); }
+  img { max-width: 100%; }
+  .serif { font-family: "Instrument Serif", "Times New Roman", serif; font-weight: 400; letter-spacing: -0.02em; }
+  .mono  { font-family: "JetBrains Mono", "SF Mono", monospace; }
+
+  /* ===== 顶部导航 ===== */
+  .nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    background: rgba(246, 249, 252, 0.78);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner {
+    max-width: var(--maxw); margin: 0 auto;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 36px;
+  }
+  .logo {
+    font-weight: 700; font-size: 17px; color: var(--deep);
+    letter-spacing: -0.3px; display: flex; align-items: center; gap: 10px;
+  }
+  .logo-mark {
+    width: 30px; height: 30px;
+    background: linear-gradient(135deg, var(--sky) 0%, var(--abyss) 100%);
+    border-radius: 8px; display: grid; place-items: center;
+    box-shadow: 0 4px 12px -2px rgba(4, 17, 31, 0.3);
+  }
+  .logo-mark svg { display: block; }
+  .nav-links { display: flex; gap: 30px; align-items: center; }
+  .nav-links a { color: var(--indigo); font-weight: 500; font-size: 13.5px; letter-spacing: -0.1px; }
+  .nav-links a:hover { color: var(--deep); }
+  .nav-cta {
+    background: var(--deep); color: white !important;
+    padding: 9px 18px; border-radius: 8px;
+    font-weight: 600; font-size: 13px; transition: all 0.2s;
+  }
+  .nav-cta:hover { background: var(--coral); transform: translateY(-1px); }
+
+  /* ===== Hero: 5 段竖向渐变浅海浪（与内核同款 "深海" 语言）===== */
+  .hero { position: relative; min-height: 100vh; padding: 110px 36px 130px; overflow: hidden; }
+  .wave { position: absolute; left: 0; right: 0; pointer-events: none; }
+  .wave svg { display: block; width: 100%; height: 100%; }
+  .wave-1 { top: 0; height: 22vh; background: linear-gradient(180deg, #ecf3f7 0%, #dde9f0 50%, #c9dde7 100%); z-index: 1; }
+  .wave-1 svg { position: absolute; bottom: -1px; height: 90px; }
+  .wave-2 { top: 22vh; height: 22vh; background: linear-gradient(180deg, #c5dceb 0%, #aac7da 50%, #93b6cc 100%); z-index: 2; }
+  .wave-2 svg { position: absolute; bottom: -1px; height: 100px; }
+  .wave-3 { top: 44vh; height: 22vh; background: linear-gradient(180deg, #88afc6 0%, #6f9bb6 50%, #5c8ba8 100%); z-index: 3; }
+  .wave-3 svg { position: absolute; bottom: -1px; height: 110px; }
+  .wave-4 { top: 66vh; height: 22vh; background: linear-gradient(180deg, #5180a0 0%, #42738f 50%, #38677e 100%); z-index: 4; }
+  .wave-4 svg { position: absolute; bottom: -1px; height: 120px; }
+  .wave-5 { top: 88vh; height: 12vh; background: linear-gradient(180deg, #2f5d75 0%, #284f64 50%, #224454 100%); z-index: 5; }
+  .hero::after {
+    content: ""; position: absolute; inset: 0; z-index: 6; pointer-events: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='100' height='100'><filter id='n'><feTurbulence baseFrequency='1.5' numOctaves='2'/></filter><rect width='100' height='100' filter='url(%23n)' opacity='0.5'/></svg>");
+    opacity: 0.04; mix-blend-mode: overlay;
+  }
+  .bubble {
+    position: absolute; border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.7), rgba(255,255,255,0.05));
+    box-shadow: inset 0 0 14px rgba(255,255,255,0.5);
+    z-index: 2; pointer-events: none; animation: float 11s ease-in-out infinite;
+  }
+  .bubble.b1 { width: 60px; height: 60px; top: 14vh; left: 7%; }
+  .bubble.b2 { width: 40px; height: 40px; top: 32vh; left: 92%; animation-delay: 1.5s; }
+  .bubble.b3 { width: 90px; height: 90px; top: 56vh; left: 4%; animation-delay: 3s; }
+  .bubble.b4 { width: 30px; height: 30px; top: 76vh; left: 88%; animation-delay: 4.5s; }
+  .bubble.b5 { width: 50px; height: 50px; top: 22vh; left: 75%; animation-delay: 2s; }
+  @keyframes float { 0%,100% { transform: translate(0,0);} 25%{transform:translate(8px,-25px);} 50%{transform:translate(-5px,-45px);} 75%{transform:translate(6px,-22px);} }
+  .fish {
+    position: absolute; width: 3px; height: 3px; border-radius: 50%;
+    background: rgba(255,255,255,0.7); box-shadow: 0 0 6px rgba(255,255,255,0.6);
+    animation: swim 24s linear infinite; z-index: 2; pointer-events: none;
+  }
+  .fish.f1 { top: 18vh; } .fish.f2 { top: 50vh; animation-delay: 8s; } .fish.f3 { top: 80vh; animation-delay: 16s; }
+  @keyframes swim { from { left: -2%; } to { left: 102%; } }
+
+  .hero-content { position: relative; z-index: 50; max-width: var(--maxw); margin: 0 auto; text-align: center; padding: 30px 0 0; }
+  .status-chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,0.65); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.8);
+    padding: 5px 14px 5px 8px; border-radius: 999px;
+    font-size: 12.5px; font-weight: 500; color: var(--deep);
+    margin-bottom: 32px; box-shadow: 0 4px 16px -4px rgba(4,17,31,0.12);
+  }
+  .status-chip .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--coral); box-shadow: 0 0 0 4px var(--coral-glow); animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 4px var(--coral-glow);} 50% { box-shadow: 0 0 0 9px transparent;} }
+  .status-chip .v { font-family: "JetBrains Mono", monospace; font-weight: 500; color: var(--coral); }
+
+  .hero h1 {
+    font-family: "Instrument Serif", "Times New Roman", serif;
+    font-weight: 400; font-style: italic;
+    font-size: clamp(44px, 7.6vw, 92px); line-height: 1.06;
+    letter-spacing: -0.025em; color: var(--deep);
+    margin-bottom: 26px; max-width: 1080px; margin-left: auto; margin-right: auto;
+  }
+  .hero h1 .accent { color: var(--ocean); position: relative; display: inline-block; }
+  .hero h1 .accent::after { content: ""; position: absolute; left: 4%; right: 4%; bottom: 6%; height: 2px; background: var(--mist); border-radius: 1px; z-index: -1; }
+  .hero .subtitle { font-size: clamp(17px, 1.9vw, 20px); color: var(--indigo); font-weight: 400; max-width: 760px; margin: 0 auto 12px; line-height: 1.6; }
+  .hero .eyebrow { display: block; font-size: 12px; font-weight: 600; color: var(--ocean); text-transform: uppercase; letter-spacing: 2.4px; margin-top: 22px; margin-bottom: 6px; }
+
+  .hero-cta { display: flex; gap: 14px; justify-content: center; margin-top: 42px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 14px 26px; border-radius: 10px;
+    font-weight: 600; font-size: 14.5px; transition: all 0.25s; cursor: pointer;
+    text-decoration: none; letter-spacing: -0.1px;
+  }
+  .btn-primary { background: var(--deep); color: white; box-shadow: 0 10px 28px -8px rgba(4,17,31,0.45); }
+  .btn-primary:hover { background: var(--coral); transform: translateY(-2px); box-shadow: 0 16px 36px -8px rgba(255,125,92,0.4); }
+  .btn-ghost { background: rgba(255,255,255,0.7); color: var(--deep); border: 1.5px solid var(--mist); }
+  .btn-ghost:hover { background: white; border-color: var(--ocean); }
+
+  /* Hero 主图：真实 LLM 跑出的变速箱装配四视图 */
+  .hero-shot { position: relative; z-index: 50; max-width: 1040px; margin: 70px auto 0; }
+  .hero-shot img {
+    width: 100%; border-radius: var(--radius-lg);
+    box-shadow: 0 40px 90px -34px rgba(4,17,31,0.62), 0 0 0 1px rgba(255,255,255,0.5) inset;
+    background: #fff;
+  }
+  .hero-shot .cap {
+    margin-top: 16px; font-size: 13px; color: var(--deep); font-weight: 500;
+    display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
+  }
+  .hero-shot .cap .mono { font-size: 11.5px; color: var(--ocean); background: rgba(255,255,255,0.7); border: 1px solid var(--line); padding: 2px 8px; border-radius: 6px; }
+
+  .hero-mini-stats {
+    display: flex; justify-content: center; gap: 40px; margin-top: 44px; flex-wrap: wrap;
+    padding: 18px 0; border-top: 1px solid rgba(255,255,255,0.5); border-bottom: 1px solid rgba(255,255,255,0.5);
+  }
+  .mini-stat { color: var(--deep); }
+  .mini-stat .v { font-family: "JetBrains Mono", monospace; font-size: 21px; font-weight: 500; display: inline-block; margin-right: 6px; }
+  .mini-stat .l { font-size: 12px; color: var(--mute); letter-spacing: 0.3px; }
+
+  .scroll-hint { position: absolute; bottom: 26px; left: 50%; transform: translateX(-50%); z-index: 50; color: var(--foam); font-size: 11px; letter-spacing: 2.5px; font-weight: 500; animation: bounce 2.8s ease-in-out infinite; opacity: 0.8; }
+  @keyframes bounce { 0%,100%{transform:translateX(-50%) translateY(0);} 50%{transform:translateX(-50%) translateY(8px);} }
+
+  /* ===== 通用 Section ===== */
+  section { position: relative; padding: 110px 36px; }
+  .section-inner { max-width: var(--maxw); margin: 0 auto; }
+  .eyebrow-section { display: inline-block; font-size: 11.5px; font-weight: 600; color: var(--coral); text-transform: uppercase; letter-spacing: 2.5px; margin-bottom: 18px; }
+  .section-title { font-family: "Instrument Serif", serif; font-size: clamp(34px, 4.6vw, 56px); font-weight: 400; font-style: italic; line-height: 1.12; letter-spacing: -0.02em; color: var(--deep); max-width: 820px; margin-bottom: 20px; }
+  .section-title em { color: var(--coral); font-style: italic; }
+  .section-subtitle { font-size: 17px; color: var(--mute); max-width: 760px; line-height: 1.62; margin-bottom: 60px; }
+
+  .fadein { opacity: 0; transform: translateY(18px); transition: opacity 0.7s ease, transform 0.7s ease; }
+  .fadein.visible { opacity: 1; transform: none; }
+
+  /* ===== 工作流 timeline ===== */
+  .flow { background: var(--snow); }
+  .flow-timeline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 30px; position: relative; }
+  .flow-timeline::before {
+    content: ""; position: absolute; top: 32px; left: 12.5%; right: 12.5%; height: 1px;
+    background-image: linear-gradient(90deg, var(--mist) 50%, transparent 0);
+    background-size: 8px 1px; background-repeat: repeat-x;
+  }
+  .flow-step { padding: 0 22px; text-align: center; position: relative; }
+  .flow-num {
+    display: inline-block; width: 64px; height: 64px; line-height: 64px;
+    background: var(--snow); color: var(--deep); border: 1.5px solid var(--mist);
+    font-family: "Instrument Serif", serif; font-style: italic; font-size: 30px;
+    border-radius: 50%; margin-bottom: 26px; position: relative; z-index: 1; transition: all 0.3s;
+  }
+  .flow-step:hover .flow-num { background: var(--coral); color: white; border-color: var(--coral); transform: scale(1.1) rotate(-8deg); }
+  .flow-step h3 { font-family: "Instrument Serif", serif; font-size: 24px; font-weight: 400; color: var(--deep); margin-bottom: 10px; }
+  .flow-step h3 em { color: var(--coral); font-style: italic; }
+  .flow-step p { font-size: 13.5px; color: var(--mute); line-height: 1.62; }
+  .flow-step .code { display: block; margin-top: 14px; font-family: "JetBrains Mono", monospace; font-size: 11.5px; color: var(--ocean); background: var(--foam); padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); }
+  @media (max-width: 900px) { .flow-timeline { grid-template-columns: 1fr 1fr; gap: 40px 20px; } .flow-timeline::before { display: none; } }
+  @media (max-width: 540px) { .flow-timeline { grid-template-columns: 1fr; } }
+
+  /* ===== 能力：三栏大卡 ===== */
+  .caps { background: var(--foam); }
+  .caps-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  @media (max-width: 940px) { .caps-grid { grid-template-columns: 1fr; } }
+  .cap-card {
+    background: white; border: 1px solid var(--line); border-radius: var(--radius-lg);
+    padding: 34px 30px; box-shadow: var(--shadow-sm); transition: all 0.3s; position: relative; overflow: hidden;
+  }
+  .cap-card:hover { transform: translateY(-4px); box-shadow: var(--shadow); }
+  .cap-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--sky), var(--ocean)); }
+  .cap-card.warm::before { background: linear-gradient(90deg, var(--coral), #ffb08c); }
+  .cap-ico { width: 40px; height: 40px; border-radius: 10px; background: var(--foam); display: grid; place-items: center; margin-bottom: 18px; font-size: 19px; }
+  .cap-card h3 { font-family: "Instrument Serif", serif; font-size: 25px; font-weight: 400; color: var(--deep); margin-bottom: 10px; letter-spacing: -0.01em; }
+  .cap-card h3 em { color: var(--coral); font-style: italic; }
+  .cap-card p { font-size: 14px; color: var(--mute); line-height: 1.68; margin-bottom: 16px; }
+  .cap-list { list-style: none; }
+  .cap-list li { font-size: 13px; color: var(--indigo); padding: 5px 0 5px 20px; position: relative; }
+  .cap-list li::before { content: "→"; position: absolute; left: 0; color: var(--ocean); font-size: 12px; }
+  .cap-card .mono-tag { display: inline-block; font-family: "JetBrains Mono", monospace; font-size: 11.5px; color: var(--ocean); background: var(--foam); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line); margin: 2px 4px 2px 0; }
+
+  /* ===== Demo 区 ===== */
+  .demo { background: linear-gradient(180deg, var(--deep) 0%, var(--abyss) 100%); color: white; }
+  .demo .section-title { color: white; }
+  .demo .section-subtitle { color: var(--mist); }
+  .demo .eyebrow-section { color: var(--coral); }
+  .demo-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 54px; align-items: center; }
+  @media (max-width: 900px) { .demo-grid { grid-template-columns: 1fr; gap: 34px; } }
+  .demo-img-wrap { position: relative; border-radius: var(--radius-lg); overflow: hidden; box-shadow: 0 40px 80px -30px rgba(0,0,0,0.6); }
+  .demo-img-wrap img { display: block; width: 100%; background: white; }
+  .demo-img-wrap .float {
+    position: absolute; left: 18px; bottom: 18px;
+    background: rgba(4,17,31,0.82); backdrop-filter: blur(10px);
+    color: white; padding: 10px 16px; border-radius: 10px;
+    font-size: 12.5px; font-weight: 500; border: 1px solid rgba(255,255,255,0.15);
+  }
+  .demo-img-wrap .float .v { display: block; font-family: "JetBrains Mono", monospace; color: var(--coral); font-size: 13px; margin-top: 2px; }
+  .demo-text h3 { font-family: "Instrument Serif", serif; font-size: 30px; font-weight: 400; color: white; margin-bottom: 16px; }
+  .demo-text h3 em { color: var(--coral); font-style: italic; }
+  .demo-text p { font-size: 14.5px; color: var(--mist); line-height: 1.7; margin-bottom: 22px; }
+  .demo-text ul { list-style: none; }
+  .demo-text li { font-size: 13.5px; color: #cfe0ee; padding: 7px 0 7px 22px; position: relative; }
+  .demo-text li::before { content: "▸"; position: absolute; left: 0; color: var(--coral); }
+  .demo-text li b { color: white; font-weight: 600; }
+
+  /* ===== 截图 ===== */
+  .shots { background: var(--snow); }
+  .shots-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 820px) { .shots-grid { grid-template-columns: 1fr; } }
+  .shot { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow-sm); background: white; }
+  .shot img { display: block; width: 100%; }
+  .shot .cap { padding: 12px 16px; font-size: 12.5px; color: var(--mute); border-top: 1px solid var(--line); }
+  .shot .cap b { color: var(--deep); }
+
+  /* ===== Numbers ===== */
+  .metrics { background: var(--foam); }
+  .metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 20px; }
+  @media (max-width: 860px) { .metrics-grid { grid-template-columns: 1fr; } }
+  .metric { background: white; border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 34px 30px; box-shadow: var(--shadow-sm); }
+  .metric .v { font-family: "Instrument Serif", serif; font-style: italic; font-size: 58px; line-height: 1; color: var(--coral); letter-spacing: -0.03em; }
+  .metric .v .small { font-size: 22px; color: var(--mid); }
+  .metric .l { font-size: 15px; font-weight: 600; color: var(--deep); margin-top: 12px; }
+  .metric .d { font-size: 13px; color: var(--mute); margin-top: 6px; line-height: 1.6; }
+
+  /* ===== 快速开始 ===== */
+  .quick { background: var(--snow); }
+  .quick-grid { display: grid; grid-template-columns: 1fr 1.25fr; gap: 48px; align-items: start; }
+  @media (max-width: 900px) { .quick-grid { grid-template-columns: 1fr; gap: 28px; } }
+  .quick-steps { list-style: none; counter-reset: qs; }
+  .quick-steps li { counter-increment: qs; position: relative; padding: 0 0 26px 46px; border-left: 1px solid var(--line); margin-left: 14px; }
+  .quick-steps li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  .quick-steps li::before {
+    content: counter(qs); position: absolute; left: -15px; top: -2px;
+    width: 30px; height: 30px; border-radius: 50%; background: var(--deep); color: white;
+    font-family: "JetBrains Mono", monospace; font-size: 13px; display: grid; place-items: center;
+  }
+  .quick-steps h4 { font-size: 15px; color: var(--deep); margin-bottom: 6px; }
+  .quick-steps p { font-size: 13.5px; color: var(--mute); line-height: 1.6; }
+  .code-block {
+    background: var(--abyss); border-radius: var(--radius); padding: 22px 24px; overflow-x: auto;
+    box-shadow: var(--shadow); border: 1px solid #14365e44;
+  }
+  .code-block .head { display: flex; gap: 7px; margin-bottom: 16px; }
+  .code-block .head i { width: 11px; height: 11px; border-radius: 50%; background: #2c4a63; display: block; }
+  .code-block .head i:first-child { background: #ff7d5c; } .code-block .head i:nth-child(2) { background: #ffc65c; } .code-block .head i:nth-child(3) { background: #5fd0a0; }
+  .code-block pre { font-family: "JetBrains Mono", monospace; font-size: 12.5px; line-height: 1.85; color: #cfe0ee; white-space: pre; }
+  .code-block .c { color: #5a7f9c; } .code-block .k { color: #ff9d7c; } .code-block .s { color: #7fd8b8; } .code-block .p { color: #8fb4d0; }
+
+  /* ===== Quote ===== */
+  .quote { background: var(--deep); }
+  .quote blockquote { font-family: "Instrument Serif", serif; font-style: italic; font-size: clamp(24px, 3vw, 36px); line-height: 1.45; color: white; max-width: 900px; letter-spacing: -0.01em; }
+  .quote cite { display: block; margin-top: 26px; font-style: normal; font-size: 13.5px; color: var(--mist); }
+
+  /* ===== CTA ===== */
+  .cta-end { background: linear-gradient(180deg, var(--deep) 0%, var(--abyss) 100%); text-align: center; padding: 120px 36px; }
+  .cta-end h2 { font-family: "Instrument Serif", serif; font-style: italic; font-size: clamp(34px, 5vw, 56px); color: white; margin-bottom: 16px; letter-spacing: -0.02em; }
+  .cta-end h2 em { color: var(--coral); }
+  .cta-end p { color: var(--mist); font-size: 17px; margin-bottom: 38px; }
+
+  /* ===== Footer ===== */
+  footer { background: var(--abyss); color: var(--mist); padding: 70px 36px 34px; }
+  .foot-top { max-width: var(--maxw); margin: 0 auto; display: grid; grid-template-columns: 1.7fr 1fr 1fr 1fr; gap: 44px; }
+  @media (max-width: 820px) { .foot-top { grid-template-columns: 1fr 1fr; gap: 34px; } }
+  footer h5 { color: white; font-size: 13px; font-weight: 600; margin-bottom: 16px; letter-spacing: 0.3px; display: flex; align-items: center; gap: 9px; }
+  footer a { display: block; color: var(--mist); font-size: 13px; padding: 4px 0; }
+  footer a:hover { color: var(--coral); }
+  .foot-brand p { font-size: 13px; line-height: 1.7; margin-top: 14px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 16px; }
+  .badge { font-family: "JetBrains Mono", monospace; font-size: 10.5px; color: var(--mist); border: 1px solid #14365e; padding: 3px 9px; border-radius: 6px; display: inline-flex; align-items: center; gap: 6px; }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: #5fd0a0; }
+  .copy { max-width: var(--maxw); margin: 54px auto 0; padding-top: 24px; border-top: 1px solid #14365e; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-size: 12px; color: #6d92ae; }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <div class="logo">
+      <div class="logo-mark">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M2 6 Q5 3 8 6 T14 6" stroke="white" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+          <path d="M2 10 Q5 7 8 10 T14 10" stroke="white" stroke-width="1.5" fill="none" stroke-linecap="round" opacity="0.6"/>
+        </svg>
+      </div>
+      Varen CAD
+    </div>
+    <div class="nav-links">
+      <a href="#flow">流程</a>
+      <a href="#caps">能力</a>
+      <a href="#demo">实测</a>
+      <a href="#quick">快速开始</a>
+      <a href="https://github.com/vanyu0710/aicad" target="_blank">GitHub ↗</a>
+      <a href="https://github.com/vanyu0710/aicad/blob/main/README.md" target="_blank" class="nav-cta">文档</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ===== Hero ===== -->
+<section class="hero">
+  <div class="wave wave-1"><svg viewBox="0 0 1440 90" preserveAspectRatio="none"><path d="M0,45 C240,90 480,0 720,45 C960,90 1200,0 1440,45 L1440,90 L0,90 Z" fill="rgba(255,255,255,0.5)"/></svg></div>
+  <div class="wave wave-2"><svg viewBox="0 0 1440 100" preserveAspectRatio="none"><path d="M0,50 C360,100 720,0 1080,50 C1260,75 1350,25 1440,50 L1440,100 L0,100 Z" fill="rgba(255,255,255,0.4)"/></svg></div>
+  <div class="wave wave-3"><svg viewBox="0 0 1440 110" preserveAspectRatio="none"><path d="M0,55 C240,110 480,0 720,55 C960,110 1200,0 1440,55 L1440,110 L0,110 Z" fill="rgba(255,255,255,0.3)"/></svg></div>
+  <div class="wave wave-4"><svg viewBox="0 0 1440 120" preserveAspectRatio="none"><path d="M0,60 C360,120 720,0 1080,60 C1260,90 1350,30 1440,60 L1440,120 L0,120 Z" fill="rgba(255,255,255,0.2)"/></svg></div>
+  <div class="wave wave-5"></div>
+
+  <div class="bubble b1"></div><div class="bubble b2"></div><div class="bubble b3"></div><div class="bubble b4"></div><div class="bubble b5"></div>
+  <div class="fish f1"></div><div class="fish f2"></div><div class="fish f3"></div>
+
+  <div class="hero-content">
+    <div class="status-chip">
+      <span class="pulse"></span>
+      <span class="v">v0.14</span> &nbsp;·&nbsp; 394 tests pass &nbsp;·&nbsp; MechKernel 内核驱动
+    </div>
+
+    <h1>
+      <em>把一句话</em>，<br>
+      变成<span class="accent">可制造的三维模型</span>
+    </h1>
+
+    <p class="subtitle">
+      Varen CAD 是面向机械工程师的 AI 建模 IDE。AI agent 像工程师一样<em class="serif" style="color: var(--ocean);">逐步自主建模</em>——
+      你随时看进度、改参数、确认关键决策，交付参数化 BRep 零件与多实体装配 STEP。
+    </p>
+
+    <span class="eyebrow">对话式 harness &nbsp;·&nbsp; 真实 OCC 几何 &nbsp;·&nbsp; 可重放特征历史</span>
+
+    <div class="hero-cta">
+      <a href="https://github.com/vanyu0710/aicad" class="btn btn-primary">★ Star on GitHub</a>
+      <a href="#demo" class="btn btn-ghost">看实测结果 →</a>
+    </div>
+
+    <!-- 真实 LLM 跑出的 1:100 变速箱装配（非概念图） -->
+    <div class="hero-shot">
+      <img src="images/varen-gearbox-assembly.png" alt="Varen CAD agent 自主设计的三级齿轮减速器装配四视图" loading="lazy"/>
+      <div class="cap">
+        <span>AI agent 自主设计的 1:100 三级齿轮减速器装配</span>
+        <span class="mono">14 parts · assembly STEP · 4-view</span>
+      </div>
+    </div>
+
+    <div class="hero-mini-stats">
+      <div class="mini-stat"><span class="v">14</span><span class="l">零件一次跑通</span></div>
+      <div class="mini-stat"><span class="v">91</span><span class="l">对干涉全查</span></div>
+      <div class="mini-stat"><span class="v">0</span><span class="l">未豁免干涉</span></div>
+      <div class="mini-stat"><span class="v">394</span><span class="l">后端测试</span></div>
+    </div>
+  </div>
+
+  <div class="scroll-hint">↓ SCROLL</div>
+</section>
+
+
+<!-- ===== 流程 ===== -->
+<section class="flow fadein" id="flow">
+  <div class="section-inner">
+    <span class="eyebrow-section">Workflow</span>
+    <h2 class="section-title">像给同事派活一样，<em>描述你要的零件</em></h2>
+    <p class="section-subtitle">
+      不是在对话框里等一个答案。Varen 的 agent 先调研、再提问、然后给出零件清单等你批准——
+      批准后才开始逐件建模，边做边给你看。
+    </p>
+    <div class="flow-timeline">
+      <div class="flow-step">
+        <div class="flow-num">01</div>
+        <h3><em>调研</em> · Research</h3>
+        <p>工程计算先行：传动比分级、齿轮副中心距、轴径初估、壁厚经验式</p>
+        <span class="code">design_calculate</span>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">02</div>
+        <h3><em>提问</em> · Clarify</h3>
+        <p>关键约束不明确时弹结构化问题卡片（单选/多选/文本）</p>
+        <span class="code">ask_user</span>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">03</div>
+        <h3><em>计划</em> · Plan</h3>
+        <p>给出零件清单（BOM）+ 位姿 + 建模步骤，等你批准</p>
+        <span class="code">propose_plan → 批准</span>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">04</div>
+        <h3><em>交付</em> · Deliver</h3>
+        <p>逐件建模归档，收尾出装配 STEP + 干涉报告 + 预览图</p>
+        <span class="code">export_assembly</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ===== 能力 ===== -->
+<section class="caps fadein" id="caps">
+  <div class="section-inner">
+    <span class="eyebrow-section">Capabilities</span>
+    <h2 class="section-title">模型写代码，<em>几何归内核</em></h2>
+    <p class="section-subtitle">
+      复杂零件用脚本一次成型，但脚本只能调用内核公开 op——既拿到表达力，又守住"AI 不直接操纵几何"的边界。
+    </p>
+
+    <div class="caps-grid">
+      <div class="cap-card">
+        <div class="cap-ico">⚙️</div>
+        <h3><em>代码通道</em> run_build_script</h3>
+        <p>箱体、阶梯轴、孔阵列这类多特征零件，模型写一段脚本一次完成，不用几十次原子 op 往返。</p>
+        <ul class="cap-list">
+          <li>脚本命名空间只暴露内核门面 <span class="mono-tag">k</span> + <span class="mono-tag">math</span></li>
+          <li>AST 白名单：禁 import build123d / 禁下划线属性</li>
+          <li>执行前检查点，失败整体回滚并回传原始 traceback</li>
+          <li>脚本内 op 照常进特征历史 → 可参数重放</li>
+        </ul>
+      </div>
+
+      <div class="cap-card">
+        <div class="cap-ico">🔩</div>
+        <h3><em>真实内核</em> MechKernel</h3>
+        <p>背后是真实 OpenCascade 7.9.3 几何（Build123d），不是网格近似，也不是"假装建模"。</p>
+        <ul class="cap-list">
+          <li>34 公开 op：草图 → 拉伸 → 布尔 → 孔 → 阵列 → 齿轮 → 选边选面</li>
+          <li><span class="mono-tag">make_gear</span> 真渐开线齿形，大齿数按阈值回退</li>
+          <li>每步 StepResult 结构化回读 + 几何证据</li>
+          <li>事务 undo/redo + 参数化重放</li>
+        </ul>
+      </div>
+
+      <div class="cap-card warm">
+        <div class="cap-ico">🧩</div>
+        <h3><em>装配交付</em> Assembly</h3>
+        <p>多零件按位姿组装成装配体，导出带具名产品节点的 XCAF 装配 STEP，并做全对干涉检查。</p>
+        <ul class="cap-list">
+          <li>项目零件库：版本化归档 + 位姿 manifest</li>
+          <li>多实体装配 STEP（每零件一个产品节点）</li>
+          <li>全对干涉 + 齿轮啮合区豁免表</li>
+          <li>分件着色四视角预览 + 交付报告</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ===== 实测 ===== -->
+<section class="demo fadein" id="demo">
+  <div class="section-inner">
+    <span class="eyebrow-section">Real run</span>
+    <h2 class="section-title">一句话，<em>跑出一台变速箱</em></h2>
+    <p class="section-subtitle">
+      输入"给我设计个 1:100 的变速箱"——agent 自主调研、出 BOM 计划、逐件建模、组装交付，全程无人值守。
+    </p>
+    <div class="demo-grid">
+      <div class="demo-img-wrap">
+        <img src="images/varen-gearbox-assembly.png" alt="三级齿轮减速器装配四视图" loading="lazy"/>
+        <div class="float">
+          AI 自主设计的三级减速器
+          <span class="v">14 parts · 769s · 0 未豁免干涉</span>
+        </div>
+      </div>
+      <div class="demo-text">
+        <h3>从一句话，到<em>可交付装配</em></h3>
+        <p>真实 LLM（deepseek-v4.1-flash）驱动的完整流程：调研 → 提问 → BOM → 批准 → 逐件建模 → 装配导出。</p>
+        <ul>
+          <li><b>11 项 BOM 计划</b>，每件带关键参数与装配位姿（数值来自调研计算）</li>
+          <li><b>14 个零件归档</b>：6 齿轮（真渐开线）+ 4 阶梯轴 + 箱体，逐件过复检门</li>
+          <li><b>几何自检</b>发现第 2 级大齿轮与输出轴重叠 2mm，<b>主动修订计划</b>重做 3 件</li>
+          <li><b>91 对干涉全查</b>，21 对齿轮啮合区按豁免表放行，<b>未豁免干涉 0</b></li>
+          <li><b>交付五件套</b>：装配 STEP + 分零件 STEP/STL + 四视角预览 + 干涉报告 + BOM 表</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ===== 截图 ===== -->
+<section class="shots fadein">
+  <div class="section-inner">
+    <span class="eyebrow-section">Interface</span>
+    <h2 class="section-title">三栏式 IDE，<em>为工程师的审视习惯</em>而做</h2>
+    <p class="section-subtitle">左侧 3D 视口实时渲染内核几何，中间对话式 agent 会话，底部结构抽屉放特征树 / 属性 / 评审 / 过程 / 导出。</p>
+    <div class="shots-grid">
+      <div class="shot">
+        <img src="images/varen-startup.jpg" alt="Varen CAD 启动页" loading="lazy"/>
+        <div class="cap"><b>启动页</b> · 深蓝夜空品牌主页，后端连接状态与最近项目一目了然</div>
+      </div>
+      <div class="shot">
+        <img src="images/varen-workspace-chat-snapshot.jpg" alt="Varen CAD 工作台与 AI 助手会话" loading="lazy"/>
+        <div class="cap"><b>工作台</b> · 3D 视口 + 对话式 AI 助手，每步工具卡片与几何快照留在会话流里</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ===== 数字 ===== -->
+<section class="metrics fadein">
+  <div class="section-inner">
+    <span class="eyebrow-section">Numbers</span>
+    <h2 class="section-title">不是概念图，<em>是跑出来的</em></h2>
+    <div class="metrics-grid">
+      <div class="metric">
+        <div class="v">14<span class="small"> 件</span></div>
+        <div class="l">一次任务全部归档</div>
+        <div class="d">6 齿轮 + 4 轴 + 箱体，每件过单实体与特征契约双复检门</div>
+      </div>
+      <div class="metric">
+        <div class="v">394<span class="small"> 测试</span></div>
+        <div class="l">后端全绿 · 前端 61</div>
+        <div class="d">内核 391 / 后端 394 / 前端 61，含真实 worker 端到端 E2E</div>
+      </div>
+      <div class="metric">
+        <div class="v">0<span class="small"> 未豁免</span></div>
+        <div class="l">装配干涉</div>
+        <div class="d">91 对全查，啮合区按设计意图豁免，其余零残留</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ===== 快速开始 ===== -->
+<section class="quick fadein" id="quick">
+  <div class="section-inner">
+    <span class="eyebrow-section">Quick start</span>
+    <h2 class="section-title">三步，<em>跑起来</em></h2>
+    <p class="section-subtitle">Windows 桌面启动，无需 Docker。首次运行会自动构建前端并创建快捷方式。</p>
+    <div class="quick-grid">
+      <ol class="quick-steps">
+        <li>
+          <h4>装依赖</h4>
+          <p>Python 3.12 venv + 内核仓（真实 OCC 几何依赖 build123d / cadquery-ocp）。</p>
+        </li>
+        <li>
+          <h4>配模型</h4>
+          <p>在 <span class="mono">.env</span> 填入 planner 模型（OpenAI 兼容端点即可），或在工作台设置中心配置。</p>
+        </li>
+        <li>
+          <h4>启动并下指令</h4>
+          <p>双击桌面快捷方式，在右侧 AI 助手输入"做一块 120×120×12 法兰，中心 Ø30 通孔"。</p>
+        </li>
+      </ol>
+      <div class="code-block">
+        <div class="head"><i></i><i></i><i></i></div>
+<pre><span class="c"># 1. 克隆两个仓库（IDE + 内核）</span>
+git clone https://github.com/vanyu0710/aicad
+git clone https://github.com/vanyu0710/mechcad-kernel
+
+<span class="c"># 2. Python 3.12 虚拟环境</span>
+<span class="k">cd</span> aicad
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+
+<span class="c"># 3. 配置 planner 模型（任选 OpenAI 兼容端点）</span>
+<span class="k">echo</span> MECHCAD_PLANNER_MODEL=your-model &gt;&gt; .env
+<span class="k">echo</span> MECHCAD_PLANNER_BASE_URL=https://your-endpoint/v1 &gt;&gt; .env
+<span class="k">echo</span> MECHCAD_PLANNER_API_KEY=sk-... &gt;&gt; .env
+
+<span class="c"># 4. 产品模式启动（自动构建前端 + 托盘）</span>
+.\start-mechcad-pro.cmd
+<span class="c"># → http://127.0.0.1:8001/</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ===== Quote ===== -->
+<section class="quote fadein">
+  <div class="section-inner">
+    <blockquote>
+      "真正的 CAD agent，不是一次性吐出模型的魔法——
+      而是<em style="color: var(--coral);">先调研、再提问、出计划等你点头，然后一件一件做给你看</em>。"
+    </blockquote>
+    <cite><b>Varen CAD 设计原则</b> · 几何主权归内核 · 交付前必复检 · 不造假</cite>
+  </div>
+</section>
+
+
+<!-- ===== CTA ===== -->
+<section class="cta-end fadein">
+  <div class="section-inner">
+    <h2>把草图，变成<em>可制造</em>的模型</h2>
+    <p>CAD 领域的 Codex —— 让 AI 拥有工程师的双手与纪律。</p>
+    <div class="hero-cta">
+      <a href="https://github.com/vanyu0710/aicad" class="btn btn-primary">★ Star on GitHub</a>
+      <a href="https://github.com/vanyu0710/aicad/blob/main/README.md" class="btn btn-ghost">阅读文档</a>
+    </div>
+  </div>
+</section>
+
+
+<!-- ===== Footer ===== -->
+<footer>
+  <div class="foot-top">
+    <div class="brand foot-brand">
+      <h5>
+        <div class="logo-mark">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M2 6 Q5 3 8 6 T14 6" stroke="white" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+            <path d="M2 10 Q5 7 8 10 T14 10" stroke="white" stroke-width="1.5" fill="none" stroke-linecap="round" opacity="0.6"/>
+          </svg>
+        </div>
+        Varen CAD
+      </h5>
+      <p>面向机械工程师的 AI 建模 IDE。由 <a href="https://github.com/vanyu0710/mechcad-kernel" target="_blank">MechKernel</a> 参数化内核驱动。</p>
+      <div class="badges">
+        <span class="badge"><span class="dot"></span> 394 tests passing</span>
+        <span class="badge">Python 3.12</span>
+        <span class="badge">React + Three.js</span>
+        <span class="badge">OCC 7.9.3</span>
+      </div>
+    </div>
+    <div>
+      <h5>Product</h5>
+      <a href="#flow">工作流程</a>
+      <a href="#caps">能力</a>
+      <a href="#demo">实测</a>
+      <a href="#quick">快速开始</a>
+    </div>
+    <div>
+      <h5>Resources</h5>
+      <a href="https://github.com/vanyu0710/aicad/blob/main/README.md" target="_blank">README</a>
+      <a href="https://github.com/vanyu0710/aicad/blob/main/ARCHITECTURE.md" target="_blank">架构</a>
+      <a href="https://github.com/vanyu0710/aicad/blob/main/docs/USER_GUIDE.md" target="_blank">用户指南</a>
+      <a href="https://github.com/vanyu0710/aicad/blob/main/CHANGELOG.md" target="_blank">更新日志</a>
+    </div>
+    <div>
+      <h5>Kernel</h5>
+      <a href="https://vanyu0710.github.io/mechcad-kernel/" target="_blank">内核落地页</a>
+      <a href="https://github.com/vanyu0710/mechcad-kernel" target="_blank">mechcad-kernel</a>
+      <a href="https://github.com/vanyu0710/aicad/issues" target="_blank">Issues</a>
+    </div>
+  </div>
+  <div class="copy">
+    <span>© 2026 Varen CAD · 依赖内核 MechKernel（AGPL-3.0-or-later）</span>
+    <span>Built with FastAPI + React + Three.js + OpenCascade 7.9.3</span>
+  </div>
+</footer>
+
+
+<script>
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => { if (entry.isIntersecting) entry.target.classList.add('visible'); });
+  }, { threshold: 0, rootMargin: "0px 0px 50% 0px" });
+  document.querySelectorAll('.fadein').forEach(el => observer.observe(el));
+  setTimeout(() => {
+    document.querySelectorAll('.fadein:not(.visible)').forEach(el => el.classList.add('visible'));
+  }, 1500);
+
+  const nav = document.querySelector('.nav');
+  window.addEventListener('scroll', () => {
+    nav.style.background = window.scrollY > 60 ? 'rgba(246,249,252,0.92)' : 'rgba(246,249,252,0.78)';
+  });
+</script>
+
+</body>
+</html>

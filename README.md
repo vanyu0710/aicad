@@ -9,10 +9,22 @@
 > 并保留参数化特征历史、精确 BRep 几何与可重放历史。
 
 <p align="center">
+  <b><a href="https://vanyu0710.github.io/aicad/">🌊 产品落地页</a></b> &nbsp;·&nbsp;
+  <a href="https://vanyu0710.github.io/mechcad-kernel/">内核文档</a> &nbsp;·&nbsp;
+  <a href="docs/USER_GUIDE.md">用户指南</a>
+</p>
+
+<p align="center">
+  一句话跑出的三级齿轮减速器装配（AI agent 自主设计，非概念图）：<br/>
+  <img src="docs/images/varen-gearbox-assembly.png" alt="Varen CAD agent 自主设计的 1:100 三级齿轮减速器装配四视图" width="820"/>
+</p>
+
+<p align="center">
   <img alt="Status" src="https://img.shields.io/badge/status-harness%20mainline-blue" />
   <img alt="Python" src="https://img.shields.io/badge/python-3.12-blue" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-394%20passing-brightgreen" />
   <img alt="UI" src="https://img.shields.io/badge/UI-React%20%2B%20Three.js-61dafb" />
-  <img alt="Kernel" src="https://img.shields.io/badge/CAD%20kernel-MechKernel%20(Build123d)-green" />
+  <img alt="CAD kernel" src="https://img.shields.io/badge/CAD%20kernel-MechKernel%20(Build123d)-green" />
 </p>
 
 > ⚠️ **License**：本项目仓库当前未附带 LICENSE 文件；所依赖的 CAD 内核
