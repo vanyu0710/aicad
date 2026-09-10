@@ -34,10 +34,10 @@ type ViewStatus =
   | "stl_loaded"
   | "load_failed";
 
-// 装配分色板（按件轮换）
-const ASSEMBLY_COLORS = [0x5f746c, 0x4a6f8f, 0x7a6a4f, 0x5c7a5c, 0x6f5a78, 0x4f7a78, 0x7a5f5f, 0x5a6f7a];
-// v0.14.1 渲染升级常量
-const STEEL = { metalness: 0.42, roughness: 0.38, clearcoat: 0.25, envMapIntensity: 0.9 };
+// 装配分色板（按件轮换）：CAD 工程色，饱和度提高避免"发灰发粉"
+const ASSEMBLY_COLORS = [0x9fb4c4, 0x4f86b8, 0xc99a4b, 0x59a06f, 0x8f6fb0, 0x4fa09a, 0xb06f6f, 0x6f7fb0];
+// v0.14.1 渲染升级常量（首版 clearcoat+高 env 强度导致泛白洗色，收敛为扎实钢件）
+const STEEL = { metalness: 0.32, roughness: 0.52, clearcoat: 0.12, envMapIntensity: 0.55 };
 const EDGE_COLOR = 0xa8bfd4;
 const EDGE_OPACITY = 0.35;
 const EDGE_MAX_VERTICES = 300000; // 超过则跳过棱边线（47MB 齿轮 STL 的三角网会卡死）
@@ -74,7 +74,7 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel, mode
     renderer.setPixelRatio(window.devicePixelRatio || 1);
     renderer.setClearColor(0x0a1c36, 1);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.1;
+    renderer.toneMappingExposure = 0.95;
     mount.innerHTML = "";
     mount.appendChild(renderer.domElement);
 
