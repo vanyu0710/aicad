@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { useT } from "./i18n";
 
 export type AssemblyModel = {
@@ -35,6 +36,11 @@ type ViewStatus =
 
 // 装配分色板（按件轮换）
 const ASSEMBLY_COLORS = [0x5f746c, 0x4a6f8f, 0x7a6a4f, 0x5c7a5c, 0x6f5a78, 0x4f7a78, 0x7a5f5f, 0x5a6f7a];
+// v0.14.1 渲染升级常量
+const STEEL = { metalness: 0.42, roughness: 0.38, clearcoat: 0.25, envMapIntensity: 0.9 };
+const EDGE_COLOR = 0xa8bfd4;
+const EDGE_OPACITY = 0.35;
+const EDGE_MAX_VERTICES = 300000; // 超过则跳过棱边线（47MB 齿轮 STL 的三角网会卡死）
 
 export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel, models, hidden, selected }: Props) {
   const t = useT();
@@ -67,21 +73,29 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel, mode
     renderer.setSize(width, height);
     renderer.setPixelRatio(window.devicePixelRatio || 1);
     renderer.setClearColor(0x0a1c36, 1);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
     mount.innerHTML = "";
     mount.appendChild(renderer.domElement);
+
+    // v0.14.1 环境光照：RoomEnvironment 经 PMREM 生成反射环境，钢件质感的关键
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = envTexture;
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controlsRef.current = controls;
 
-    const ambient = new THREE.AmbientLight(0xdce6f0, 1.4);
+    // env 已提供环境填充光，直射光降为塑形主光 + 冷色轮廓光
+    const ambient = new THREE.AmbientLight(0xdce6f0, 0.45);
     scene.add(ambient);
 
-    const dir1 = new THREE.DirectionalLight(0xbfe6f5, 1.15);
+    const dir1 = new THREE.DirectionalLight(0xbfe6f5, 1.3);
     dir1.position.set(90, 140, 90);
     scene.add(dir1);
 
-    const dir2 = new THREE.DirectionalLight(0x38c3e8, 0.5);
+    const dir2 = new THREE.DirectionalLight(0x38c3e8, 0.55);
     dir2.position.set(-80, 60, -60);
     scene.add(dir2);
 
@@ -140,7 +154,43 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel, mode
     const clearModel = () => {
       if (modelRef.current) {
         scene.remove(modelRef.current);
+        // v0.14.1 内存治理：释放 geometry/材质/边线，避免装配模式反复切换泄漏
+        modelRef.current.traverse((child) => {
+          const mesh = child as THREE.Mesh;
+          if (mesh.geometry) {
+            mesh.geometry.dispose();
+          }
+          if (mesh.material) {
+            (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((material) => material.dispose());
+          }
+        });
         modelRef.current = null;
+      }
+    };
+
+    const makeSteelMaterial = (color: number) => {
+      const material = new THREE.MeshPhysicalMaterial({ color, ...STEEL });
+      material.wireframe = viewMode === "wireframe";
+      return material;
+    };
+
+    // CAD 棱边线：STL 面片间夹角小（平面共面/曲面细密）会被阈值滤掉，
+    // 只留真实特征棱线；超大网格跳过防卡顿。挂到 mesh.userData.edges 随显隐联动。
+    const attachEdgeLines = (mesh: THREE.Mesh) => {
+      const position = mesh.geometry?.getAttribute?.("position");
+      if (!position || position.count > EDGE_MAX_VERTICES) {
+        return;
+      }
+      try {
+        const edges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(mesh.geometry, 24),
+          new THREE.LineBasicMaterial({ color: EDGE_COLOR, transparent: true, opacity: EDGE_OPACITY }),
+        );
+        edges.userData.isEdgeHelper = true;
+        mesh.add(edges);
+        mesh.userData.edges = edges;
+      } catch {
+        // 边线失败不影响主体渲染
       }
     };
 
@@ -155,14 +205,9 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel, mode
             const entry = models[index];
             const geometry = await new STLLoader().loadAsync(entry.url);
             geometry.computeBoundingBox();
-            const material = new THREE.MeshStandardMaterial({
-              color: ASSEMBLY_COLORS[index % ASSEMBLY_COLORS.length],
-              metalness: 0.08,
-              roughness: 0.72,
-            });
-            material.wireframe = viewMode === "wireframe";
-            const mesh = new THREE.Mesh(geometry, material);
+            const mesh = new THREE.Mesh(geometry, makeSteelMaterial(ASSEMBLY_COLORS[index % ASSEMBLY_COLORS.length]));
             mesh.userData.partName = entry.name;
+            attachEdgeLines(mesh);
             const position = entry.position;
             if (Array.isArray(position) && position.length === 3) {
               mesh.position.set(position[0], position[1], position[2]);
@@ -207,9 +252,8 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel, mode
           const geometry = await new STLLoader().loadAsync(stlUrl);
           geometry.computeBoundingBox();
           geometry.center();
-          const material = new THREE.MeshStandardMaterial({ color: 0x5f746c, metalness: 0.08, roughness: 0.72 });
-          material.wireframe = viewMode === "wireframe";
-          const mesh = new THREE.Mesh(geometry, material);
+          const mesh = new THREE.Mesh(geometry, makeSteelMaterial(0x6f8a83));
+          attachEdgeLines(mesh);
           modelRef.current = mesh;
           scene.add(mesh);
           fitCamera(mesh);
@@ -240,6 +284,8 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel, mode
       window.removeEventListener("resize", onResize);
       window.cancelAnimationFrame(frameId);
       controls.dispose();
+      pmrem.dispose();
+      envTexture.dispose();
       renderer.dispose();
       mount.innerHTML = "";
       cameraRef.current = null;
@@ -249,7 +295,7 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel, mode
     };
   }, [loaderKey, objUrl, stlUrl, modelsKey, viewMode]);
 
-  // v0.14 F2a：装配显隐 + 点选高亮（不重载，只改材质/可见性）
+  // v0.14 F2a：装配显隐 + 点选高亮（不重载，只改材质/可见性；边线随父件自动隐藏）
   useEffect(() => {
     const root = modelRef.current;
     if (!root) {
@@ -257,15 +303,17 @@ export default function Viewport({ objUrl, stlUrl, breadcrumb, statusLabel, mode
     }
     root.traverse((child) => {
       const mesh = child as THREE.Mesh;
-      if (!mesh.isMesh || !mesh.userData.partName) {
+      if (!mesh.isMesh || !mesh.userData.partName || mesh.userData.isEdgeHelper) {
         return;
       }
       mesh.visible = !(hidden || []).includes(String(mesh.userData.partName));
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const isSelected = String(mesh.userData.partName) === (selected || "");
       materials.forEach((material) => {
-        const standard = material as THREE.MeshStandardMaterial;
-        if (standard && "emissive" in standard) {
-          standard.emissive.setHex(String(mesh.userData.partName) === (selected || "") ? 0x3fd0c9 : 0x000000);
+        const physical = material as THREE.MeshPhysicalMaterial;
+        if (physical && "emissive" in physical) {
+          physical.emissive.setHex(isSelected ? 0x2fd8cf : 0x000000);
+          physical.emissiveIntensity = isSelected ? 0.55 : 1;
         }
       });
     });
