@@ -4,6 +4,7 @@ import ClarificationPanel from "../ClarificationPanel";
 import { API_ROOT as apiRoot, type Approval, type PlanState, type PlanStep } from "../api";
 import { useAppStore, type ChatEntry } from "../store";
 import { useT } from "../i18n";
+import { translateNarrative } from "../kernelNarrative";
 
 type Props = {
   chat: ChatEntry[];
@@ -147,7 +148,7 @@ export default function ChatColumn({
                     <span className="chat-tool-op">{card.autofix ? `${card.op} ·fix` : card.op}</span>
                     {card.argsPreview && <code className="chat-tool-args">{card.argsPreview}</code>}
                     {(card.summary || card.message) && (
-                      <span className="chat-tool-summary">{card.summary || card.message}</span>
+                      <span className="chat-tool-summary">{translateNarrative(card.summary || card.message || "")}</span>
                     )}
                   </div>
                 ))}

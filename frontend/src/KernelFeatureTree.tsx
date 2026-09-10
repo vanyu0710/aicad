@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { KernelFeatureData } from "./api";
+import { useT } from "./i18n";
 
 type Props = {
   opHistory: Array<Record<string, unknown>>;
@@ -16,6 +17,7 @@ type Row = { id: string; label: string; detail: string; state: string; depth: nu
  * 取代旧 FeatureTree 的 FeatureV3 数据源；旧组件保留但不再使用。
  */
 export default function KernelFeatureTree({ opHistory, nodes, selectedFeatureId, onSelectFeature, onDeleteFeature }: Props) {
+  const t = useT();
   const rows = useMemo<Row[]>(() => {
     const parentOf: Record<string, string | null> = {};
     for (const [id, node] of Object.entries(nodes)) {
@@ -46,7 +48,7 @@ export default function KernelFeatureTree({ opHistory, nodes, selectedFeatureId,
   }, [opHistory, nodes]);
 
   if (rows.length === 0) {
-    return <div className="kernel-tree-empty">尚无特征</div>;
+    return <div className="kernel-tree-empty">{t("tree.empty")}</div>;
   }
 
   return (
@@ -64,7 +66,7 @@ export default function KernelFeatureTree({ opHistory, nodes, selectedFeatureId,
             <span className="kernel-tree-state">{row.state}</span>
           </button>
           {onDeleteFeature && (
-            <button type="button" className="kernel-tree-delete" title="删除此特征" onClick={() => onDeleteFeature(row.id)}>
+            <button type="button" className="kernel-tree-delete" title={t("kernel.tree.delete")} onClick={() => onDeleteFeature(row.id)}>
               ×
             </button>
           )}
