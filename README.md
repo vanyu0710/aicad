@@ -22,7 +22,7 @@
 <p align="center">
   <img alt="Status" src="https://img.shields.io/badge/status-harness%20mainline-blue" />
   <img alt="Python" src="https://img.shields.io/badge/python-3.12-blue" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-394%20passing-brightgreen" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-399%20passing-brightgreen" />
   <img alt="UI" src="https://img.shields.io/badge/UI-React%20%2B%20Three.js-61dafb" />
   <img alt="CAD kernel" src="https://img.shields.io/badge/CAD%20kernel-MechKernel%20(Build123d)-green" />
 </p>
