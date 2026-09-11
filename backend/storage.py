@@ -13,8 +13,9 @@ PROJECT_PARTS_ROOT = Path("work") / "project_parts"
 _SNAPSHOT_KIND = re.compile(r"^snapshot_s\d+$")
 # v0.12 逐件交付：part_{NN}_{slug}.step/.stl（slug 无路径分隔符/盘符，防目录穿越）
 _PART_KIND = re.compile(r"^part_\d{2}_[^/\\:\0]{1,64}\.(step|stl)$")
-# v0.14 零件库文件名：vNNN_slug.step/.stl / assembly_NNN(_report).step/.stl/.json
-_LIB_KIND = re.compile(r"^(v\d{3}_[^/\\:\0]{1,64}|assembly_\d{3})\.(step|stl|json)$")
+# v0.14 零件库文件名：vNNN_slug.step/.stl / assembly_NNN(.step/.stl) / assembly_NNN_report.json / assembly_NNN_render.png
+# v0.15.1：_report/_render 后缀与 png 此前被白名单漏掉，装配面板"交付报告"链接实际 404
+_LIB_KIND = re.compile(r"^(v\d{3}_[^/\\:\0]{1,64}|assembly_\d{3}(?:_report|_render)?)\.(step|stl|json|png)$")
 
 
 def project_parts_dir(project_id: str) -> Path:

@@ -1,3 +1,8 @@
+## v0.15.1-alpha - 装配交付报告 404 修复 + 补齐 kernelNarrative 模块
+
+- **零件库白名单修复（`backend/storage.py`）**：`_LIB_KIND` 漏了 `assembly_NNN_report.json` / `assembly_NNN_render.png` 两种 `export_assembly` 实际生成的文件名——装配面板"交付报告"链接一直 404（预览图字段同样不可达）。现放行 `_report`/`_render` 后缀与 `.png`；穿越防护不变（`assembly_001_x.json`、`.exe`、错误位数仍 404）。回归测试 `test_report_and_render_filenames_are_served`（aicad 413/413）。
+- **补提交 `frontend/src/kernelNarrative.ts`**：`3dfa379` 提交了引用它的 `ChatColumn.tsx` 却漏提交模块本身，克隆树上前端无法构建（工作区因文件存在而未暴露）。
+
 ## v0.14.0-alpha - F2a 装配视图：项目零件库 + 位姿 manifest + 装配 STEP/干涉/预览（对标设计文档 ASSEMBLY_F2_DESIGN）
 
 装配 = 已归档零件 + 位姿 manifest 之上的**视图**（设计 D1）：内核单几何契约零改动，零件改参走"单会话重做 + 重新归档"，manifest 更新即装配更新。

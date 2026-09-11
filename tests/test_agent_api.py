@@ -528,6 +528,23 @@ class AssemblyApiTests(unittest.TestCase):
             r = self.client.get(f"/api/projects/{self.project_id}/assembly/artifacts/{bad}")
             self.assertEqual(r.status_code, 404, bad)
 
+    def test_report_and_render_filenames_are_served(self) -> None:
+        """v0.15.1 回归：assembly_NNN_report.json / _render.png 必须过白名单（曾被漏掉致装配面板"交付报告"404）。"""
+        with tempfile.TemporaryDirectory() as td:
+            lib = Path(td) / self.project_id
+            lib.mkdir(parents=True)
+            (lib / "assembly_001.step").write_bytes(b"ISO-10303-21;")
+            (lib / "assembly_001_report.json").write_text('{"ok": true}', encoding="utf-8")
+            (lib / "assembly_001_render.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+            with patch("backend.storage.PROJECT_PARTS_ROOT", Path(td)):
+                for name in ("assembly_001.step", "assembly_001_report.json", "assembly_001_render.png"):
+                    r = self.client.get(f"/api/projects/{self.project_id}/assembly/artifacts/{name}")
+                    self.assertEqual(r.status_code, 200, name)
+                # 非法后缀/形状仍被拒
+                for bad in ("assembly_001_x.json", "assembly_01_report.json", "assembly_001_render.exe", "assembly_001_report.json.exe"):
+                    r = self.client.get(f"/api/projects/{self.project_id}/assembly/artifacts/{bad}")
+                    self.assertEqual(r.status_code, 404, bad)
+
     def test_commit_snapshot_carries_parts_and_assembly(self) -> None:
         from backend.schemas import ArtifactSet, AssemblySummary, DesignSnapshot, PartArtifact
         from backend.session import SessionStore
