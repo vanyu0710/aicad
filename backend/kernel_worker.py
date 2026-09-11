@@ -220,13 +220,17 @@ class KernelWorkerClient:
             "include_render": True,
         }, timeout=timeout)
 
-    def run_script(self, code: str, *, name: str = "", timeout: float | None = None) -> dict:
+    def run_script(self, code: str, *, name: str = "", failure_policy: str = "abort",
+                   timeout: float | None = None) -> dict:
         """v0.13 代码通道：模型编写的建模脚本经 kernel run_script 执行。
 
         沙箱边界在内核侧（mech_kernel/script_sandbox.py）：只许 import math、
         几何只能走 k 门面（kernel 公开 op）、执行前检查点、失败回滚并回传 traceback。
+        v2.16：failure_policy 默认 abort——脚本内任一 op 失败即整体回滚并返回
+        SCRIPT_OP_FAILED + failed_op，杜绝"脚本成功但内部 op 失败"的半成品交付。
         """
-        return self.request_ok("run_script", {"code": code, "name": name}, timeout=timeout)
+        return self.request_ok("run_script", {"code": code, "name": name,
+                                              "failure_policy": failure_policy}, timeout=timeout)
 
     # ---------------------------------------------------------- assembly (F2a)
     def export_assembly(self, parts: list[dict], out_step: str,

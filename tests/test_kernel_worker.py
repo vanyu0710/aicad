@@ -243,7 +243,8 @@ class KernelWorkerEditCommandsTests(unittest.TestCase):
         self.assertTrue(data["success"])
         sent = json.loads(proc.written_lines[0])
         self.assertEqual(sent["payload"],
-                         {"code": "k.extrude(sketch_name='s', depth=10)", "name": "housing"})
+                         {"code": "k.extrude(sketch_name='s', depth=10)", "name": "housing",
+                          "failure_policy": "abort"})
 
     def test_reset_rpc(self) -> None:
         """v0.12 逐件建模 RPC：cmd=reset，空 payload。"""

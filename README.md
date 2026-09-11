@@ -27,7 +27,7 @@
 <p align="center">
   <img alt="Status" src="https://img.shields.io/badge/status-harness%20mainline-blue" />
   <img alt="Python" src="https://img.shields.io/badge/python-3.12-blue" />
-  <img alt="Tests" src="https://img.shields.io/badge/tests-399%20passing-brightgreen" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-412%20passing-brightgreen" />
   <img alt="UI" src="https://img.shields.io/badge/UI-React%20%2B%20Three.js-61dafb" />
   <img alt="CAD kernel" src="https://img.shields.io/badge/CAD%20kernel-MechKernel%20(Build123d)-green" />
 </p>
@@ -176,6 +176,7 @@ npm run dev
     （多件按位姿叠加、可显隐/点选高亮），产物区出现装配面板。零件库在 `work/project_parts/{项目}/`（版本化 + manifest）。
 12. **会话持久化**：每项目一条 agent 会话（`work/agent_sessions/{id}.json`，含计划与零件库镜像），重开可回看；
     随时**暂停接管**（停止 agent → 手动编辑 → 发消息继续，新任务消息自动携带最新特征上下文）。
+13. **可靠性硬门控（v0.15 P0 修复）**：成功由程序判定不由文字判定——无产物/计划未完成/strict 验证不过/步数耗尽一律 ok=false + error_kind；finish_part 过 strict 几何验证才归档；工具结果结构化裁剪（不字符串化、数组截断附 total）；几何更新按指纹而非体积；run_build_script 任一 op 失败即整体回滚（SCRIPT_OP_FAILED + failed_op）
 
 ---
 

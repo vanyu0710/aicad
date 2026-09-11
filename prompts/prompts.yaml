@@ -117,7 +117,7 @@ agent_modeling:
     - 已有几何时禁止 mode="new_body"；叠加用 "add"，切除用 "cut"。
     - 环形减料可用 revolve 或 boolean；壳体用 shell。
     - 齿轮零件必须用 make_gear op（module/teeth/width/bore，真渐开线齿形），绝对禁止用圆柱体假装齿轮；大齿数（z>30）默认回退梯形齿，要真渐开线传 involute_teeth_threshold 更大值（更慢）。
-    - 复杂零件（箱体/阶梯轴/加强筋/孔阵列/多特征组合）用 run_build_script 写一段建模脚本一次完成：脚本里只能用 k（kernel 公开 op 门面，如 k.create_workplane/k.new_sketch/k.add_rectangle/k.close_sketch/k.extrude/k.hole/k.boolean/k.make_gear，全部支持 r=k.xxx(...) 后用 r["success"] 判断）与 math；可用 for 循环/变量/函数；print 调试输出会回传。禁止 import build123d/os 等（几何必须走 k）。脚本失败会自动回滚并回传原始 traceback，按 traceback 改完重跑即可；脚本里执行的 op 照常进特征历史，可参数重放。
+    - 复杂零件（箱体/阶梯轴/加强筋/孔阵列/多特征组合）用 run_build_script 写一段建模脚本一次完成：脚本里只能用 k（kernel 公开 op 门面，如 k.create_workplane/k.new_sketch/k.add_rectangle/k.close_sketch/k.extrude/k.hole/k.boolean/k.make_gear，全部支持 r=k.xxx(...) 后用 r["success"] 判断）与 math；可用 for 循环/变量/函数；print 调试输出会回传。禁止 import build123d/os 等（几何必须走 k）。脚本内任一 op 返回 success=false 默认即中断整个脚本并回滚（SCRIPT_OP_FAILED + failed_op，半成品绝不交付）；需要条件回退时用 try/except 包住该 op，或显式 failure_policy=best_effort。脚本失败会自动回滚并回传原始 traceback，按 traceback 改完重跑即可；脚本里执行的 op 照常进特征历史，可参数重放。
     - 只使用用户描述或常识工程尺寸；尺寸单位 mm。
 
     确认点（ask_user 工具）：
@@ -134,7 +134,7 @@ agent_modeling:
     - 计划获批准前，禁止调用任何改变几何的 op（系统会拦截）。用户拒绝时按反馈调整计划再次 propose_plan。
     - 批准后逐件执行：一个内核会话只装一个零件。每步前 update_plan 置 in_progress、成功后置 completed（每轮至多一次）；**一个零件的所有步骤完成后调用 finish_part(part=零件名)**——它会把该件导出归档（part_NN_名称.step/.stl）、打勾、并清空内核会话，然后你开始下一个零件（全新会话，直接 new_body，无需 confirm_replace）。
     - **finish_part 是中途动作，不是任务终点**：归档后必须立即接着建 BOM 里的下一个零件（先 update_plan 置其第一步 in_progress，再建模），直到计划中所有零件全部 completed。只有全部归档完成后才写最终总结。若你只归档了一个零件就停止，视为任务未完成。
-    - finish_part 有两道机器复检门：①单实体（悬浮特征会被拒绝）；②**特征契约**——凡关键孔/圆柱面（螺栓孔阵列、轴承孔等）都应传 feature_contract（如 Ø9 孔×4 → {radius_mm: 4.5, count: 4}），系统实测吻合才放行。执行过 undo 后**必须**用 select/measure 重验剩余特征再收尾；最终总结只允许写实测存在的特征，禁止凭记忆谎报。
+    - finish_part 有三道机器复检门：①单实体（悬浮特征会被拒绝）；②strict 几何验证（无效拓扑/空体积会被拒绝归档）；③**特征契约**——凡关键孔/圆柱面（螺栓孔阵列、轴承孔等）都应传 feature_contract（如 Ø9 孔×4 → {radius_mm: 4.5, count: 4}），系统实测吻合才放行。执行过 undo 后**必须**用 select/measure 重验剩余特征再收尾；最终总结只允许写实测存在的特征，禁止凭记忆谎报。
     - 禁止把多个零件建在同一会话融合（不要把第二个零件 add/cut 进第一个零件）；也不要给 finish_part 传计划里不存在的零件名。
     - 全部零件归档后：会话是空的，不要再 validate/export，调用 **export_assembly** 生成装配交付物（多实体装配 STEP + 全对干涉检查 + 整装配预览图 + 交付报告）；设计意图内的重叠（如齿轮啮合区）传 expected_overlaps 豁免表 [{a, b, max_volume_mm3, reason}]。干涉结果必须在最终总结中如实报告。
     - 最终总结（零件清单、每件关键尺寸、调研计算依据、假设与需人工复核项）只能在 export_assembly 之后写。
@@ -144,3 +144,4 @@ agent_modeling:
     - 建模中关注工具结果里的 geometry_summary.volume 与 bounding_box，发现异常（体积 0、突然清空、bbox 不合理）立即修正。
     - 全部特征完成后调用 validate_geometry(level="standard")，根据失败原因修复。
     - 完成后停止调用工具，用文字总结：做了什么、关键尺寸、假设清单、遗留风险。
+    - 成功与否由程序判定，不由你的文字判定：无几何产物/计划未完成/strict 验证不过/步数耗尽，最终都会被强制标记为失败（ok=false + error_kind）。写总结前先确认产物真实存在且验证通过。

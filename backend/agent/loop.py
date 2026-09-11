@@ -36,9 +36,44 @@ from backend.mechcad_ai.client import ApiCallError, ToolCall, ToolCallRound, too
 ToolFn = Callable[..., ToolCallRound]
 EmitFn = Callable[[str, str, dict[str, Any]], None]
 
-_VALUE_CLIP = 800
+_VALUE_MAX_ITEMS = 40
+_VALUE_MAX_STR = 1500
 _NARRATIVE_CLIP = 40
 _ARGS_PREVIEW_CLIP = 240
+
+
+def _compact_value(value: Any, *, max_items: int = _VALUE_MAX_ITEMS,
+                   max_str: int = _VALUE_MAX_STR) -> Any:
+    """结构化裁剪（v2.16 P0-2）：保持 JSON 形状，绝不字符串化、绝不按字符腰斩。
+
+    - dict/list 递归；列表截到 max_items 并附 `<key>_total` 提示被裁掉的规模；
+    - 只在**叶子字符串**上做长度截断（截断叶子不破坏 JSON 结构）；
+    - 其余标量原样保留。
+    这样 select/measure/query/feature_contract/bounding_box/solid_count/干涉报告
+    等结构化结果模型能直接解析，而不是收到一段可能被截断成非法 JSON 的字符串。
+    """
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if isinstance(item, list):
+                out[key] = [_compact_value(v, max_items=max_items, max_str=max_str)
+                            for v in item[:max_items]]
+                if len(item) > max_items:
+                    out[f"{key}_total"] = len(item)
+            else:
+                out[key] = _compact_value(item, max_items=max_items, max_str=max_str)
+        return out
+    if isinstance(value, list):
+        return [_compact_value(v, max_items=max_items, max_str=max_str)
+                for v in value[:max_items]]
+    if isinstance(value, str):
+        if len(value) > max_str:
+            return value[:max_str] + f"…(截断，原长 {len(value)} 字符)"
+        return value
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    text = str(value)
+    return text[:max_str] + "…" if len(text) > max_str else text
 
 
 @dataclass
@@ -53,6 +88,8 @@ class AgentLoopResult:
     artifacts: dict[str, str] = field(default_factory=dict)
     logs: list[str] = field(default_factory=list)
     error: str | None = None
+    # v2.16 可靠性门控（P0-1/P0-4）：失败的结构化类型，供报告与 API 判定
+    error_kind: str | None = None
     # v0.12 多零件逐件交付：finish_part 归档清单 + design_calculate 调研转录
     parts: list[dict[str, Any]] = field(default_factory=list)
     design_calculations: list[dict[str, Any]] = field(default_factory=list)
@@ -61,25 +98,29 @@ class AgentLoopResult:
 
 
 def _compact_step_result(data: dict[str, Any]) -> dict[str, Any]:
-    """给 LLM 的工具结果：保留决策所需字段，丢弃渲染/长叙事以控制上下文。"""
-    compact = {
+    """给 LLM 的工具结果：保留决策所需字段，丢弃渲染/长叙事以控制上下文。
+
+    v2.16（P0-2）：value 保持结构化 JSON（不再 json.dumps 成字符串、不再按字符
+    截断成非法 JSON）；geometry_validation 必须保留；渲染图不回喂但给可用标记。
+    """
+    compact: dict[str, Any] = {
         "success": data.get("success"),
         "feature_id": data.get("feature_id"),
         "error_kind": data.get("error_kind"),
         "error": data.get("error"),
-        "suggestion": data.get("suggestion"),
+        "suggestion": _compact_value(data.get("suggestion")) if data.get("suggestion") is not None else None,
         "warning": data.get("warning"),
         "hint": data.get("hint"),
         "narrative": data.get("narrative"),
         "geometry_summary": data.get("geometry_summary"),
+        "geometry_validation": data.get("geometry_validation"),
         "hints": data.get("hints") or [],
     }
-    value = data.get("value")
-    if value is not None:
-        rendered = json.dumps(value, ensure_ascii=False, default=str)
-        if len(rendered) > _VALUE_CLIP:
-            rendered = rendered[:_VALUE_CLIP] + "…(截断)"
-        compact["value"] = rendered
+    if data.get("value") is not None:
+        compact["value"] = _compact_value(data["value"])
+    if data.get("render_base64") or data.get("render_views_base64"):
+        compact["render_available"] = True
+        compact["render_hint"] = "如需视觉复核请调用 render/快照（图不随本结果回传）"
     return compact
 
 
@@ -361,6 +402,9 @@ def _run_build_script_tool() -> dict[str, Any]:
                 "print() 调试输出会回传。禁止 import build123d/文件/网络（几何主权归内核）。"
                 "失败自动回滚到执行前状态并回传原始 traceback；成功执行的 op 进特征历史，"
                 "与原子 op 一样可参数重放。零件建完后用 finish_part 归档。"
+                "v2.16 起：脚本内任一 op 失败（r['success']=False）默认即中断整个脚本并回滚，"
+                "返回 SCRIPT_OP_FAILED + failed_op（半成品绝不静默交付）；"
+                "需要条件回退时用 try/except 包住单个 op，或显式 failure_policy=best_effort。"
             ),
             "parameters": {
                 "type": "object",
@@ -369,6 +413,8 @@ def _run_build_script_tool() -> dict[str, Any]:
                              "description": "Python 脚本（只用 k 与 math；必须产生几何变化）"},
                     "reason": {"type": "string",
                                "description": "本脚本建哪个零件/达成什么目标（过程记录，可选）"},
+                    "failure_policy": {"type": "string", "enum": ["abort", "best_effort"],
+                                       "description": "默认 abort：任一 op 失败即整体回滚；best_effort：跑完但失败 op 会显式上报（success=false）"},
                 },
                 "required": ["code"],
             },
@@ -668,6 +714,8 @@ class AgentLoop:
         self._round_no = 0
         self._update_plan_this_round = False
         self._last_volume: float | None = None
+        # v2.16（P1-2）：几何更新指纹——体积相同但拓扑/bbox 变化也必须重导出快照
+        self._last_geometry_fingerprint: tuple | None = None
         # 批准后计划的本地副本（无 session 时 finish_part 打勾/广播用）
         self._approved_plan: dict[str, Any] | None = None
         # v0.13 当前零件的来源标记：ops | script（finish_part 记账后复位 ops）
@@ -914,6 +962,11 @@ class AgentLoop:
                     self._remember(self._execute_tool_call(tool_call, result))
         if self.step_count >= self.max_steps:
             result.stopped = True
+            # v2.16（P0-4）：撞上限绝不是成功——即使有部分产物也只算半成品。
+            result.ok = False
+            if result.error_kind is None:
+                result.error_kind = "MAX_STEPS_REACHED"
+                result.error = "达到步数上限，任务未完成（半成品不得判定为成功）。"
             self.logs.append("达到步数上限，停止执行。")
         if self.stop_event is not None and self.stop_event.is_set():
             result.stopped = True
@@ -1024,8 +1077,17 @@ class AgentLoop:
         if not data.get("success") or not volume:  # 无几何/空体积不触发导出
             return
         result.volume = float(volume)
-        if self._last_volume is not None and abs(float(volume) - self._last_volume) <= 1e-3:
+        # v2.16（P1-2）：体积只是指纹的一个分量——孔位移动/零件变形/删一孔加一孔
+        # 这类"体积不变但几何变了"的情况必须重新导出 STL + 快照，否则视觉反馈滞后。
+        fingerprint = (
+            round(float(volume), 6),
+            tuple(round(float(v), 6) for v in (summary.get("bounding_box") or [])),
+            summary.get("face_count"), summary.get("edge_count"),
+            summary.get("vertex_count"), summary.get("feature_count"),
+        )
+        if self._last_geometry_fingerprint == fingerprint:
             return
+        self._last_geometry_fingerprint = fingerprint
         self._last_volume = float(volume)
         stl_path = self.run_dir / "model.stl"
         try:
@@ -1087,9 +1149,43 @@ class AgentLoop:
         validation: dict[str, Any] = {}
         if result.volume:
             try:
-                validation = self.worker.execute("validate_geometry", {"level": "standard"})
+                validation = self.worker.execute("validate_geometry", {"level": "strict"})
             except Exception as exc:  # noqa: BLE001
                 self.logs.append(f"validate_geometry 失败: {type(exc).__name__}: {exc}")
+
+        # ---- v2.16 可靠性硬门控（P0-1/P0-4）----
+        # "成功"不再由模型文字决定：必须同时满足有真实产物、计划完成、几何验证通过。
+        # 半成品（有产物但未完成计划/验证不过）一律 ok=false。
+        if result.ok:
+            if result.stopped:
+                result.ok = False
+                result.error_kind = "MAX_STEPS_REACHED" if self.step_count >= self.max_steps else "STOPPED"
+                result.error = "agent 未正常收尾（步数耗尽或被停止），不得判定为成功。"
+            elif self._plan_approved and self._plan_has_pending():
+                result.ok = False
+                result.error_kind = "PLAN_INCOMPLETE"
+                result.error = "批准的计划仍有未完成步骤/零件，不得判定为成功。"
+            elif not result.volume and not result.parts and not result.assembly:
+                result.ok = False
+                result.error_kind = "NO_GEOMETRY"
+                result.error = "会话结束但没有产生任何有效几何/归档零件/装配交付，不得判定为成功。"
+            elif result.parts:
+                bad = [p.get("part") for p in result.parts
+                       if isinstance(p, dict) and not p.get("validation_passed")]
+                if bad:
+                    result.ok = False
+                    result.error_kind = "PART_VALIDATION_FAILED"
+                    result.error = f"以下零件未通过 strict 几何验证: {bad}"
+            elif result.volume:
+                # 单件任务：最终会话几何必须过 strict 验证
+                gv = validation.get("geometry_validation") or {}
+                if gv.get("valid") is not True or gv.get("status") != "valid":
+                    result.ok = False
+                    result.error_kind = "GEOMETRY_INVALID"
+                    result.error = ("最终几何 strict 验证未通过，不得判定为成功: "
+                                    f"{gv}")
+            # 纯装配续做（本 run 只 export_assembly，零件在既往 run 已验证归档）：
+            # 无会话几何可验证，assembly 即产物，不再叠加校验。
 
         step_path = self.run_dir / "model.step"
         if result.volume:
@@ -1098,6 +1194,10 @@ class AgentLoop:
                 result.artifacts["step"] = str(step_path)
             except Exception as exc:  # noqa: BLE001
                 self.logs.append(f"STEP 导出失败: {type(exc).__name__}: {exc}")
+                if result.ok:
+                    result.ok = False
+                    result.error_kind = "EXPORT_FAILED"
+                    result.error = f"最终 STEP 导出失败: {type(exc).__name__}: {exc}"
 
         report = {
             # 多零件任务以归档件数计完成度（末件 finish_part 后会话已清空）
@@ -1119,6 +1219,8 @@ class AgentLoop:
         }
         if result.error:
             report["error"] = result.error
+        if result.error_kind:
+            report["error_kind"] = result.error_kind
         report_path = self.run_dir / "execution_report.json"
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         result.artifacts["execution_report"] = str(report_path)
@@ -1283,8 +1385,12 @@ class AgentLoop:
         elif not code.strip():
             payload = {"success": False, "error_kind": "INVALID_REQUEST", "error": "code 不能为空。"}
         else:
+            failure_policy = str(args.get("failure_policy") or "abort")
+            if failure_policy not in ("abort", "best_effort"):
+                failure_policy = "abort"
             try:
-                data = self.worker.run_script(code, name=reason[:40] or "script")
+                data = self.worker.run_script(code, name=reason[:40] or "script",
+                                              failure_policy=failure_policy)
             except Exception as exc:  # noqa: BLE001 —— worker 超时/崩溃（如脚本死循环）
                 data = {"success": False, "error_kind": "WORKER_DEAD",
                         "error": f"worker 调用失败: {type(exc).__name__}: {exc}。"
@@ -1311,8 +1417,18 @@ class AgentLoop:
                 # 合成工具不走 _execute_tool_call，手动触发 STL 导出 + 快照
                 self._track_geometry(data, result)
             else:
-                payload["note"] = ("脚本执行失败，状态已回滚到执行前（无需清理）；"
-                                   "按 traceback 修正后重跑 run_build_script。")
+                suggestion = data.get("suggestion") if isinstance(data.get("suggestion"), dict) else {}
+                if isinstance(suggestion.get("failed_op"), dict):
+                    payload["failed_op"] = suggestion["failed_op"]
+                if isinstance(suggestion.get("failed_ops"), list):
+                    payload["failed_ops"] = suggestion["failed_ops"]
+                if data.get("error_kind") == "SCRIPT_OP_FAILED":
+                    payload["note"] = ("脚本内有 op 失败（abort 策略已整体回滚，半成品不会交付）。"
+                                       "按 failed_op 修正该步参数/顺序后重跑；"
+                                       "需要条件回退时用 try/except 包住单个 op。")
+                else:
+                    payload["note"] = ("脚本执行失败，状态已回滚到执行前（无需清理）；"
+                                       "按 traceback 修正后重跑 run_build_script。")
             result.logs.append(
                 f"run_build_script: success={payload['success']} ops={value.get('ops_executed') if data.get('success') else '-'}")
         return tool_result_message(tool_call, json.dumps(payload, ensure_ascii=False, default=str),
@@ -1584,6 +1700,21 @@ class AgentLoop:
                         "error": "特征契约校验未通过：" + "；".join(violations) +
                                  "。请补齐缺失特征（重新 hole/圆柱）或删除多余特征后重试 finish_part。",
                         "violations": violations}
+        # 1d) v2.16（P0-1）：strict 几何验证门——体积/包围盒/拓扑有效性全过才准归档，
+        # 结果记入零件档案（validation_passed），最终 _finalize 门控据此判任务成败。
+        try:
+            vres = self.worker.execute("validate_geometry", {"level": "strict"})
+            validation_info = vres.get("geometry_validation") or {}
+        except Exception as exc:  # noqa: BLE001 —— 验证通道异常按未通过处理（保守拒绝）
+            validation_info = {"valid": False, "status": "unknown",
+                               "reason_codes": [f"validator_error:{type(exc).__name__}"]}
+        validation_passed = (validation_info.get("valid") is True
+                             and validation_info.get("status") == "valid")
+        if not validation_passed:
+            return {"success": False, "error_kind": "GEOMETRY_INVALID",
+                    "error": f"strict 几何验证未通过，拒绝归档: {validation_info}。"
+                             "请修复几何（检查自交/空体积/无效拓扑）后重试 finish_part。",
+                    "geometry_validation": validation_info}
         # 2) 导出归档（零件级 STEP + STL）
         idx = len(result.parts) + 1
         slug = _part_slug(part)
@@ -1613,6 +1744,7 @@ class AgentLoop:
             "step_file": step_path.name, "stl_file": stl_path.name,
             "stl_size": mesh.get("size"), "note": note,
             "built_via": self._part_built_via,
+            "validation_passed": True,
             "library_step_file": library.get("step_file"),
             "library_stl_file": library.get("stl_file"),
             "library_version": library.get("version"),
@@ -1624,6 +1756,7 @@ class AgentLoop:
         result.artifacts[f"part_{idx:02d}_stl"] = str(stl_path)
         result.volume = None
         self._last_volume = None
+        self._last_geometry_fingerprint = None
         self.emit("artifact_ready", f"零件已归档: {part}", {
             "kind": "part", "part": part, "index": idx,
             "step": str(step_path), "stl": str(stl_path),

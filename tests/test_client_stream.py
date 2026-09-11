@@ -168,7 +168,8 @@ class LoopStreamEmissionTests(unittest.TestCase):
                 system_prompt="SYS",
                 task_description="测试",
             )
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是流式事件）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
         text_events = [e for e in events if e[0] == "agent_text_delta"]
         # 流式两段 + 不再补发整轮（否则 "先建基准面" 出现两次）
         joined = "".join(str(e[1]) for e in text_events)
@@ -198,7 +199,8 @@ class LoopStreamEmissionTests(unittest.TestCase):
                 system_prompt="SYS",
                 task_description="测试",
             )
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是流式事件）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
         text_events = [e for e in events if e[0] == "agent_text_delta"]
         self.assertEqual(len(text_events), 1)
         self.assertEqual(text_events[0][2].get("done"), True)

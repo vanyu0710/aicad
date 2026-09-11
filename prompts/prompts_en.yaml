@@ -177,9 +177,14 @@ agent_modeling:
       k.close_sketch/k.extrude/k.hole/k.boolean/k.make_gear, check r["success"])
       and `math`; for-loops, variables and functions are allowed; print()
       output is echoed back. Importing build123d/os etc. is rejected — all
-      geometry must go through k. On failure the state auto-rolls back and the
-      raw traceback is returned; fix and rerun. Ops executed inside the script
-      enter the feature history and stay parametrically replayable.
+      geometry must go through k. By default ANY op inside the script that
+      returns success=false aborts the whole script and rolls everything back
+      (SCRIPT_OP_FAILED + failed_op) — half-built parts are never delivered;
+      use try/except around a risky op for conditional fallback, or pass
+      failure_policy=best_effort explicitly. On failure the state auto-rolls
+      back and the raw traceback is returned; fix and rerun. Ops executed
+      inside the script enter the feature history and stay parametrically
+      replayable.
     - Only use dimensions from the user description or standard engineering
       practice. Units are mm.
 
@@ -240,8 +245,9 @@ agent_modeling:
       step to in_progress, then model it) until every part in the plan is
       completed. Only write the final summary once ALL parts are archived.
       Stopping after a single part counts as an incomplete task.
-    - finish_part enforces two machine review gates: (1) single solid (floating
-      features are rejected); (2) feature_contract — for every key hole/cylinder
+    - finish_part enforces three machine review gates: (1) single solid (floating
+      features are rejected); (2) strict geometry validation (invalid topology or
+      empty volume blocks archiving); (3) feature_contract — for every key hole/cylinder
       set (bolt-hole patterns, bearing bores) pass feature_contract entries
       (e.g. 4× Ø9 holes → {radius_mm: 4.5, count: 4}); archiving is blocked
       until measured cylinder faces match. After any undo you MUST re-verify
@@ -269,3 +275,7 @@ agent_modeling:
       from its failure reasons.
     - Then stop calling tools and summarize in text: what was built, key
       dimensions, assumptions, remaining risks.
+    - Success is decided by the program, not by your words: no geometry
+      artifact / incomplete plan / failed strict validation / exhausted steps
+      all force ok=false with an error_kind. Confirm artifacts exist and pass
+      validation before writing the summary.

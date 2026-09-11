@@ -53,6 +53,8 @@ class FakeWorker:
         # v0.13 run_script 桩：按序弹出，缺省返回成功
         self.run_script_calls: list[tuple[str, str]] = []
         self.run_script_results: list = []
+        # v2.16 可靠性门控：validate_geometry 返回值注入点（None=默认有效）
+        self.validation_result: dict | None = None
         # v0.14 装配命令桩调用记录
         self.assembly_calls: list[tuple] = []
 
@@ -84,7 +86,8 @@ class FakeWorker:
         self.assembly_calls.append(("render", len(parts)))
         return {"ok": True, "render_base64": "iVBORw0KGgo="}
 
-    def run_script(self, code: str, *, name: str = "") -> dict:
+    def run_script(self, code: str, *, name: str = "", failure_policy: str = "abort",
+                   timeout=None) -> dict:
         self.run_script_calls.append((code, name))
         if self.run_script_results:
             result = self.run_script_results.pop(0)
@@ -100,6 +103,13 @@ class FakeWorker:
 
     def execute(self, op: str, args: dict | None = None) -> dict:
         self.executed.append((op, dict(args or {})))
+        # v2.16 可靠性门控：validate_geometry 必须返回 geometry_validation
+        # （真实内核契约如此）；默认判"有效"，测试可设 validation_result 注入失败。
+        if op == "validate_geometry":
+            if getattr(self, "validation_result", None) is not None:
+                return self.validation_result
+            return {"success": True,
+                    "geometry_validation": {"valid": True, "status": "valid", "reason_codes": []}}
         if self.execute_results:
             result = self.execute_results.pop(0)
             if isinstance(result, Exception):
@@ -285,7 +295,8 @@ class AgentLoopErrorPathTests(unittest.TestCase):
             ToolCallRound(text="好的", tool_calls=[]),
         ])
         result = _run(worker, chat)
-        self.assertTrue(result.ok)  # LLM 收到失败结果后正常收尾
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
         self.assertEqual(result.steps, 1)
         final_messages = chat.calls[-1][0]
         tool_message = next(m for m in final_messages if m["role"] == "tool")
@@ -322,7 +333,8 @@ class AgentLoopErrorPathTests(unittest.TestCase):
             ToolCallRound(text="ok", tool_calls=[]),
         ])
         result = _run(worker, chat)
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
         final_messages = chat.calls[-1][0]
         tool_message = next(m for m in final_messages if m["role"] == "tool")
         payload = json.loads(tool_message["content"])
@@ -424,7 +436,8 @@ class AgentLoopApprovalTests(unittest.TestCase):
         t.join(timeout=2)
         # 用户拒绝 → delete_feature 不被执行
         self.assertNotIn("delete_feature", [op for op, _ in worker.executed])
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
 
     def test_confirm_replace_fix_goes_through_approval(self) -> None:
         from backend.agent.approvals import ApprovalBroker
@@ -495,7 +508,8 @@ class AgentLoopApprovalTests(unittest.TestCase):
         t.join(timeout=2)
         # ask_user 不执行 kernel op（worker.executed 为空）
         self.assertEqual(worker.executed, [])
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
         # 答案以 Q/A 转录回喂模型
         tool_message = next(m for m in calls[-1] if m.get("role") == "tool")
         payload = json.loads(tool_message["content"])
@@ -533,7 +547,8 @@ class AgentLoopApprovalTests(unittest.TestCase):
         t.start()
         result = _run(worker, chat, approvals=broker, emit=lambda *_: None)
         t.join(timeout=2)
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
         tool_message = next(m for m in calls[-1] if m.get("role") == "tool")
         transcript = json.loads(tool_message["content"])["transcript"]
         self.assertIn("A: 12mm", transcript)
@@ -565,7 +580,8 @@ class AgentLoopApprovalTests(unittest.TestCase):
         t.start()
         result = _run(worker, chat, approvals=broker, emit=lambda *_: None)
         t.join(timeout=2)
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
         tool_message = next(m for m in calls[-1] if m.get("role") == "tool")
         payload = json.loads(tool_message["content"])
         self.assertTrue(payload["declined"])
@@ -586,7 +602,8 @@ class AgentLoopApprovalTests(unittest.TestCase):
 
         result = _run(worker, chat, approvals=broker, emit=lambda ev, m, p: events.append((ev, m, p)))
         # 超时 → 跳过该步，agent 收到 SKIPPED 并继续到收尾文字
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
         self.assertNotIn("delete_feature", [op for op, _ in worker.executed])
 
     def test_opening_context_includes_feature_tree(self) -> None:
@@ -738,7 +755,8 @@ class AgentLoopPlanModeTests(unittest.TestCase):
         self.assertIn(("create_workplane", {"name": "base"}), worker.executed)
         self.assertTrue(any(e[0] == "approval_required" and e[2].get("kind") == "plan_review" for e in events))
         self.assertTrue(any(e[0] == "plan_updated" for e in events))
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：计划未完成收工不得判成功
+        self.assertEqual(result.error_kind, "PLAN_INCOMPLETE")
 
     def test_plan_mode_reject_keeps_planning(self) -> None:
         from backend.agent.approvals import ApprovalBroker
@@ -770,7 +788,8 @@ class AgentLoopPlanModeTests(unittest.TestCase):
         # 拒绝后仍留在计划模式：第二轮工具表依旧不含建模 op，且从未执行建模
         self.assertNotIn("create_workplane", tools_by_round[1])
         self.assertEqual(worker.executed, [])
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
 
     def test_update_plan_emits_progress_and_once_per_round(self) -> None:
         worker = FakeWorker()
@@ -803,7 +822,8 @@ class AgentLoopPlanModeTests(unittest.TestCase):
         plan_events = [e for e in events if e[0] == "plan_updated"]
         self.assertEqual(len(plan_events), 1)  # 只有第一次成功
         self.assertEqual(plan_events[0][2]["steps"][0]["status"], "in_progress")
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
 
 
 class AgentLoopDesignCalculateTests(unittest.TestCase):
@@ -845,7 +865,8 @@ class AgentLoopDesignCalculateTests(unittest.TestCase):
         # 结果与调研转录
         self.assertEqual(len(result.design_calculations), 1)
         self.assertTrue(result.design_calculations[0]["ok"])
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
 
     def test_custom_sandbox_roundtrip_and_block(self) -> None:
         worker = FakeWorker()
@@ -874,7 +895,8 @@ class AgentLoopDesignCalculateTests(unittest.TestCase):
         self.assertFalse(seen[1]["success"])
         self.assertEqual(seen[1]["error_kind"], "INVALID_REQUEST")
         self.assertIn("import", seen[1]["error"])
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
 
     def test_unknown_kind_returns_error(self) -> None:
         worker = FakeWorker()
@@ -958,7 +980,8 @@ class AgentLoopBomPlanTests(unittest.TestCase):
         note = json.loads(tool_msgs[-1]["content"])
         self.assertIn("2 类零件", note["note"])
         self.assertIn("finish_part", note["note"])
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：计划未完成收工不得判成功
+        self.assertEqual(result.error_kind, "PLAN_INCOMPLETE")
 
     def test_bom_normalization_tolerance(self) -> None:
         from backend.agent.loop import _normalize_bom
@@ -1079,7 +1102,8 @@ class AgentLoopFinishPartTests(unittest.TestCase):
         result = _run(worker, chat, mode="plan")
         self.assertEqual(seen[0]["error_kind"], "PLAN_REQUIRED")
         self.assertEqual(worker.reset_calls, 0)
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
 
     def test_finish_part_without_geometry(self) -> None:
         worker = FakeWorker([{"success": True, "value": None}])
@@ -1376,7 +1400,8 @@ class AgentLoopRunBuildScriptTests(unittest.TestCase):
         # 第三轮消息里应含提醒
         nag = [m for m in rounds_msgs[-1] if m.get("role") == "user" and "计划尚未完成" in str(m.get("content"))]
         self.assertTrue(nag, "应注入计划未完成提醒")
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：计划未完成收工不得判成功
+        self.assertEqual(result.error_kind, "PLAN_INCOMPLETE")
 
 
 class AssemblyFlowTests(unittest.TestCase):
@@ -1490,7 +1515,8 @@ class AssemblyFlowTests(unittest.TestCase):
         result = _run(worker, chat)
         self.assertEqual(seen, [1])                       # 恰好一次 nudge
         self.assertEqual(result.final_text, "这次有内容了")
-        self.assertTrue(result.ok)
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
 
     def test_empty_round_retries_capped(self) -> None:
         worker = FakeWorker()
@@ -1502,7 +1528,8 @@ class AssemblyFlowTests(unittest.TestCase):
 
         result = _run(worker, chat)
         self.assertEqual(calls["n"], 3)                   # 1 初始 + 2 重试后放弃
-        self.assertTrue(result.ok)                        # 维持旧语义：空收尾仍 ok
+        self.assertFalse(result.ok)  # v2.16 硬门控：无产物收尾不得判成功（本测试主体是管道行为）
+        self.assertEqual(result.error_kind, "NO_GEOMETRY")
 
     def test_export_assembly_success(self) -> None:
         from backend import storage
