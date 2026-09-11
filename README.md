@@ -20,6 +20,11 @@
 </p>
 
 <p align="center">
+  内核证据渲染器 v2.15：只画特征边，平面扇形三角化的对角噪声全部消失 ——<br/>
+  <img src="docs/images/render-before-after.png" alt="证据渲染前后对比：逐三角画边 vs 只画特征边" width="900"/>
+</p>
+
+<p align="center">
   <img alt="Status" src="https://img.shields.io/badge/status-harness%20mainline-blue" />
   <img alt="Python" src="https://img.shields.io/badge/python-3.12-blue" />
   <img alt="Tests" src="https://img.shields.io/badge/tests-399%20passing-brightgreen" />

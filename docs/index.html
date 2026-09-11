@@ -533,6 +533,24 @@
 </section>
 
 
+<!-- ===== 渲染质量 ===== -->
+<section class="demo fadein" style="background: var(--foam);">
+  <div class="section-inner">
+    <span class="eyebrow-section">Evidence render</span>
+    <h2 class="section-title">给模型看的证据图，<em>也是干净的工程图</em></h2>
+    <p class="section-subtitle">
+      内核证据渲染器 v2.15：只画二面角 &gt;30° 的特征边（平面扇形三角化的对角噪声全部消失），OCP 角向细分封顶曲面刻面，crease-aware 平滑法线 + 背面棱剔除 + 掠射压暗。同一装配，前后对比：
+    </p>
+    <div style="text-align:center;">
+      <img src="images/render-before-after.png" alt="证据渲染前后对比：左为逐三角画边的旧版，右为只画特征边的 v2.15" loading="lazy" style="width:100%;max-width:1000px;border:1px solid var(--line);border-radius:12px;box-shadow:0 16px 40px -16px rgba(4,17,31,0.22);"/>
+      <div style="margin-top:14px;font-size:13px;color:var(--mute);font-family:'JetBrains Mono',monospace;">
+        装配实测：刻面线 50304 → 特征边 9660（−81%）· 顶点焊接开边 0 · 全图 7.8s
+      </div>
+    </div>
+  </div>
+</section>
+
+
 <!-- ===== 截图 ===== -->
 <section class="shots fadein">
   <div class="section-inner">
