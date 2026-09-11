@@ -922,7 +922,8 @@ class AgentLoopBomPlanTests(unittest.TestCase):
         return [
             {"part": "小齿轮", "role": "高速级主动轮", "quantity": 1,
              "key_params": {"模数": "2", "齿数": "20"}},
-            {"part": "箱体", "role": "壳体", "quantity": 1},
+            {"part": "箱体", "role": "壳体", "quantity": 1,
+             "key_params": {"壁厚": "8mm", "长": "240mm"}},
         ]
 
     def test_propose_plan_with_bom_flow(self) -> None:
@@ -1006,7 +1007,8 @@ class AgentLoopFinishPartTests(unittest.TestCase):
     """v0.12 finish_part：导出归档 → reset → 计划打勾；各失败路径。"""
 
     def _bom_steps(self) -> tuple[list, list]:
-        bom = [{"part": "g1", "role": "齿轮1"}, {"part": "g2", "role": "齿轮2"}]
+        bom = [{"part": "g1", "role": "齿轮1", "key_params": {"模数": "2"}},
+               {"part": "g2", "role": "齿轮2", "key_params": {"模数": "2"}}]
         steps = [
             {"id": "s1", "title": "建 g1", "part": "g1"},
             {"id": "s2", "title": "建 g2", "part": "g2"},
@@ -1375,7 +1377,7 @@ class AgentLoopRunBuildScriptTests(unittest.TestCase):
             calls["n"] += 1
             if calls["n"] == 1:
                 return _round_with_call("propose_plan", {
-                    "summary": "两件", "bom": [{"part": "a"}, {"part": "b"}],
+                    "summary": "两件", "bom": [{"part": "a", "key_params": {"d": "10mm"}}, {"part": "b", "key_params": {"d": "20mm"}}],
                     "steps": [{"id": "s1", "title": "建 a", "part": "a"},
                               {"id": "s2", "title": "建 b", "part": "b"}]})
             if calls["n"] == 2:

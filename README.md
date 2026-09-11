@@ -177,6 +177,7 @@ npm run dev
 12. **会话持久化**：每项目一条 agent 会话（`work/agent_sessions/{id}.json`，含计划与零件库镜像），重开可回看；
     随时**暂停接管**（停止 agent → 手动编辑 → 发消息继续，新任务消息自动携带最新特征上下文）。
 13. **可靠性硬门控（v0.15 P0 修复）**：成功由程序判定不由文字判定——无产物/计划未完成/strict 验证不过/步数耗尽一律 ok=false + error_kind；finish_part 过 strict 几何验证才归档；工具结果结构化裁剪（不字符串化、数组截断附 total）；几何更新按指纹而非体积；run_build_script 任一 op 失败即整体回滚（SCRIPT_OP_FAILED + failed_op）
+14. **七模块系统提示词（v0.15）**：角色/建模原则/工作流程/API 规范/验证/修复/输出格式结构化重写（中英同步），结构由测试锁死；BOM 参数表（key_params）与 SUCCESS/PARTIAL/FAILED 三态由程序判定；`MECHCAD_PROMPTS_FILE` 支持提示词 A/B 基准（scripts/ab_prompt_housing.py）
 
 ---
 

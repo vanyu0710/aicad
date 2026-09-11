@@ -95,6 +95,8 @@ class AgentLoopResult:
     design_calculations: list[dict[str, Any]] = field(default_factory=list)
     # v0.14 F2a：export_assembly 的装配摘要（投影进 ArtifactSet）
     assembly: dict[str, Any] | None = None
+    # v0.15 提示词工程（程序判态）：SUCCESS / PARTIAL / FAILED，由 _finalize 计算
+    status: str = "FAILED"
 
 
 def _compact_step_result(data: dict[str, Any]) -> dict[str, Any]:
@@ -300,6 +302,9 @@ def _normalize_bom(raw: Any) -> list[dict[str, Any]]:
             for k, v in list(raw_params.items())[:16]:
                 sv = str(v)
                 key_params[str(k)[:40]] = sv[:60]
+        elif isinstance(raw_params, str) and raw_params.strip():
+            # 容错：模型/脚本把参数表写成一行字符串（"m=2 z=17 b=16"）也算有参数表
+            key_params["params"] = raw_params.strip()[:200]
         depends_on = [
             str(d).strip()
             for d in (item.get("depends_on") or [])[:8]
@@ -803,6 +808,24 @@ class AgentLoop:
         summary = str(args.get("summary") or "（未提供方案摘要）")
         steps = _normalize_plan_steps(args.get("steps"))
         bom = _normalize_bom(args.get("bom"))
+        # v0.15 提示词工程 §2 程序化：多零件计划的 BOM 参数表（key_params）是硬门——
+        # 没有参数表的计划等于没有规划，直接打回，不允许"先批了再补"。
+        if len(bom) >= 2:
+            missing_params = [b.get("part") for b in bom if not b.get("key_params")]
+            if missing_params:
+                return tool_result_message(
+                    tool_call,
+                    json.dumps({
+                        "success": False,
+                        "error_kind": "BOM_MISSING_PARAMS",
+                        "error": f"以下零件缺少 key_params 参数表: {missing_params}。"
+                                 "多零件计划的每个零件必须先给出关键尺寸参数"
+                                 "（来自 design_calculate 调研，含数值与单位），"
+                                 "补齐后重新 propose_plan。",
+                        "required_action": "add_key_params_then_replan",
+                    }, ensure_ascii=False),
+                    protocol=self.protocol,
+                )
         plan_payload: dict[str, Any] = {"summary": summary, "steps": steps}
         if bom:
             plan_payload["bom"] = bom
@@ -1187,6 +1210,16 @@ class AgentLoop:
             # 纯装配续做（本 run 只 export_assembly，零件在既往 run 已验证归档）：
             # 无会话几何可验证，assembly 即产物，不再叠加校验。
 
+        # v0.15 程序判态（提示词工程 §8）：SUCCESS / PARTIAL / FAILED 由验证结果算出，
+        # 不采信模型自述——PARTIAL（有产物但未全过）不得被说成 SUCCESS。
+        has_artifact = bool(result.volume or result.parts or result.assembly)
+        if result.ok and not result.error:
+            result.status = "SUCCESS"
+        elif has_artifact:
+            result.status = "PARTIAL"
+        else:
+            result.status = "FAILED"
+
         step_path = self.run_dir / "model.step"
         if result.volume:
             try:
@@ -1202,6 +1235,7 @@ class AgentLoop:
         report = {
             # 多零件任务以归档件数计完成度（末件 finish_part 后会话已清空）
             "ok": bool(result.ok and not result.error) and bool(result.volume or result.parts),
+            "status": result.status,
             "engine": "mechkernel",
             "worker": "mechkernel-agent",
             "agent_stopped": result.stopped,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -9,10 +10,19 @@ PROMPTS_PATH = Path(__file__).resolve().parents[2] / "prompts" / "prompts.yaml"
 PROMPTS_EN_PATH = Path(__file__).resolve().parents[2] / "prompts" / "prompts_en.yaml"
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=4)
 def load_prompts(language: str = "zh") -> dict[str, dict]:
-    """Load the centralized prompts file for the requested language."""
-    path = PROMPTS_PATH if language != "en" else PROMPTS_EN_PATH
+    """Load the centralized prompts file for the requested language.
+
+    ``MECHCAD_PROMPTS_FILE`` overrides the prompt file for both languages —
+    used by prompt A/B benchmark runs to swap prompt sets without touching
+    the shipped files.
+    """
+    override = os.environ.get("MECHCAD_PROMPTS_FILE")
+    if override:
+        path = Path(override)
+    else:
+        path = PROMPTS_PATH if language != "en" else PROMPTS_EN_PATH
     if not path.exists():
         raise FileNotFoundError(f"prompts file not found: {path}")
     with path.open("r", encoding="utf-8") as fh:
