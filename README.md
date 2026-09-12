@@ -20,6 +20,11 @@
 </p>
 
 <p align="center">
+  1:100 三级减速器运行总览（8 件 / 53 步 / 758s / 硬碰撞 0）：<br/>
+  <img src="docs/images/varen-gearbox-visual.png" alt="减速器可视化总览：装配四视图 + 零件缩略图 + 指标" width="760"/>
+</p>
+
+<p align="center">
   内核证据渲染器 v2.15：只画特征边，平面扇形三角化的对角噪声全部消失 ——<br/>
   <img src="docs/images/render-before-after.png" alt="证据渲染前后对比：逐三角画边 vs 只画特征边" width="900"/>
 </p>
