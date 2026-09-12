@@ -55,6 +55,10 @@ class FakeWorker:
         self.run_script_results: list = []
         # v2.16 可靠性门控：validate_geometry 返回值注入点（None=默认有效）
         self.validation_result: dict | None = None
+        # v2.17 孔语义桩：query what=holes 返回值（None=无孔）
+        self.holes_result: dict | None = None
+        # v2.17 生命周期桩：是否让前两零件产生一对干涉（False=无干涉装配）
+        self.interfere_pair = True
         # v0.14 装配命令桩调用记录
         self.assembly_calls: list[tuple] = []
 
@@ -74,13 +78,26 @@ class FakeWorker:
                               timeout=None) -> dict:
         self.assembly_calls.append(("interference", len(parts)))
         pairs = []
-        if len(parts) >= 2:
+        if len(parts) >= 2 and getattr(self, "interfere_pair", True):
             pairs = [{"name_a": parts[0]["name"], "name_b": parts[1]["name"],
                       "interfering": True, "volume_mm3": 12.5}]
+        # 镜像真实内核语义：豁免对移入 exempted 列表（不进 pairs），仍计入 interfering_count
+        kept, exempted = [], []
+        for p in pairs:
+            hit = None
+            for o in (expected_overlaps or []):
+                if {str(o.get("a") or ""), str(o.get("b") or "")} == {p["name_a"], p["name_b"]}                         and p["volume_mm3"] <= float(o.get("max_volume_mm3") or 0):
+                    hit = o
+                    break
+            if hit is not None:
+                p["exempt_reason"] = str(hit.get("reason") or "expected overlap")
+                exempted.append(p)
+            else:
+                kept.append(p)
         return {"ok": True, "total_pairs": len(parts) * (len(parts) - 1) // 2,
                 "checked_pairs": len(pairs), "prefiltered_pairs": 0,
-                "interfering_count": len(pairs), "exempted_count": 0,
-                "max_interference_volume": 12.5, "pairs": pairs, "exempted": []}
+                "interfering_count": len(pairs), "exempted_count": len(exempted),
+                "max_interference_volume": 12.5, "pairs": kept, "exempted": exempted}
 
     def render_assembly(self, parts, *, size=480, timeout=None) -> dict:
         self.assembly_calls.append(("render", len(parts)))
@@ -110,6 +127,8 @@ class FakeWorker:
                 return self.validation_result
             return {"success": True,
                     "geometry_validation": {"valid": True, "status": "valid", "reason_codes": []}}
+        if op == "query" and (args or {}).get("what") == "holes":
+            return self.holes_result or {"success": True, "value": {"holes": [], "count": 0}}
         if self.execute_results:
             result = self.execute_results.pop(0)
             if isinstance(result, Exception):
@@ -1337,8 +1356,9 @@ class AgentLoopRunBuildScriptTests(unittest.TestCase):
 
 
 
-    def test_duplicate_part_archiving_rejected(self) -> None:
-        """v0.13.2: 同名零件二次归档被拒（真实 LLM 曾把 11 件归档成 24 次）。"""
+    def test_same_name_rework_replaces_record_atomically(self) -> None:
+        """v2.17 P1-7: 同名返工从"拒绝"改为"原子替换"——run 记录原位覆盖（index 稳定、
+        件数不重复膨胀），零件库版本递增；发明新名字绕过由 BOM_UNKNOWN_PART 拦截。"""
         worker = FakeWorker([
             {"success": True, "value": 8000.0}, {"success": True, "value": 1},
             {"success": True, "value": 8000.0}, {"success": True, "value": 1},
@@ -1351,15 +1371,44 @@ class AgentLoopRunBuildScriptTests(unittest.TestCase):
             if calls["n"] == 1:
                 return _round_with_call("finish_part", {"part": "housing"})
             if calls["n"] == 2:
-                return _round_with_call("finish_part", {"part": "housing"})  # 重复
+                return _round_with_call("finish_part", {"part": "housing"})  # 返工
             seen.append(self._last_tool_payload(messages))
             return ToolCallRound(text="换下一件", tool_calls=[])
 
         result = _run(worker, chat)
-        self.assertEqual(len(result.parts), 1)          # 只归档一次
-        self.assertFalse(seen[0]["success"])
-        self.assertEqual(seen[0]["error_kind"], "DUPLICATE_PART")
-        self.assertEqual(worker.reset_calls, 1)         # 第二次未触发 reset
+        self.assertEqual(len(result.parts), 1)          # 记录被替换而非追加
+        self.assertTrue(seen[0]["success"], seen[0])    # 返工归档成功
+        self.assertEqual(result.parts[0]["index"], 1)   # index 稳定
+        self.assertEqual(worker.reset_calls, 2)         # 两次都正常清会话
+
+    def test_rename_out_of_bom_rejected(self) -> None:
+        """v2.17 P1-7: BOM 存在时归档计划外零件名（如 箱体-v2）→ BOM_UNKNOWN_PART。"""
+        from backend.agent.loop import _normalize_bom
+
+        worker = FakeWorker([
+            {"success": True, "value": 8000.0}, {"success": True, "value": 1},
+        ])
+        seen: list = []
+        calls = {"n": 0}
+        bom = _normalize_bom([{"part": "housing", "key_params": {"w": "10"}}])
+
+        def chat(messages, tools):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _round_with_call("finish_part", {"part": "housing-v2"})
+            seen.append(self._last_tool_payload(messages))
+            return ToolCallRound(text="改名不对，用原名", tool_calls=[])
+
+        import tempfile as _tf
+        from backend.agent.session import AgentSession
+        with _tf.TemporaryDirectory() as td:
+            session = AgentSession(project_id="p-rw", path=Path(td) / "s.json")
+            session.set_plan("两件", [{"id": "s1", "title": "建 housing", "part": "housing"}],
+                             approved=True, bom=bom)
+            result = _run(worker, chat, run_dir=Path(td), session=session, mode="plan")
+        self.assertEqual(seen[0]["error_kind"], "BOM_UNKNOWN_PART")
+        self.assertEqual(worker.reset_calls, 0)
+        self.assertEqual(result.parts, [])
 
     def test_incomplete_plan_gets_nagged_to_continue(self) -> None:
         """v0.13.2: 计划批准后模型停止但还有 pending 步骤 → 注入提醒一次并继续。"""
@@ -1543,12 +1592,17 @@ class AssemblyFlowTests(unittest.TestCase):
         def chat(messages, tools):
             calls["n"] += 1
             if calls["n"] == 1:
-                return _round_with_call("export_assembly", {"note": "交付"})
+                # v2.17 P1-8: 未豁免干涉会阻断导出——测试按新契约声明 mesh 豁免
+                return _round_with_call("export_assembly", {
+                    "note": "交付",
+                    "expected_overlaps": [{"a": "a", "b": "b", "max_volume_mm3": 100,
+                                           "category": "mesh", "reason": "演示啮合区"}]})
             payload = self._last_tool_payload(messages)
             self.assertTrue(payload["success"], payload)
             self.assertEqual(payload["parts_count"], 2)
             self.assertEqual(payload["interfering_count"], 1)
-            self.assertTrue(payload["interfering"])
+            self.assertEqual(payload["expected_mesh_count"], 1)
+            self.assertEqual(payload["hard_collision_count"], 0)
             return ToolCallRound(text="装配完成", tool_calls=[])
 
         with tempfile.TemporaryDirectory() as td:

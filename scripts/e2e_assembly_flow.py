@@ -87,7 +87,11 @@ class ScriptedChat:
             _call("f2", "finish_part", {"part": "凸台A"}),
             _call("g3", "run_build_script", {"code": PEG_SCRIPT, "reason": "凸台B"}),
             _call("f3", "finish_part", {"part": "凸台B"}),
-            _call("a", "export_assembly", {"note": "F2a E2E 装配交付"}),
+            _call("a", "export_assembly", {
+                "note": "F2a E2E 装配交付",
+                # v2.17 P1-8：未豁免硬碰撞会阻断导出——凸台B×底板 10mm 重叠按"演示配合"豁免
+                "expected_overlaps": [{"a": "凸台B", "b": "底板", "max_volume_mm3": 5000,
+                                       "category": "fit", "reason": "E2E 演示设计内重叠"}]}),
             ToolCallRound(text="装配交付完成：3 件按位姿组装，干涉报告命中凸台B×底板。", tool_calls=[]),
         ]
         self.index = 0
@@ -160,6 +164,8 @@ def main() -> int:
         b["pose"] for b in BOM]
     checks["assembly_summary"] = bool(result.assembly and result.assembly.get("step_file"))
     checks["interference_hit"] = bool(result.assembly and result.assembly.get("interfering_count", 0) >= 1)
+    checks["interference_exempted"] = bool(result.assembly and result.assembly.get("expected_fit_count", 0) >= 1
+                                           and result.assembly.get("hard_collision_count", 1) == 0)
     checks["total_pairs_3"] = bool(result.assembly and result.assembly.get("total_pairs") == 3)
     lib = PROJECT_PARTS_ROOT / project_id
     manifest = read_manifest(project_id)

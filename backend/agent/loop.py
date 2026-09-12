@@ -448,17 +448,26 @@ def _finish_part_tool() -> dict[str, Any]:
                     "feature_contract": {
                         "type": "array",
                         "description": (
-                            "特征契约（强烈建议提供）：断言零件应有 count 个指定半径的圆柱面"
-                            "（如 Ø9 螺栓孔×4 → {radius_mm: 4.5, count: 4}；Ø25 轴承孔×2 → {radius_mm: 12.5, count: 2}）。"
-                            "归档前系统用 select 实测圆柱面计数，与断言不符即拒绝——防止 undo 回滚掉特征后谎报完成。"
+                            "特征契约（强烈建议提供）：断言零件应有的特征。两种形式——"
+                            "①圆柱面计数 {radius_mm, count}（如 Ø9 孔×4 → {radius_mm: 4.5, count: 4}）；"
+                            "②**孔语义契约** {type, diameter_mm, count, positions?, tolerance_mm?}，"
+                            "type ∈ through_hole|blind_hole|counterbore_hole|countersink_hole，"
+                            "系统用 query what=holes 实测（外凸台不算孔；贯通/深度/位置都要吻合）。"
+                            "归档前实测不符即拒绝——防止 undo 回滚掉特征或拿 boss 冒充 hole 后谎报完成。"
                         ),
                         "items": {
                             "type": "object",
                             "properties": {
                                 "radius_mm": {"type": "number"},
                                 "count": {"type": "integer"},
+                                "type": {"type": "string",
+                                         "enum": ["through_hole", "blind_hole",
+                                                  "counterbore_hole", "countersink_hole"]},
+                                "diameter_mm": {"type": "number"},
+                                "positions": {"type": "array",
+                                              "description": "孔位中心列表 [[x,y] 或 [x,y,z], ...]"},
+                                "tolerance_mm": {"type": "number"},
                             },
-                            "required": ["radius_mm", "count"],
                         },
                     },
                 },
@@ -707,6 +716,12 @@ class AgentLoop:
             )
             self.messages.append(task_message)
             session.append(task_message)
+            # v2.17：会话重启后恢复"计划已批准"执行态——否则续做装配/补件会被
+            # PLAN_REQUIRED 卡死（计划与 BOM 已持久化在 session.plan，批准位必须一并恢复）。
+            if isinstance(self.session.plan, dict) and self.session.plan.get("approved"):
+                self._plan_approved = True
+                self.tools = self._plan_mode_tools()
+                self._approved_plan = dict(self.session.plan)
         else:
             self.messages = [
                 {"role": "system", "content": system_prompt},
@@ -1470,15 +1485,22 @@ class AgentLoop:
 
     def _bom_entry(self, part: str) -> dict[str, Any] | None:
         """从批准计划（session 优先，退本地副本）里按零件名取 BOM 项。"""
+        for item in self._bom_items():
+            if isinstance(item, dict) and item.get("part") == part:
+                return item
+        return None
+
+    def _bom_items(self) -> list[dict[str, Any]]:
         plan: dict[str, Any] = {}
         if self.session is not None:
             plan = self.session.plan or {}
         elif self._approved_plan:
             plan = self._approved_plan
-        for item in plan.get("bom") or []:
-            if isinstance(item, dict) and item.get("part") == part:
-                return item
-        return None
+        return [b for b in (plan.get("bom") or []) if isinstance(b, dict)]
+
+    def _bom_part_names(self) -> set[str]:
+        """批准 BOM 的零件名集合（空集=无 BOM，生命周期门控不生效）。"""
+        return {str(b.get("part")) for b in self._bom_items() if b.get("part")}
 
     def _archive_to_parts_library(self, part: str, step_path: Path, stl_path: Path,
                                   volume: float) -> dict[str, Any] | None:
@@ -1510,6 +1532,9 @@ class AgentLoop:
                 "contract_passed": True,
                 "role": bom_item.get("role") or "",
                 "depends_on": bom_item.get("depends_on") or [],
+                # v2.17 P1-7 生命周期：active 才进装配；同名返工替换条目，
+                # 被替换的旧版本文件保留在库目录（历史可回溯）但不再 active。
+                "status": "active",
             }
             manifest["parts"] = [p for p in entries if p.get("name") != part] + [entry]
             storage.write_manifest(self.project_id, manifest)
@@ -1543,6 +1568,40 @@ class AgentLoop:
         return tool_result_message(tool_call, json.dumps(payload, ensure_ascii=False, default=str),
                                    protocol=self.protocol)
 
+    def _classify_interference(self, interference: dict,
+                               expected_overlaps: Any) -> dict[str, list[dict]]:
+        """v2.17 P1-8：干涉分级 hard_collision / expected_fit / expected_mesh。
+
+        豁免不再是一句"设计意图"就能盖住的口子：豁免项必须带 category
+        （fit=轴孔配合 / mesh=齿轮啮合），未带时默认 fit。未豁免的干涉一律
+        hard_collision → 阻断导出。历史残留件已在 P1-7 被排除出装配，
+        不再可能以"豁免"名义混入。
+        """
+        cats: dict[str, list[dict]] = {"hard_collision": [], "expected_fit": [],
+                                       "expected_mesh": [], "historical_artifact": []}
+        overlaps = [o for o in (expected_overlaps or []) if isinstance(o, dict)]             if isinstance(expected_overlaps, list) else []
+
+        def _category_for(a: str, b: str) -> str:
+            for o in overlaps:
+                names = {str(o.get("a") or ""), str(o.get("b") or "")}
+                if names == {a, b}:
+                    cat = str(o.get("category") or "fit").lower()
+                    return cat if cat in ("fit", "mesh") else "fit"
+            return "fit"
+
+        for pair in interference.get("pairs") or []:
+            if not isinstance(pair, dict) or not pair.get("interfering"):
+                continue
+            # 内核语义：pairs 只含未豁免对；豁免对在 interference["exempted"]
+            cats["hard_collision"].append(pair)
+        for pair in interference.get("exempted") or []:
+            if not isinstance(pair, dict):
+                continue
+            key = "expected_mesh" if _category_for(str(pair.get("name_a") or ""),
+                                                    str(pair.get("name_b") or "")) == "mesh"                 else "expected_fit"
+            cats[key].append(pair)
+        return cats
+
     def _export_assembly_inner(self, args: dict, result: AgentLoopResult) -> dict[str, Any]:
         from datetime import datetime
 
@@ -1557,6 +1616,28 @@ class AgentLoop:
         # 绝对路径：worker 子进程 cwd 在内核仓，相对路径会在那边解析失败
         # （与 AgentLoop.__init__ resolve(run_dir) 同一教训）。
         lib_dir = lib_dir.resolve()
+
+        # v2.17 P1-7：装配 = active ∩ 批准 BOM。superseded/BOM 外零件（如旧版
+        # 箱体、改名重做的 输出轴IV-阶梯2）一律排除并标 superseded——历史残留
+        # 不得再借"豁免"混进交付。
+        bom_names = self._bom_part_names()
+        active_entries: list[dict] = []
+        excluded_entries: list[dict] = []
+        for entry in entries:
+            name = str(entry.get("name") or "")
+            if entry.get("status") == "superseded" or (bom_names and name not in bom_names):
+                if entry.get("status") != "superseded":
+                    entry["status"] = "superseded"
+                excluded_entries.append(entry)
+                continue
+            active_entries.append(entry)
+        excluded = [str(e.get("name")) for e in excluded_entries]
+        if bom_names:
+            missing = sorted(bom_names - {str(e.get("name")) for e in active_entries})
+            if missing:
+                return {"success": False, "error_kind": "BOM_PARTS_MISSING",
+                        "error": f"BOM 零件尚未归档，禁止导出半成品装配: {missing}"}
+        entries = active_entries
         parts_payload = []
         for entry in entries:
             step_file = str(entry.get("step_file") or "")
@@ -1571,9 +1652,25 @@ class AgentLoop:
         seq = 1 + len(list(lib_dir.glob("assembly_*.step")))
         out_step = lib_dir / f"assembly_{seq:03d}.step"
         try:
-            export = self.worker.export_assembly(parts_payload, str(out_step))
+            # v2.17 P1-8：干涉先行——存在未豁免硬碰撞直接阻断，不浪费导出/渲染，
+            # 也不给半成品装配写 manifest。
             interference = self.worker.assembly_interference(
                 parts_payload, expected_overlaps=args.get("expected_overlaps"))
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "error_kind": "WORKER_ERROR",
+                    "error": f"装配命令执行失败: {type(exc).__name__}: {exc}"}
+        categories = self._classify_interference(interference, args.get("expected_overlaps"))
+        hard = [p for p in categories["hard_collision"]]
+        if hard:
+            return {"success": False, "error_kind": "INTERFERENCE_BLOCKED",
+                    "error": f"存在 {len(hard)} 对未豁免硬碰撞，装配导出被阻断："
+                             + "；".join(f"{p['name_a']}×{p['name_b']} {round(p.get('volume_mm3') or 0, 1)}mm³"
+                                          for p in hard[:10])
+                             + "。修复几何或（仅设计意图内的配合/啮合）用 expected_overlaps 声明 category。",
+                    "hard_collisions": hard[:20],
+                    "interference_summary": {k: len(v) for k, v in categories.items()}}
+        try:
+            export = self.worker.export_assembly(parts_payload, str(out_step))
             render = self.worker.render_assembly(parts_payload)
         except Exception as exc:  # noqa: BLE001 —— worker 崩溃/超时
             return {"success": False, "error_kind": "WORKER_ERROR",
@@ -1593,8 +1690,10 @@ class AgentLoop:
             "note": str(args.get("note") or ""),
             "parts": [{"name": e.get("name"), "version": e.get("version"),
                        "pose": e.get("pose")} for e in entries],
+            "excluded_superseded": excluded,
             "export": {k: export.get(k) for k in ("parts", "solids", "volume", "bounding_box", "step_bytes")},
             "interference": interference,
+            "interference_categories": {k: v for k, v in categories.items()},
         }
         try:
             report_file = f"assembly_{seq:03d}_report.json"
@@ -1613,7 +1712,13 @@ class AgentLoop:
             "exempted_count": interference.get("exempted_count", 0),
             "max_interference_volume_mm3": interference.get("max_interference_volume", 0.0),
             "pairs": (interference.get("pairs") or [])[:40],
+            "excluded_superseded": excluded,
+            "hard_collision_count": len(categories["hard_collision"]),
+            "expected_fit_count": len(categories["expected_fit"]),
+            "expected_mesh_count": len(categories["expected_mesh"]),
         }
+        # active + 本轮标 superseded 的历史条目一起写回（不丢件、不覆盖标记）。
+        manifest["parts"] = list(entries) + excluded_entries
         manifest["assembly"] = summary
         storage.write_manifest(self.project_id or "", manifest)
         if self.session is not None:
@@ -1625,9 +1730,9 @@ class AgentLoop:
             "interfering_count": summary["interfering_count"],
             "exempted_count": summary["exempted_count"],
         })
-        interfering_brief = [
+        hard_brief = [
             f"{p['name_a']}×{p['name_b']} {round(p.get('volume_mm3') or 0, 1)}mm³"
-            for p in (interference.get("pairs") or []) if p.get("interfering")][:10]
+            for p in categories["hard_collision"]][:10]
         return {
             "success": True,
             "step_file": out_step.name,
@@ -1637,9 +1742,14 @@ class AgentLoop:
             "total_pairs": summary["total_pairs"],
             "interfering_count": summary["interfering_count"],
             "exempted_count": summary["exempted_count"],
-            "interfering": interfering_brief,
+            "hard_collision_count": len(categories["hard_collision"]),
+            "expected_fit_count": len(categories["expected_fit"]),
+            "expected_mesh_count": len(categories["expected_mesh"]),
+            "excluded_superseded": excluded,
+            "interfering": hard_brief,
             "note": ("装配交付物已生成（STEP/干涉/预览/报告）。"
-                     + ("存在未豁免干涉对，请在总结中如实说明。" if interfering_brief else "")),
+                     + (f"已排除 {len(excluded)} 个非 BOM/历史残留件。" if excluded else "")
+                     + ("存在未豁免干涉对，请在总结中如实说明。" if hard_brief else "")),
         }
 
     def _handle_finish_part(self, tool_call: ToolCall, result: AgentLoopResult) -> dict[str, Any]:
@@ -1658,42 +1768,119 @@ class AgentLoop:
         elif not part:
             payload = {"success": False, "error_kind": "INVALID_REQUEST",
                        "error": "缺少零件名 part。"}
-        elif any(p.get("part") == part for p in result.parts):
-            # v0.13.2 防重复归档：同名零件已归档过（真实 LLM 跑出过 24 件里 13 件重复）。
-            # 若确需替换，模型应先用不同零件名或先向用户说明。
-            payload = {"success": False, "error_kind": "DUPLICATE_PART",
-                       "error": f"零件「{part}」已归档过（part #{next(p['index'] for p in result.parts if p['part'] == part):02d}）。"
-                                "请继续下一个尚未归档的零件；如需重做该件，请先用 update_plan 说明并换用新零件名。"}
         else:
+            bom_names = self._bom_part_names()
+            if bom_names and part not in bom_names:
+                # v2.17 P1-7：发明新名字（箱体-v2）绕过重复检测会让旧版本以"active"
+                # 混进装配。BOM 是零件名的事实来源：返工必须用原名同名归档（原子换版）。
+                payload = {"success": False, "error_kind": "BOM_UNKNOWN_PART",
+                           "error": f"零件「{part}」不在批准的 BOM 里（BOM: {sorted(bom_names)}）。"
+                                    "如需返工已归档零件，请使用 BOM 中的原零件名——同名归档会"
+                                    "原子替换为新版本；不要发明 -v2/副本 之类新名字。"
+                                    "确属计划遗漏的新零件，先 update_plan/propose_plan 修订 BOM。"}
+                return tool_result_message(tool_call, json.dumps(payload, ensure_ascii=False),
+                                           protocol=self.protocol)
+            if any(p.get("part") == part for p in result.parts):
+                # v2.17 P1-7：同名返工从"拒绝"改为"允许并原子替换"——
+                # run 记录原位替换（index 不变），零件库版本 +1，旧版标 superseded。
+                self.logs.append(f"零件 {part} 返工重归档（替换 run 记录，库版本递增）")
             contract = args.get("feature_contract") if isinstance(args.get("feature_contract"), list) else None
             payload = self._finish_part_inner(part, note, result, contract)
         return tool_result_message(tool_call, json.dumps(payload, ensure_ascii=False, default=str),
                                    protocol=self.protocol)
 
     def _check_feature_contract(self, contract: list) -> list[str]:
-        """特征契约校验：数圆柱面半径匹配 count。返回违规描述列表（空=通过）。"""
-        try:
-            sel = self.worker.execute("select", {"filter_type": "cylinder", "element_type": "face"})
-        except Exception as exc:  # noqa: BLE001
-            return [f"无法读取圆柱面（select 失败）: {type(exc).__name__}: {exc}"]
-        if not sel.get("success"):
-            return [f"无法读取圆柱面（select 未成功）: {sel.get('error')}"]
-        faces = (sel.get("value") or {}).get("selected") or []
+        """特征契约校验。返回违规描述列表（空=通过）。
+
+        两种契约项：
+        - 旧形式 {radius_mm, count}：数圆柱面半径匹配（无法区分孔/凸台）；
+        - v2.17 孔语义 {type, diameter_mm, count, positions?, tolerance_mm?}：
+          经内核 query what=holes 实测——外凸台不算孔、贯通标志/深度/孔位都要吻合。
+        """
         violations: list[str] = []
-        for item in contract[:16]:
-            if not isinstance(item, dict):
-                continue
+        legacy = [c for c in contract[:16]
+                  if isinstance(c, dict) and not c.get("type") and c.get("radius_mm") is not None]
+        typed = [c for c in contract[:16] if isinstance(c, dict) and c.get("type")]
+        if legacy:
             try:
-                radius = float(item.get("radius_mm"))
-                expect = int(item.get("count"))
-            except (TypeError, ValueError):
-                violations.append(f"契约项非法（需 radius_mm/count）: {item}")
-                continue
-            actual = sum(1 for f in faces
-                         if f.get("radius_mm") is not None and abs(f["radius_mm"] - radius) < 0.05)
-            if actual != expect:
-                violations.append(
-                    f"半径 {radius}mm 圆柱面：断言 {expect} 个，实测 {actual} 个")
+                sel = self.worker.execute("select", {"filter_type": "cylinder", "element_type": "face"})
+            except Exception as exc:  # noqa: BLE001
+                return [f"无法读取圆柱面（select 失败）: {type(exc).__name__}: {exc}"]
+            if not sel.get("success"):
+                return [f"无法读取圆柱面（select 未成功）: {sel.get('error')}"]
+            faces = (sel.get("value") or {}).get("selected") or []
+            for item in legacy:
+                try:
+                    radius = float(item.get("radius_mm"))
+                    expect = int(item.get("count"))
+                except (TypeError, ValueError):
+                    violations.append(f"契约项非法（需 radius_mm/count）: {item}")
+                    continue
+                actual = sum(1 for f in faces
+                             if f.get("radius_mm") is not None and abs(f["radius_mm"] - radius) < 0.05)
+                if actual != expect:
+                    violations.append(
+                        f"半径 {radius}mm 圆柱面：断言 {expect} 个，实测 {actual} 个")
+        if typed:
+            try:
+                holes_res = self.worker.execute("query", {"target": "_current_geometry", "what": "holes"})
+            except Exception as exc:  # noqa: BLE001
+                violations.append(f"孔语义分析不可用: {type(exc).__name__}: {exc}")
+                return violations
+            if not holes_res.get("success"):
+                violations.append(f"孔语义分析失败: {holes_res.get('error')}")
+                return violations
+            holes = (holes_res.get("value") or {}).get("holes") or []
+            for item in typed:
+                kind = str(item.get("type"))
+                try:
+                    diameter = float(item.get("diameter_mm"))
+                    expect = int(item.get("count"))
+                except (TypeError, ValueError):
+                    violations.append(f"孔契约项非法（需 type/diameter_mm/count）: {item}")
+                    continue
+                tol = float(item.get("tolerance_mm") or 0.05)
+                matched = [h for h in holes
+                           if h.get("kind") == kind
+                           and abs(float(h.get("diameter_mm", 0)) - diameter) <= max(tol, 0.05)]
+                positions = item.get("positions")
+                if isinstance(positions, list) and positions:
+                    pos_matched = []
+                    for want in positions:
+                        if not isinstance(want, (list, tuple)):
+                            continue
+                        hit = None
+                        for h in matched:
+                            center = h.get("center") or []
+                            axis = h.get("axis") or [0, 0, 1]
+                            if len(want) == 2:
+                                # 2D 孔位：比较垂直于孔轴的两个分量（按主轴选平面）
+                                dom = max(range(3), key=lambda i: abs(axis[i])) if len(axis) == 3 else 2
+                                plane = [i for i in range(3) if i != dom]
+                                if len(center) < 3:
+                                    dist = 9e9
+                                else:
+                                    dist = max(abs(float(want[0]) - center[plane[0]]),
+                                               abs(float(want[1]) - center[plane[1]]))
+                            else:
+                                dist = max((abs(float(a) - float(b)) for a, b in zip(want, center)),
+                                           default=9e9)
+                            if dist <= max(float(item.get("tolerance_mm") or 0.5), 0.5) and (hit is None or dist < hit[0]):
+                                hit = (dist, id(h))
+                        if hit is None:
+                            violations.append(
+                                f"孔契约 {kind} Ø{diameter}：断言孔位 {list(want)} 未实测到")
+                        else:
+                            pos_matched.append(hit[1])
+                    if len(set(pos_matched)) != len(matched):
+                        extra = len(matched) - len(set(pos_matched))
+                        if extra > 0:
+                            violations.append(
+                                f"孔契约 {kind} Ø{diameter}：实测多出 {extra} 个未断言的同规格孔")
+                if len(matched) != expect:
+                    violations.append(
+                        f"孔契约 {kind} Ø{diameter}：断言 {expect} 个，实测 {len(matched)} 个"
+                        f"（外凸台不计为孔；贯通/盲以拓扑分类为准）")
         return violations
 
     def _finish_part_inner(self, part: str, note: str, result: AgentLoopResult,
@@ -1750,7 +1937,9 @@ class AgentLoop:
                              "请修复几何（检查自交/空体积/无效拓扑）后重试 finish_part。",
                     "geometry_validation": validation_info}
         # 2) 导出归档（零件级 STEP + STL）
-        idx = len(result.parts) + 1
+        # v2.17 P1-7：同名返工原位替换 run 记录（index 稳定），否则追加
+        existing_idx = next((p.get("index") for p in result.parts if p.get("part") == part), None)
+        idx = int(existing_idx) if existing_idx else len(result.parts) + 1
         slug = _part_slug(part)
         step_path = self.run_dir / f"part_{idx:02d}_{slug}.step"
         stl_path = self.run_dir / f"part_{idx:02d}_{slug}.stl"
@@ -1785,7 +1974,11 @@ class AgentLoop:
             "pose": library.get("pose"),
         }
         self._part_built_via = "ops"  # 下一件默认原子 op
-        result.parts.append(part_rec)
+        prior = next((i for i, p in enumerate(result.parts) if p.get("part") == part), None)
+        if prior is None:
+            result.parts.append(part_rec)
+        else:
+            result.parts[prior] = part_rec
         result.artifacts[f"part_{idx:02d}_step"] = str(step_path)
         result.artifacts[f"part_{idx:02d}_stl"] = str(stl_path)
         result.volume = None

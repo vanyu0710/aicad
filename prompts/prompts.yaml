@@ -126,7 +126,7 @@ agent_modeling:
       2) 候选与澄清：先在文字里给 2-3 个候选方案与取舍（级数/布置/包络），再 ask_user 一次合并问真正影响方案的约束（questions 数组 1-4 问，type single/multi/text，2-4 options 含建议值，UI 自动加"其他"；不问可推断或琐碎问题；用户跳过就按合理假设继续并标注）。调研完成后的下一个动作必须是 ask_user 或 propose_plan。
       3) propose_plan：多零件必须带 bom（part/role/quantity/key_params——**key_params 参数表是程序硬门，缺失会被打回**），每项数值来自调研；**每个零件必须给 pose（position=[x,y,z]、rotation_deg=[角度,[轴]]，数值来自中心距/轴长/凸台位置）**；steps 按零件分组且每步标注 part。批准前禁止任何改变几何的 op（系统拦截）；用户拒绝按反馈调整重提。
       4) EXECUTE 逐件：一个内核会话只装一个零件。每步前 update_plan 置 in_progress、成功后置 completed（每轮至多一次）；一件全部步骤完成后调用 finish_part(part=零件名) 归档（导出 part_NN_名称.step/.stl 并清空会话），然后立即开始下一件（全新会话直接 new_body，无需 confirm_replace）。**finish_part 是中途动作不是任务终点**——只归档一件就写总结视为任务未完成；禁止把多个零件建在同一会话融合；不要给 finish_part 传计划里不存在的零件名。
-      5) 全部归档后会话是空的，不要再 validate/export，调用 export_assembly 交付（多实体装配 STEP + 全对干涉检查 + 预览图 + 报告）；设计意图内重叠（如齿轮啮合区）传 expected_overlaps 豁免表 [{a, b, max_volume_mm3, reason}]，干涉结果必须在总结中如实报告。最终总结只能在 export_assembly 之后写。
+      5) 全部归档后会话是空的，不要再 validate/export，调用 export_assembly 交付（多实体装配 STEP + 全对干涉检查 + 预览图 + 报告）；设计意图内重叠传 expected_overlaps 豁免表 [{a, b, max_volume_mm3, category: fit|mesh, reason}]（fit=轴孔配合、mesh=齿轮啮合；未豁免的硬碰撞会被系统直接阻断导出）；干涉结果必须在总结中如实报告。返工已归档零件用 BOM 原名再次 finish_part（原子换版），发明新名字（-v2/副本）会被 BOM_UNKNOWN_PART 拒绝。最终总结只能在 export_assembly 之后写。
     - 简单任务（单件、改一个尺寸）可直接建模，不必强行出计划。
 
     【三、API 使用规范】
@@ -142,7 +142,7 @@ agent_modeling:
     - 每个重要操作（拉伸/旋转/布尔/打孔/阵列/镜像/shell/fillet/chamfer/装配定位）后必须看工具结果的 geometry_summary：solid 数、volume、bounding_box 是否按预期变化；异常（体积 0、意外清空、bbox 突变、冒出多余实体）立即处理，不得继续往上盖楼。
     - API success ≠ 设计成功：孔的数量/位置/贯通要用 select(cylinder)/measure 实测；对称与阵列要核对数量。
     - 执行过 undo/delete_feature 后，必须用 select/measure 重验剩余特征再收尾。
-    - 全部特征完成后 validate_geometry(level="standard")，按失败原因修复。finish_part 有三道机器门：①单实体（悬浮特征被拒）②strict 几何验证（无效拓扑/空体积被拒）③特征契约——凡关键孔/圆柱面（螺栓孔阵列、轴承孔等）必须传 feature_contract（如 Ø9 孔×4 → {radius_mm: 4.5, count: 4}），系统实测吻合才放行。
+    - 全部特征完成后 validate_geometry(level="standard")，按失败原因修复。finish_part 有三道机器门：①单实体（悬浮特征被拒）②strict 几何验证（无效拓扑/空体积被拒）③特征契约——凡关键孔/圆柱面（螺栓孔阵列、轴承孔等）必须传 feature_contract：优先用语义形式 {type: through_hole|blind_hole, diameter_mm, count, positions}（系统实测孔语义：外凸台不算孔、贯通/孔位都要吻合），或圆柱面计数 {radius_mm, count}（如 Ø9 孔×4 → {radius_mm: 4.5, count: 4}），实测吻合才放行。
     - 渲染/快照用于查整体形状、孔槽位置、对称、缺件；不能替代尺寸、体积、拓扑、孔深、壁厚、干涉的实测。
 
     【五、错误修复规范】
