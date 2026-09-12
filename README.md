@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  一句话跑出的三级齿轮减速器装配（AI agent 自主设计，非概念图）：<br/>
+  一句话跑出的 1:100 三级齿轮减速器装配（AI agent 自主设计，8 件 / 758s 一次通过）：<br/>
   <img src="docs/images/varen-gearbox-assembly.png" alt="Varen CAD agent 自主设计的 1:100 三级齿轮减速器装配四视图" width="820"/>
 </p>
 
@@ -179,6 +179,7 @@ npm run dev
 13. **可靠性硬门控（v0.15 P0 修复）**：成功由程序判定不由文字判定——无产物/计划未完成/strict 验证不过/步数耗尽一律 ok=false + error_kind；finish_part 过 strict 几何验证才归档；工具结果结构化裁剪（不字符串化、数组截断附 total）；几何更新按指纹而非体积；run_build_script 任一 op 失败即整体回滚（SCRIPT_OP_FAILED + failed_op）
 14. **七模块系统提示词（v0.15）**：角色/建模原则/工作流程/API 规范/验证/修复/输出格式结构化重写（中英同步），结构由测试锁死；BOM 参数表（key_params）与 SUCCESS/PARTIAL/FAILED 三态由程序判定；`MECHCAD_PROMPTS_FILE` 支持提示词 A/B 基准（scripts/ab_prompt_housing.py）
 15. **几何语义闭环（v0.16）**：同名返工原子换版、BOM 为装配事实来源（计划外零件名 BOM_UNKNOWN_PART 拒绝、历史残留标 superseded 排除）；未豁免硬碰撞阻断导出（INTERFERENCE_BLOCKED），豁免须声明 category fit|mesh；feature_contract 支持孔语义契约 {type: through_hole|blind_hole, diameter_mm, count, positions}——外凸台冒充通孔被内核分类器直接拒绝。
+16. **变速箱最新全流程实测（v0.16 代码）**：真实 LLM 53 步 / 758s 一次通过——8 件（3 真渐开线齿轮 + 4 阶梯轴 + 箱体，全 script 件）逐件过 strict 验证与孔语义契约，装配 28 对干涉全查、2 对啮合区按 category=mesh 豁免、硬碰撞 0；首轮曾被硬碰撞门拦下并自行返工轴/齿轮位姿（同名原子换版）。
 
 ---
 

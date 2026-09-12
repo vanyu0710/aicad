@@ -396,7 +396,7 @@
       <img src="images/varen-gearbox-assembly.png" alt="Varen CAD agent 自主设计的三级齿轮减速器装配四视图" loading="lazy"/>
       <div class="cap">
         <span>AI agent 自主设计的 1:100 三级齿轮减速器装配</span>
-        <span class="mono">14 parts · assembly STEP · 4-view</span>
+        <span class="mono">8 parts · assembly STEP · 4-view</span>
       </div>
     </div>
 
@@ -514,17 +514,17 @@
         <img src="images/varen-gearbox-assembly.png" alt="三级齿轮减速器装配四视图" loading="lazy"/>
         <div class="float">
           AI 自主设计的三级减速器
-          <span class="v">14 parts · 769s · 0 未豁免干涉</span>
+          <span class="v">8 parts · 758s · 0 硬碰撞</span>
         </div>
       </div>
       <div class="demo-text">
         <h3>从一句话，到<em>可交付装配</em></h3>
-        <p>真实 LLM（deepseek-v4.1-flash）驱动的完整流程：调研 → 提问 → BOM → 批准 → 逐件建模 → 装配导出。</p>
+        <p>真实 LLM（deepseek-v4.1-flash）驱动的完整流程：调研 → 提问 → BOM → 批准 → 逐件建模 → 装配导出。最新 v0.16 全流程 53 步 / 758s 一次通过。</p>
         <ul>
-          <li><b>11 项 BOM 计划</b>，每件带关键参数与装配位姿（数值来自调研计算）</li>
-          <li><b>14 个零件归档</b>：6 齿轮（真渐开线）+ 4 阶梯轴 + 箱体，逐件过复检门</li>
-          <li><b>几何自检</b>发现第 2 级大齿轮与输出轴重叠 2mm，<b>主动修订计划</b>重做 3 件</li>
-          <li><b>91 对干涉全查</b>，21 对齿轮啮合区按豁免表放行，<b>未豁免干涉 0</b></li>
+          <li><b>8 项 BOM 计划</b>，每件带 key_params 参数表与装配位姿（数值来自调研计算）</li>
+          <li><b>8 个零件归档</b>：3 齿轮（真渐开线）+ 4 阶梯轴 + 箱体，逐件过 strict 验证 + 孔语义契约门</li>
+          <li><b>硬碰撞阻断门</b>逼出真修复：首轮装配被 2 对未豁免干涉拦下，模型自行重做轴与齿轮位姿后才放行</li>
+          <li><b>28 对干涉全查</b>，2 对齿轮啮合区按 category=mesh 豁免，<b>硬碰撞 0</b></li>
           <li><b>交付五件套</b>：装配 STEP + 分零件 STEP/STL + 四视角预览 + 干涉报告 + BOM 表</li>
         </ul>
       </div>
@@ -590,7 +590,7 @@
       <div class="metric">
         <div class="v">0<span class="small"> 未豁免</span></div>
         <div class="l">装配干涉</div>
-        <div class="d">91 对全查，啮合区按设计意图豁免，其余零残留</div>
+        <div class="d">28 对全查，啮合区按 category=mesh 豁免，其余零残留</div>
       </div>
     </div>
   </div>
