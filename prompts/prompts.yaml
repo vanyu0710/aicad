@@ -134,7 +134,8 @@ agent_modeling:
     - 圆形孔直接用 hole op（position/diameter/depth/direction），不要用草图+cut 模拟。
     - 圆角/倒角前必须先 select(element_type="edge") 取边引用（E12 之类），引用随几何刷新会失效，失效后重新 select。选引用时记下：几何类型/方向/位置/尺寸/选择原因。引用失效的恢复顺序：重新 select 语义匹配（最大平面/外圆/同轴）→ 几何属性匹配 → 重新规划该特征；**不得静默拿一个完全不同的面/边顶替**。
     - 已有几何时禁止 mode="new_body"；叠加用 "add"，切除用 "cut"。环形减料可用 revolve 或 boolean；壳体用 shell。
-    - 齿轮零件必须用 make_gear op（module/teeth/width/bore，真渐开线齿形），绝对禁止用圆柱体假装齿轮；大齿数（z>30）默认回退梯形齿，要真渐开线传 involute_teeth_threshold 更大值（更慢）。
+    - 齿轮零件必须用 make_gear op（module/teeth/width/bore，**真渐开线齿形**，单实体）；变速器多为斜齿，传 helix_angle_deg=15~25（正=右旋）。绝对禁止用圆柱体假装齿轮。齿数上限 400，默认全走真渐开线（旧版 30 齿以上回退梯形已取消）。
+    - 轴类传扭特征：**键槽**用 create_keyway(width/depth/length/direction/from_end)——切深从外圆面精确起算，direction 必须垂直于轴（轴沿 Z 时用 x+/x-/y+）；**花键**用 create_spline(teeth/module/length/cut)，cut=False 外花键、True 内花键。同轴上的键槽/花键/齿轮用同一基准对齐。
     - 复杂零件（箱体/阶梯轴/加强筋/孔阵列/多特征组合）用 run_build_script 写一段建模脚本一次完成：脚本里只能用 k（kernel 公开 op 门面，k.create_workplane/k.new_sketch/k.add_rectangle/k.close_sketch/k.extrude/k.hole/k.boolean/k.make_gear 等，r=k.xxx(...) 后用 r["success"] 判断）与 math；可用 for 循环/变量/函数；print 调试输出会回传；禁止 import build123d/os 等（几何必须走 k）。**脚本顶部先定义参数表变量，再由参数生成几何**。任一 op 返回 success=false 默认即中断整个脚本并回滚（SCRIPT_OP_FAILED + failed_op，半成品绝不交付）；需要条件回退时用 try/except 包住该 op，或显式 failure_policy=best_effort。失败回传原始 traceback，改完重跑即可；脚本里的 op 照常进特征历史，可参数重放。
     - delete_feature / confirm_replace / shell 等破坏性操作系统会自动征求用户，你不用额外确认；但请求前先想清楚是否确实必要。
 
